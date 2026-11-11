@@ -34,7 +34,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 </head>
 <body>
 <div id="splash" role="status" aria-live="polite"><div class="sp">
-  <svg class="sp-logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="spbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2E8BFF"/><stop offset="1" stop-color="#0B56D9"/></linearGradient></defs><path d="M16 1C4.2 1 1 4.2 1 16s3.2 15 15 15 15-3.2 15-15S27.8 1 16 1z" fill="url(#spbg)"/><circle cx="11.2" cy="11.6" r="2.3" fill="#fff"/><circle cx="11.2" cy="18.8" r="2.3" fill="#fff"/><path d="M12.4 19.6Q12.4 22.4 9.8 23.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 8.6C22.6 12 22.6 20 17.6 23.4" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"/></svg>
+  <svg class="sp-logo" viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="spbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17245C"/><stop offset="1" stop-color="#04060F"/></linearGradient><linearGradient id="sprim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7FB4FF" stop-opacity=".9"/><stop offset="1" stop-color="#2B55E6" stop-opacity=".35"/></linearGradient><radialGradient id="spglow" cx="0.56" cy="0.5" r="0.46"><stop offset="0" stop-color="#2A6BFF" stop-opacity=".55"/><stop offset="1" stop-color="#2A6BFF" stop-opacity="0"/></radialGradient><linearGradient id="spel" x1="100" y1="48" x2="196" y2="212" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7ADCFF"/><stop offset="1" stop-color="#1B55FF"/></linearGradient></defs><rect x="10" y="10" width="236" height="236" rx="54" fill="url(#spbg)"/><rect x="10" y="10" width="236" height="236" rx="54" fill="url(#spglow)"/><rect x="11.5" y="11.5" width="233" height="233" rx="52.5" fill="none" stroke="url(#sprim)" stroke-width="3"/><g transform="translate(11 0) skewX(-9) translate(6 0)" fill="none" stroke-linejoin="miter" stroke-miterlimit="6"><rect x="62" y="50" width="29" height="156" rx="3" fill="#F2F8FF"/><path d="M112 60L172 90L112 120" stroke="url(#spel)" stroke-width="28"/><path d="M112 132L188 168L112 204" stroke="#0A1030" stroke-width="46"/><path d="M112 132L188 168L112 204" stroke="url(#spel)" stroke-width="28"/></g></svg>
   <div class="sp-name">BlueScreen</div>
   <div class="sp-bar"></div>
   <div class="sp-step" id="spStep">Carregando o editor…</div>
@@ -53,6 +53,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <div id="app">
   <header id="top">
     <div class="logo" title="BlueScreen"><img class="mark" src="icon.svg" alt=""></div>
+    <button class="icon-btn" id="btnPanel" title="Painel lateral" aria-controls="tool" aria-expanded="true"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
     <button class="chip proj-chip" id="projChip" title="Projetos: novo, abrir, recentes, fechar (Alt+P troca rápido)"><b id="projName">Nenhum projeto</b><span class="branch" id="projBranch"></span><svg class="i caret" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></button>
     <button id="seBtn" title="Buscar em tudo (Shift duas vezes)"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span>Buscar classes, arquivos, texto e ações</span></button>
     <div class="split" id="saveGrp"><button class="chip" id="btnSave" title="Salvar arquivo atual (Ctrl+S)"><svg class="i" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span>Salvar</span></button><button class="chip caret" id="btnSaveMenu" title="Opções de salvamento" aria-haspopup="menu"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></button></div>
@@ -145,6 +146,9 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
     <p>Abra no celular ou conecte de outro PC da mesma rede:</p>
     <div id="netUrls"></div>
     <p>PIN de acesso</p><div class="pin" id="netPin"></div>
+    <p class="net-lock" id="netLock" role="status" hidden></p>
+    <p class="net-warn">Sem criptografia (HTTP): na mesma rede, dá para ver o código e o PIN passando. Ligue só em redes de confiança.</p>
+    <div class="pop-sec" id="netDevs" hidden><h4>Aparelhos conectados</h4><div id="netDevList"></div></div>
   </div>
   <div class="pop-sec" id="netJoin" hidden>
     <h4>Conectar a um espaço de trabalho</h4>

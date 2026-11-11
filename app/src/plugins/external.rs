@@ -10,7 +10,6 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use bluescreen_sdk::plugin::{H_INTERNAL, H_REMOTE, H_TOKEN};
 use serde_json::Value;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -19,7 +18,17 @@ use std::time::Duration;
 
 pub struct Running { pub child: Child, pub port: u16, pub routes: Vec<String>, token: String }
 impl Drop for Running {
-    fn drop(&mut self) { TOKENS.lock().remove(&self.token); let _ = self.child.kill(); let _ = self.child.wait(); }
+    fn drop(&mut self) {
+        TOKENS.lock().remove(&self.token);
+        // a árvore toda: um servidor em Node/Python pode ter aberto outros processos (só enquanto ele está vivo, senão
+        // o PID pode já ser de outro programa)
+        #[cfg(windows)]
+        if matches!(self.child.try_wait(), Ok(None)) {
+            use std::os::windows::process::CommandExt;
+            let _ = Command::new("taskkill").args(["/PID", &self.child.id().to_string(), "/T", "/F"]).creation_flags(0x0800_0000).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        }
+        let _ = self.child.kill(); let _ = self.child.wait();
+    }
 }
 
 /// Token próprio de cada processo de plugin (BLUESCREEN_PLUGIN_TOKEN) -> id do plugin. O BLUESCREEN_TOKEN é o mesmo
@@ -97,6 +106,12 @@ pub fn start(id: &str, dir: &Path, launch: &Launch) -> anyhow::Result<Running> {
     let own: String = (0..48).map(|_| format!("{:x}", rand::random_range(0..16u8))).collect();
     let data = super::data::dir(id);
     let _ = std::fs::create_dir_all(&data);
+    // o token próprio vale desde já: o programa pode chamar o núcleo antes de avisar a porta (configurações, cofre);
+    // se ele não chegar a ficar pronto, o token sai junto
+    struct Forget(Option<String>);
+    impl Drop for Forget { fn drop(&mut self) { if let Some(t) = self.0.take() { TOKENS.lock().remove(&t); } } }
+    TOKENS.lock().insert(own.clone(), id.to_string());
+    let mut forget = Forget(Some(own.clone()));
     let mut cmd = Command::new(exe);
     cmd.args(&launch.args).current_dir(dir).env("BLUESCREEN_URL", url).env("BLUESCREEN_TOKEN", token).env("BLUESCREEN_PLUGIN", id).env("BLUESCREEN_PLUGIN_DIR", dir)
         .env("BLUESCREEN_PLUGIN_DATA", &data).env("BLUESCREEN_SDK", sdk_dir()).env("BLUESCREEN_PLUGIN_TOKEN", &own).env("PYTHONIOENCODING", "utf-8")
@@ -115,19 +130,19 @@ pub fn start(id: &str, dir: &Path, launch: &Launch) -> anyhow::Result<Running> {
     std::thread::spawn(move || {
         // primeira linha útil: o aviso de pronto; o resto vai para o log do BlueScreen
         let mut sent = false;
-        for line in BufReader::new(out).lines().map_while(Result::ok) {
+        for line in crate::output::LinesSync::new(out) {
             if !sent { if let Some(j) = line.strip_prefix("BLUESCREEN-READY ") { let _ = tx.send(serde_json::from_str(j).unwrap_or_default()); sent = true; continue; } }
             log(format!("[{tag}] {line}"));
         }
     });
     let tag = id.to_string();
-    std::thread::spawn(move || { for line in BufReader::new(err).lines().map_while(Result::ok) { log(format!("[{tag}] {line}")); } });
+    std::thread::spawn(move || { for line in crate::output::LinesSync::new(err) { log(format!("[{tag}] {line}")); } });
     match rx.recv_timeout(Duration::from_secs(15)) {
         Ok(v) => {
             let port = v["port"].as_u64().unwrap_or(0) as u16;
             if port == 0 { let _ = child.kill(); anyhow::bail!("o servidor do plugin não informou a porta"); }
             let routes = v["routes"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-            TOKENS.lock().insert(own.clone(), id.to_string());
+            forget.0 = None; // pronto: o token fica até o Running sair
             Ok(Running { child, port, routes, token: own })
         }
         Err(_) => {
@@ -187,6 +202,32 @@ pub mod job {
     });
     pub fn assign(child: &std::process::Child) { assign_raw(child.as_raw_handle()); }
     pub fn assign_raw(h: std::os::windows::io::RawHandle) { unsafe { AssignProcessToJobObject(JOB.0 as _, h as _); } }
+    /// Job Object de uma árvore só (uma sessão de LSP/DAP): `kill` encerra o processo e tudo o que ele abriu (o node
+    /// por trás de um atalho .cmd do npm), mesmo os netos que já não têm pai vivo. Ao sair do escopo, fecha o handle e,
+    /// com KILL_ON_JOB_CLOSE, o que sobrou morre junto; se o BlueScreen cair, o Windows fecha o handle do mesmo jeito.
+    pub struct Tree(isize);
+    unsafe impl Send for Tree {}
+    unsafe impl Sync for Tree {}
+    impl Tree {
+        pub fn new() -> Option<Tree> {
+            unsafe {
+                let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if h.is_null() { return None; }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                SetInformationJobObject(h, JobObjectExtendedLimitInformation, &info as *const _ as _, std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32);
+                Some(Tree(h as isize))
+            }
+        }
+        /// false: o Windows recusou (processo já saiu); quem chama ainda tem o JOB geral como rede de segurança
+        pub fn add(&self, h: std::os::windows::io::RawHandle) -> bool { unsafe { AssignProcessToJobObject(self.0 as _, h as _) != 0 } }
+        pub fn kill(&self) { unsafe { TerminateJobObject(self.0 as _, 1); } }
+    }
+    impl Drop for Tree { fn drop(&mut self) { unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _); } } }
 }
 #[cfg(not(windows))]
-pub mod job { pub fn assign(_: &std::process::Child) {} }
+pub mod job {
+    pub fn assign(_: &std::process::Child) {}
+    pub struct Tree;
+    impl Tree { pub fn new() -> Option<Tree> { None } pub fn kill(&self) {} }
+}

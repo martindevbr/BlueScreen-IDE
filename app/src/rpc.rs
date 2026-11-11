@@ -8,7 +8,7 @@ use crate::util::{read_json, user_dir};
 use axum::body::Body;
 use axum::extract::FromRequest;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -265,9 +265,7 @@ fn deny(code: StatusCode, msg: &str) -> Response { (code, msg.to_string()).into_
 /// Com &port=<n> (depuradores) não inicia nada: conecta na porta DAP que já está aberta.
 pub async fn ws(req: Request<Body>, remote: bool, q: HashMap<String, String>) -> Response {
     if remote { return deny(StatusCode::FORBIDDEN, "só pelo PC local"); }
-    let host = req.headers().get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let origin = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
-    if host.is_empty() || origin != format!("http://{host}") { return deny(StatusCode::FORBIDDEN, "origem não permitida"); }
+    if !crate::server::ws_origin_ok(req.headers(), remote) { return deny(StatusCode::FORBIDDEN, "origem não permitida"); }
     let list = tools(false);
     let Some(tool) = q.get("tool").and_then(|id| list.iter().find(|t| &t.id == id)).cloned() else { return deny(StatusCode::NOT_FOUND, "ferramenta desconhecida") };
     if !tool.installed { return deny(StatusCode::NOT_FOUND, "ferramenta não instalada"); }
@@ -327,24 +325,31 @@ async fn session(mut ws: WebSocket, tool: Tool, root: PathBuf) {
         Ok(c) => c,
         Err(e) => { let _ = ws.send(text(json!({ "bs": "error", "message": format!("não deu para iniciar {}: {e}", tool.name) }))).await; return; }
     };
+    // Job Object só desta sessão: fechar a sessão encerra a árvore inteira (o node por trás do atalho .cmd do npm, os
+    // processos que o depurador abriu). Sem ele (Windows recusou), o Job Object geral: sai junto com o BlueScreen.
+    let tree = crate::plugins::external::job::Tree::new();
+    #[cfg(windows)]
+    if let Some(h) = child.raw_handle() && !tree.as_ref().is_some_and(|t| t.add(h)) { crate::plugins::external::job::assign_raw(h); }
     // o que a ferramenta escreve no stderr vai para a página como log (aparece no console do BlueScreen)
     if let Some(err) = child.stderr.take() {
         let name = tool.id.clone();
-        tokio::spawn(async move { let mut l = BufReader::new(err).lines(); while let Ok(Some(s)) = l.next_line().await { crate::util::log(&format!("[{name}] {s}")); } });
+        tokio::spawn(async move { let mut l = crate::output::Lines::new(err); while let Some(s) = l.next().await { crate::util::log(&format!("[{name}] {s}")); } });
     }
     let (reader, writer): (Box<dyn AsyncRead + Unpin + Send>, Box<dyn AsyncWrite + Unpin + Send>) = if tool.tcp {
         // DAP por TCP: espera o adaptador abrir a porta
         let mut conn = None;
         for _ in 0..100 { if let Ok(s) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await { conn = Some(s); break; } tokio::time::sleep(Duration::from_millis(100)).await; }
-        let Some(s) = conn else { let _ = ws.send(text(json!({ "bs": "error", "message": format!("{} não abriu a porta {port}", tool.name) }))).await; let _ = child.kill().await; return; };
+        let Some(s) = conn else { let _ = ws.send(text(json!({ "bs": "error", "message": format!("{} não abriu a porta {port}", tool.name) }))).await; kill_tree(&mut child, tree.as_ref()).await; return; };
         let (r, w) = s.into_split(); (Box::new(r), Box::new(w))
     } else {
         (Box::new(child.stdout.take().expect("stdout")), Box::new(child.stdin.take().expect("stdin")))
     };
     let _ = ws.send(text(json!({ "bs": "ready", "pid": child.id(), "name": tool.name, "port": port }))).await;
     pump(&mut ws, reader, writer, Some(&mut child)).await;
-    // dá um instante para sair sozinha (depois do shutdown/disconnect da página); senão encerra
-    if tokio::time::timeout(Duration::from_millis(1500), child.wait()).await.is_err() { kill_tree(&mut child).await; }
+    // dá um instante para sair sozinha (depois do shutdown/disconnect da página); senão encerra. Mesmo saindo, o que ela
+    // abriu e deixou para trás (netos) é encerrado junto com o Job Object da sessão.
+    if tokio::time::timeout(Duration::from_millis(1500), child.wait()).await.is_err() { kill_tree(&mut child, tree.as_ref()).await; }
+    if let Some(t) = &tree { t.kill(); }
 }
 
 /// depurador que já roda em outro processo (java-debug dentro do jdtls, rdbg junto do programa, js-debug de uma sessão
@@ -385,7 +390,12 @@ async fn pump(ws: &mut WebSocket, reader: Box<dyn AsyncRead + Unpin + Send>, wri
         tokio::select! {
             m = rx.recv() => match m {
                 Some(s) => { if ws.send(Message::Text(s.into())).await.is_err() { break; } }
-                None => { let code = match child.as_mut() { Some(c) => c.wait().await.ok().and_then(|s| s.code()), None => None }; let _ = ws.send(text(json!({ "bs": "exit", "code": code }))).await; break; }
+                None => {
+                    // a saída fechou: normalmente o processo está saindo. Se ele continuar vivo (fechou só o stdout, ou
+                    // um depurador TCP derrubou a conexão), não fica preso esperando: a sessão termina e quem chamou encerra
+                    let code = match child.as_mut() { Some(c) => tokio::time::timeout(Duration::from_secs(3), c.wait()).await.ok().and_then(|r| r.ok()).and_then(|s| s.code()), None => None };
+                    let _ = ws.send(text(json!({ "bs": "exit", "code": code }))).await; break;
+                }
             },
             m = ws.recv() => match m {
                 Some(Ok(Message::Text(t))) => {
@@ -402,10 +412,12 @@ async fn pump(ws: &mut WebSocket, reader: Box<dyn AsyncRead + Unpin + Send>, wri
     drop(writer);
 }
 
-/// shims do npm (.cmd) rodam o node como neto: encerrar só o filho deixaria o servidor vivo
-async fn kill_tree(child: &mut tokio::process::Child) {
+/// shims do npm (.cmd) rodam o node como neto: encerrar só o filho deixaria o servidor vivo. Com o Job Object da sessão,
+/// a árvore toda sai de uma vez; sem ele, o taskkill /T (que só acha os netos enquanto o pai está vivo).
+async fn kill_tree(child: &mut tokio::process::Child, tree: Option<&crate::plugins::external::job::Tree>) {
+    if let Some(t) = tree { t.kill(); }
     #[cfg(windows)]
-    if let Some(pid) = child.id() {
+    if tree.is_none() && let Some(pid) = child.id() {
         let mut c = tokio::process::Command::new("taskkill");
         c.args(["/T", "/F", "/PID", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(0x0800_0000);
         let _ = c.status().await;

@@ -49,10 +49,13 @@
     const isOpen = (p) => !p.hidden;
     // tamanho: altura (embaixo, em cima) ou largura (esquerda, direita, numa variável do #app)
     const [key, def] = SIZE[side];
-    G.setSize = (n) => { if (side === 'bottom') G.el.style.setProperty('--dh', n + 'px'); else if (side === 'top') G.el.style.setProperty('--th', n + 'px'); else G.w = n; G.sync(); };
+    G.setSize = (n) => { if (G.horiz) G.h = n; else G.w = n; G.sync(); };
+    // o tamanho lembrado vale até onde a janela deixa: numa janela menor que da última vez, o painel não cobre o editor
     G.sync = () => {
-      if (side === 'left' || side === 'right') $('#app').style.setProperty(side === 'left' ? '--lw' : '--rw', G.el.hidden ? '0px' : (G.w || def) + 'px');
+      if (side === 'left' || side === 'right') $('#app').style.setProperty(side === 'left' ? '--lw' : '--rw', G.el.hidden ? '0px' : Math.max(160, Math.min(innerWidth - 420, G.w || def)) + 'px');
+      else if (G.h != null) G.el.style.setProperty(side === 'bottom' ? '--dh' : '--th', Math.max(90, Math.min(innerHeight - 180, G.h)) + 'px');
     };
+    addEventListener('resize', () => G.sync());
     G.render = () => {
       const open = panels().filter(isOpen);
       if (!open.length) { G.active = null; if (!G.el.hidden) { G.el.hidden = true; G.sync(); } return; }
@@ -149,8 +152,8 @@
     // tamanho: arrastar a borda (bem pequeno recolhe), duplo clique volta ao padrão
     G.w = side === 'left' || side === 'right' ? store.get(key, def) : null;
     if (G.horiz) G.setSize(store.get(key, def));
-    G.resize.addEventListener('mousedown', (e) => {
-      e.preventDefault();
+    G.resize.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return; e.preventDefault();
       const x0 = e.clientX, y0 = e.clientY, s0 = G.horiz ? (G.min ? 0 : G.el.offsetHeight) : G.el.offsetWidth;
       document.body.classList.add(G.horiz ? 'resizing-v' : 'resizing-h', 'dock-drag');
       const move = (ev) => {
@@ -160,8 +163,8 @@
         if (G.min) { G.min = false; G.render(); }
         G.setSize(Math.round(Math.max(G.horiz ? 90 : 220, Math.min((G.horiz ? innerHeight - 180 : innerWidth - 420), n))));
       };
-      const up = () => { document.body.classList.remove('resizing-v', 'resizing-h', 'dock-drag'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); if (!G.min) store.set(key, G.horiz ? G.el.offsetHeight : G.w); dispatchEvent(new Event('resize')); };
-      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      const up = () => { document.body.classList.remove('resizing-v', 'resizing-h', 'dock-drag'); if (!G.min) store.set(key, G.horiz ? G.el.offsetHeight : G.w); dispatchEvent(new Event('resize')); };
+      pointerDrag(e, move, up);
     });
     G.resize.addEventListener('dblclick', () => { G.min = false; G.setSize(def); store.set(key, def); G.render(); });
     return G;
@@ -201,16 +204,17 @@
     const wid = 'panel:' + p.id;
     L.panels[p.id] = 'float'; saveLayout();
     p.hidden = false;
+    let ob = null; // vigia do botão de fechar do próprio painel; sai quando a janela fecha (por qualquer caminho)
     BS.bubble.register({
       id: wid, title: m.title, icon: iconOf(m), order: 500, width: 620, height: 380, panel: p.id,
       render(el) { el.appendChild(p); p.classList.add('dock-on', 'dock-floating'); },
       // fechada: o painel volta para casa, fechado
-      closed() { p.classList.remove('dock-floating'); L.panels[p.id] = home; saveLayout(); R[home].body.appendChild(p); p.hidden = true; queueMicrotask(() => BS.bubble.unregister(wid)); },
+      closed() { ob?.disconnect(); p.classList.remove('dock-floating'); L.panels[p.id] = home; saveLayout(); R[home].body.appendChild(p); p.hidden = true; queueMicrotask(() => BS.bubble.unregister(wid)); },
     });
     BS.bubble.open(wid);
     from.render();
     // o painel fechado por dentro (botão dele): fecha a janela
-    const ob = new MutationObserver(() => { if (p.hidden && p.classList.contains('dock-floating')) { ob.disconnect(); BS.bubble.close(wid); } });
+    ob = new MutationObserver(() => { if (p.hidden && p.classList.contains('dock-floating')) { ob.disconnect(); BS.bubble.close(wid); } });
     ob.observe(p, { attributes: true, attributeFilter: ['hidden'] });
     announce(p.id, from.side, 'float');
   }

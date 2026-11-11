@@ -65,7 +65,8 @@ struct Info {
 fn rel_of(root: &Path, dir: &Path) -> String {
     let (r, d) = (norm(&root.to_string_lossy()), norm(&dir.to_string_lossy()));
     let (rl, dl) = (r.trim_end_matches('/').to_lowercase(), d.trim_end_matches('/').to_lowercase());
-    if dl == rl { String::new() } else if dl.starts_with(&format!("{rl}/")) { d.trim_end_matches('/')[rl.len() + 1..].to_string() } else { norm(&rel(root, dir)) }
+    // o corte usa o tamanho do texto original (em minúsculas o tamanho em bytes pode mudar) e nunca no meio de uma letra
+    if dl == rl { String::new() } else if dl.starts_with(&format!("{rl}/")) && let Some(x) = d.trim_end_matches('/').get(r.trim_end_matches('/').len() + 1..) { x.to_string() } else { norm(&rel(root, dir)) }
 }
 
 /// Chama a rota de um plugin como chamada interna (com o token do núcleo).

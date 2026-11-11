@@ -7,6 +7,7 @@
 // scripts relativos vêm do projeto por /api/preview/<chave>/. Troca sem piscar e mantém a rolagem da página.
 const PV = { kind: null, tab: null, timer: null, keys: {}, scroll: {}, over: false, lead: null, leadT: 0, frame: null, seq: 0, ratio: store.get('pvRatio', .5) };
 const pvKind = (path) => /\.(md|markdown)$/i.test(path) ? 'md' : /\.html?$/i.test(path) ? 'html' : null;
+const pvActiveKind = () => S.active?.mode === 'editor' && $('#welcome').hidden ? pvKind(S.active.path) : null;
 const pvMode = (k) => store.get('pv.' + k, 'split');
 const PV_MODES = [
   ['editor', 'Só editor', '<path d="M4 6h16M4 10h16M4 14h10M4 18h13"/>'],
@@ -22,16 +23,16 @@ const PV_MODES = [
   const seg = document.createElement('span'); seg.id = 'pvModes'; seg.className = 'pv-seg'; seg.hidden = true;
   seg.innerHTML = PV_MODES.map(([m, t, d]) => `<button class="icon-btn" data-m="${m}" title="${t} (Ctrl+Shift+V liga/desliga)"><svg class="i" viewBox="0 0 24 24">${d}</svg></button>`).join('');
   $('#crumbs .tools').prepend(seg);
-  seg.onclick = (e) => { const b = e.target.closest('[data-m]'); if (b && PV.kind) pvSetMode(b.dataset.m); };
+  seg.onclick = (e) => { const b = e.target.closest('[data-m]'); if (b) pvSetMode(b.dataset.m); };
   pv.addEventListener('pointerenter', () => { PV.over = true; }); pv.addEventListener('pointerleave', () => { PV.over = false; });
   $('#pvBody').addEventListener('scroll', () => { if (PV.kind === 'md' && PV.over) pvScrollEditor(); }, { passive: true });
   // divisória: arrastar ajusta a proporção (lembrada); duplo clique volta a 50%
-  $('#pvSplit').addEventListener('mousedown', (e) => {
-    e.preventDefault(); document.body.classList.add('resizing');
+  $('#pvSplit').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; e.preventDefault(); document.body.classList.add('resizing');
     const r = mon.getBoundingClientRect();
     const move = (ev) => { PV.ratio = Math.max(.15, Math.min(.85, (ev.clientX - r.left) / r.width)); pvLayout(); };
-    const up = () => { document.body.classList.remove('resizing'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); store.set('pvRatio', PV.ratio); };
-    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    const up = () => { document.body.classList.remove('resizing'); store.set('pvRatio', PV.ratio); };
+    pointerDrag(e, move, up);
   });
   $('#pvSplit').ondblclick = () => { PV.ratio = .5; store.set('pvRatio', .5); pvLayout(); };
   // a página do iframe avisa onde está rolada, para a próxima atualização voltar ao mesmo ponto
@@ -44,15 +45,25 @@ BS.hooks.on('editor:ready', (ed) => {
 });
 BS.hooks.on('tab:activate', () => pvSync());
 BS.hooks.on('tab:close', (t) => { delete PV.scroll[t.key]; setTimeout(pvSync); });
-BS.keys.add('Ctrl+Shift+V', () => { if (!PV.kind) return false; pvSetMode(pvMode(PV.kind) === 'editor' ? 'split' : 'editor'); });
-BS.actions.add([{ label: 'Visualização ao lado (Markdown/HTML)', k: 'Ctrl+Shift+V', run: () => PV.kind ? pvSetMode(pvMode(PV.kind) === 'editor' ? 'split' : 'editor') : toast('Abra um arquivo .md ou .html') }]);
+function pvToggle() {
+  const kind = pvActiveKind();
+  if (!kind) return false;
+  pvSetMode(pvMode(kind) === 'editor' ? 'split' : 'editor');
+}
+BS.keys.add('Ctrl+Shift+V', pvToggle);
+BS.actions.add([{ label: 'Visualização ao lado (Markdown/HTML)', k: 'Ctrl+Shift+V', run: () => pvActiveKind() ? pvToggle() : toast('Abra um arquivo .md ou .html') }]);
 
-function pvSetMode(m) { store.set('pv.' + PV.kind, m); pvSync(); if (m !== 'preview') editor?.focus(); }
+function pvSetMode(m) {
+  const kind = pvActiveKind();
+  if (!kind || !PV_MODES.some(([mode]) => mode === m)) return;
+  store.set('pv.' + kind, m); pvSync();
+  if (m !== 'preview') editor?.focus();
+}
 
 // mostra/esconde a visualização conforme a aba ativa e o modo escolhido
 function pvSync() {
   const t = S.active;
-  const kind = t && t.mode === 'editor' && $('#welcome').hidden ? pvKind(t.path) : null;
+  const kind = pvActiveKind();
   const mode = kind ? pvMode(kind) : 'editor';
   $('#pvModes').hidden = !kind;
   if (kind) $('#pvModes').querySelectorAll('[data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
@@ -151,7 +162,7 @@ async function pvHtml(t) {
   // monta o novo iframe por baixo e só troca quando terminou de carregar: sem tela branca a cada tecla
   const body = $('#pvBody'); const old = PV.frame;
   const f = document.createElement('iframe');
-  f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads');
+  f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-downloads'); // janelas abertas pela página continuam isoladas
   f.title = 'Visualização de ' + t.path; f.className = old ? 'pv-frame loading' : 'pv-frame';
   let done = false;
   const swap = () => { if (done) return; done = true; if (seq !== PV.seq) { f.remove(); return; } f.classList.remove('loading'); body.querySelectorAll('iframe').forEach(x => x !== f && x.remove()); };

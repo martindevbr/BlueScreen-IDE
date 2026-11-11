@@ -154,9 +154,15 @@ static ASKING: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::
 fn file() -> std::path::PathBuf { user_dir().join("vault.json") }
 fn load() -> Store { serde_json::from_value(read_json(&file())).unwrap_or_default() }
 fn save(s: &Store) -> ApiResult<()> { Ok(write_atomic(&file(), &serde_json::to_string_pretty(s).unwrap_or_default())?) }
+/// para mudar e gravar: cofre ilegível é erro, nunca "vazio" (a gravação seguinte apagaria todos os segredos)
+fn load_strict() -> ApiResult<Store> {
+    let v = read_json_strict(&file()).map_err(|e| fail(format!("o cofre não pôde ser lido: {e}"), 500))?;
+    if v.is_null() { return Ok(Store::default()); }
+    serde_json::from_value(v).map_err(|e| fail(format!("o cofre ({}) está num formato inesperado ({e}); nada foi gravado", file().display()), 500))
+}
 fn edit<T>(f: impl FnOnce(&mut Store) -> ApiResult<T>) -> ApiResult<T> {
     let _g = LOCK.lock();
-    let mut s = load();
+    let mut s = load_strict()?;
     let out = f(&mut s)?;
     save(&s)?;
     Ok(out)
@@ -265,8 +271,9 @@ pub fn check(c: &Caller, names: &[String], target: Target) -> ApiResult<()> {
                 let h = u.host_str().unwrap_or("");
                 let desc = h.to_string();
                 let res = if u.scheme() != "https" && !local_host(h) { Err(format!("\"{name}\" só vai por HTTPS")) }
-                    else if e.hosts.is_empty() && !c.verified { Err(format!("\"{name}\" não tem sites liberados: defina para onde ele pode ir em Plugins › Cofre")) }
-                    else if !e.hosts.is_empty() && !e.hosts.iter().any(|p| host_ok(p, h)) { Err(format!("\"{name}\" não pode ir para {h} (liberados: {})", e.hosts.join(", "))) }
+                    // sem sites liberados, não vai para nenhum (nem para servidor de plugin)
+                    else if e.hosts.is_empty() { Err(format!("\"{name}\" não tem sites liberados: defina para onde ele pode ir em Plugins › Cofre")) }
+                    else if !e.hosts.iter().any(|p| host_ok(p, h)) { Err(format!("\"{name}\" não pode ir para {h} (liberados: {})", e.hosts.join(", "))) }
                     else { Ok(()) };
                 (desc, res)
             }
@@ -288,11 +295,39 @@ pub fn check(c: &Caller, names: &[String], target: Target) -> ApiResult<()> {
     Ok(())
 }
 /// Tira os valores dos segredos de um texto que volta para a página (resposta HTTP, saída de programa).
+/// O valor como ele costuma voltar numa resposta: como é, URL-encoded, escapado em JSON e em base64. As mais
+/// longas primeiro (uma forma que contém outra sai inteira).
+pub fn forms(v: &str) -> Vec<String> {
+    use base64::Engine;
+    let json = serde_json::to_string(v).ok().and_then(|s| s.get(1..s.len() - 1).map(String::from)).unwrap_or_default();
+    let mut f = vec![v.to_string(), urlencoding::encode(v).into_owned(), json, base64::engine::general_purpose::STANDARD.encode(v), base64::engine::general_purpose::STANDARD_NO_PAD.encode(v), base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v)];
+    f.retain(|x| x.len() >= 4);
+    f.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+    f.dedup();
+    f
+}
 pub fn scrub(text: &str, values: &[String]) -> String {
     let mut out = text.to_string();
-    for v in values.iter().filter(|v| v.len() >= 4) { if out.contains(v.as_str()) { out = out.replace(v.as_str(), "••••••"); } }
+    for v in values.iter().filter(|v| v.len() >= 4) { for f in forms(v) { if out.contains(f.as_str()) { out = out.replace(f.as_str(), "••••••"); } } }
     out
 }
+/// `scrub` em bytes (resposta binária, saída de programa ainda não decodificada)
+pub fn scrub_bytes(bytes: &[u8], values: &[String]) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    for v in values.iter().filter(|v| v.len() >= 4) {
+        for f in forms(v) {
+            let f = f.as_bytes();
+            if memchr::memmem::find(&out, f).is_none() { continue; }
+            let (mut n, mut i) = (Vec::with_capacity(out.len()), 0);
+            for at in memchr::memmem::find_iter(&out, f) { if at < i { continue; } n.extend_from_slice(&out[i..at]); n.extend_from_slice("••••••".as_bytes()); i = at + f.len(); }
+            n.extend_from_slice(&out[i..]);
+            out = n;
+        }
+    }
+    out
+}
+/// quantos bytes do fim de um pedaço de saída esperar pelo próximo: um segredo cortado entre dois pedaços sai inteiro
+pub fn scrub_tail(values: &[String]) -> usize { values.iter().filter(|v| v.len() >= 4).flat_map(|v| forms(v)).map(|f| f.len()).max().unwrap_or(1).saturating_sub(1) }
 
 // ---------- confirmação nativa e área de transferência ----------
 #[cfg(windows)]
@@ -438,6 +473,19 @@ pub fn routes() -> Vec<(&'static str, RouteFn)> {
     ]
 }
 
+/// Texto da confirmação quando um segredo ganha sites ou programas; None se nada foi acrescentado.
+fn widen_text(name: &str, cur: &Entry, hosts: &[String], programs: &[String]) -> Option<String> {
+    let new_hosts: Vec<&String> = hosts.iter().filter(|h| !cur.hosts.contains(h)).collect();
+    let new_progs: Vec<&String> = programs.iter().filter(|p| !cur.programs.contains(p)).collect();
+    if new_hosts.is_empty() && new_progs.is_empty() { return None; }
+    let mut t = format!("Liberar \"{name}\" para mais destinos?\n");
+    if !new_hosts.is_empty() { t += &format!("\nSites novos: {}", new_hosts.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")); }
+    if !new_progs.is_empty() { t += &format!("\nProgramas novos: {}", new_progs.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")); }
+    let users: Vec<String> = cur.grants.iter().filter(|(_, g)| g.allow).map(|(p, _)| plugin_name(p)).collect();
+    if !users.is_empty() { t += &format!("\n\nPlugins que usam este segredo: {}", users.join(", ")); }
+    Some(t)
+}
+
 /// Ações da tela do cofre. As que ampliam acesso passam pela confirmação nativa; restringir ou apagar, não.
 ///   enter   { name, label, note, hosts, programs, fields | kind }  abre a janela nativa para digitar os campos e grava
 ///   paste   { name, label, note, hosts, programs, clear }   grava o texto da área de transferência (um valor só)
@@ -490,6 +538,9 @@ async fn manage(r: &Req) -> ApiResult<()> {
             let old_of = |f: &Field| old.get(&f.key).or_else(|| if single && f.key == main_key { old.get("value") } else { None }).cloned();
             let hosts = if b["hosts"].is_null() { cur.as_ref().map(|e| e.hosts.clone()).unwrap_or_default() } else { list_of(&b["hosts"]) };
             let programs = if b["programs"].is_null() { cur.as_ref().map(|e| e.programs.clone()).unwrap_or_default() } else { list_of(&b["programs"]) };
+            // segredo que já existe ganhando sites/programas: a mesma confirmação nativa do "edit" (a janela de digitar
+            // aceita os campos em branco, que mantêm o valor antigo)
+            if let Some(t) = cur.as_ref().and_then(|c| widen_text(&name, c, &hosts, &programs)) { confirm(t).await?; }
             let asks: Vec<vault_input::Ask> = fields.iter().map(|f| {
                 let had = old_of(f).unwrap_or_default();
                 vault_input::Ask { label: f.label.clone(), secret: f.secret, optional: f.optional, kind: f.kind.clone(), keep: !had.is_empty(), prefill: if f.secret { String::new() } else { had } }
@@ -528,16 +579,7 @@ async fn manage(r: &Req) -> ApiResult<()> {
             let cur = cur.ok_or_else(|| fail(format!("\"{name}\" não está no cofre"), 404))?;
             let hosts = if b["hosts"].is_null() { cur.hosts.clone() } else { list_of(&b["hosts"]) };
             let programs = if b["programs"].is_null() { cur.programs.clone() } else { list_of(&b["programs"]) };
-            let new_hosts: Vec<&String> = hosts.iter().filter(|h| !cur.hosts.contains(h)).collect();
-            let new_progs: Vec<&String> = programs.iter().filter(|p| !cur.programs.contains(p)).collect();
-            if !new_hosts.is_empty() || !new_progs.is_empty() {
-                let mut t = format!("Liberar \"{name}\" para mais destinos?\n");
-                if !new_hosts.is_empty() { t += &format!("\nSites novos: {}", new_hosts.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")); }
-                if !new_progs.is_empty() { t += &format!("\nProgramas novos: {}", new_progs.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")); }
-                let users: Vec<String> = cur.grants.iter().filter(|(_, g)| g.allow).map(|(p, _)| plugin_name(p)).collect();
-                if !users.is_empty() { t += &format!("\n\nPlugins que usam este segredo: {}", users.join(", ")); }
-                confirm(t).await?;
-            }
+            if let Some(t) = widen_text(&name, &cur, &hosts, &programs) { confirm(t).await?; }
             edit(|s| {
                 let e = s.entries.get_mut(&name).ok_or_else(|| fail("sumiu", 404))?;
                 e.hosts = hosts; e.programs = programs; e.updated = now();
@@ -621,6 +663,15 @@ mod tests {
         assert!(!host_ok("*.atlassian.net", "atlassian.net.evil.com") && !host_ok("github.com", "api.github.com"));
         assert_eq!(list_of(&json!("https://api.github.com/, *.x.com;gh")), vec!["*.x.com", "api.github.com", "gh"]);
         assert_eq!(scrub("token=abcd1234 ok", &["abcd1234".into()]), "token=•••••• ok");
+        // as outras formas do mesmo valor também saem
+        let v = vec!["s3cr3t/+=&x".to_string()];
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode("s3cr3t/+=&x");
+        assert!(!scrub(&format!("a={} b={b64}", urlencoding::encode("s3cr3t/+=&x")), &v).contains("s3cr3t"));
+        assert!(!scrub(&format!("b={b64}"), &v).contains(&b64));
+        assert!(!scrub(r#"{"t":"a\"b\\c"}"#, &["a\"b\\c".into()]).contains("\\c"));
+        assert_eq!(scrub_bytes(b"x abcd1234 y abcd1234", &["abcd1234".into()]), "x •••••• y ••••••".as_bytes());
+        assert!(scrub_tail(&v) >= b64.len() - 1);
     }
     #[test]
     fn aliases() {

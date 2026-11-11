@@ -168,7 +168,7 @@ async function xsCheckNow(tab, st) {
     if (tab.stamp && xsStamp(st) === tab.stamp && !tab.gone) return;
     const f = await api('file', { project: tab.project, file: tab.path });
     if (f.binary || f.tooBig || tab.model.isDisposed()) return;
-    tab.stamp = f.mtime + ':' + f.size;
+    tab.stamp = f.mtime + ':' + f.size; tab.enc = f.encoding; tab.bom = f.bom;
     if (tab.gone) { tab.gone = false; tab.saved = tab.goneSaved; markDirty(tab.model); xsBar(); } // voltou (ex.: git checkout)
     xsResolve(tab, xsNorm(f.content, tab.model));
   } catch (e) { if (e.message !== 'login') console.warn('ext check', tab.path, e); }

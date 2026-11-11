@@ -13,6 +13,7 @@ mod build;
 mod desktop;
 mod install;
 mod lint;
+mod output;
 mod plugins;
 mod rpc;
 mod sdk;
@@ -39,8 +40,9 @@ fn fatal(msg: &str) -> ! {
     std::process::exit(1)
 }
 
-/// Porta ocupada por outro BlueScreen: se ele tem janela, só traz para a frente; senão pede para encerrar
-/// (versões antigas, em Node, não têm /api/activate) e, se não sair, finaliza o processo pelo PID.
+/// Porta ocupada por outro BlueScreen: se ele tem janela, só traz para a frente (ou, com --web/--no-open, usa ele como
+/// está, sem fechar a janela de ninguém); senão pede para encerrar (versões antigas, em Node, não têm /api/activate) e,
+/// se não sair, finaliza o processo pelo PID. Ok(false): a instância aberta continua e esta sai.
 /// `replace`: aberto pelo atualizador (BLUESCREEN_REPLACE): a instância antiga sai mesmo tendo janela.
 async fn take_over(port: u16, want_window: bool, replace: bool) -> Result<bool, String> {
     let base = format!("http://127.0.0.1:{port}");
@@ -55,6 +57,8 @@ async fn take_over(port: u16, want_window: bool, replace: bool) -> Result<bool, 
             if r.status().is_success() { return Ok(false); }
         }
     }
+    // --web/--no-open com uma IDE aberta numa janela: o servidor dela serve; derrubá-la perderia o que não foi salvo
+    if !want_window && !replace && cfg["desktop"].as_bool() == Some(true) { return Ok(false); }
     let _ = http.post(format!("{base}/api/shutdown")).header("X-BlueScreen", "takeover").send().await;
     let free = || std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(200)).is_err();
     for _ in 0..10 { tokio::time::sleep(Duration::from_millis(200)).await; if free() { return Ok(true); } }
@@ -84,9 +88,21 @@ fn run_doc(file: PathBuf, devtools: bool) -> ! {
     desktop::run(url, devtools, Some(file))
 }
 
+/// Erro interno (panic) em qualquer thread vai para o log com o nome da thread e o lugar; com panic = "unwind" a IDE
+/// segue aberta: a rota que falhou responde 500 (server.rs), a tarefa do tokio termina e as outras continuam.
+fn log_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let t = std::thread::current();
+        log(format!("ERRO interno (panic) na thread {}: {info}", t.name().unwrap_or("sem nome")));
+        default(info);
+    }));
+}
+
 fn main() {
     #[cfg(windows)]
     unsafe { windows_sys::Win32::System::Console::AttachConsole(windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS); }
+    log_panics();
     // SDKs baixados pela IDE (sdk.rs) no PATH do processo, antes de qualquer thread
     sdk::apply_env_at_startup();
     // reinício pedido pelo atualizador: vale só para esta instância (os terminais e plugins não herdam)
@@ -114,6 +130,8 @@ fn main() {
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 log(format!("Porta {port} ocupada. Verificando se é outro BlueScreen…"));
                 match take_over(port, !headless && !web, replace).await {
+                    Ok(false) if web => { log("O BlueScreen já está aberto numa janela: abrindo o navegador nele."); util::open_url(&format!("http://127.0.0.1:{port}")); std::process::exit(0) }
+                    Ok(false) if headless => { log(format!("O BlueScreen já está aberto numa janela e atende em http://127.0.0.1:{port}.")); std::process::exit(0) }
                     Ok(false) => { log("O BlueScreen já está aberto: trouxe a janela para a frente."); std::process::exit(0) }
                     Ok(true) => tokio::net::TcpListener::bind(("127.0.0.1", port)).await.unwrap_or_else(|e| fatal(&format!("Porta {port}: {e}"))),
                     Err(m) => fatal(&m),
@@ -124,8 +142,8 @@ fn main() {
     });
     let _ = server::create(root.clone(), port, lan_port);
     // sobras de uma atualização (exe/dll antigos renomeados porque estavam em uso)
-    std::thread::spawn(update::cleanup);
-    std::thread::spawn(assoc::register);
+    let _ = std::thread::Builder::new().name("bs-update-cleanup".into()).spawn(update::cleanup);
+    let _ = std::thread::Builder::new().name("bs-assoc".into()).spawn(assoc::register);
     let addr = format!("http://127.0.0.1:{port}");
     println!();
     log(format!("BlueScreen {} (Rust)  ▸  {addr}", server::VERSION));

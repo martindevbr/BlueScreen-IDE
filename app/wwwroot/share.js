@@ -51,7 +51,32 @@ $('#netAddrForm').onsubmit = (e) => { e.preventDefault(); netConnect($('#netAddr
 $('#netAddr').value = NET.addr;
 $('#netLeave').onclick = netLeave;
 $('#loginBack').onclick = netLeave;
-BS.hooks.on('net:pop', (open) => { netRenderSide(); if (open) { $('#netErr').textContent = ''; netPoll(); } else clearTimeout(NET.pollT); });
+BS.hooks.on('net:pop', (open) => { netRenderSide(); if (open) { $('#netErr').textContent = ''; netPoll(); netStatusPoll(); } else { clearTimeout(NET.pollT); clearTimeout(NET.statusT); } });
+
+// ----- este PC na rede: PIN (trocado por excesso de tentativas) e aparelhos conectados -----
+// Com o popover aberto, confere a cada 3 s; fechado, a cada 20 s (o PIN novo vira aviso e a lista fica pronta)
+const netWhen = (ms) => { if (!ms) return ''; const d = new Date(ms); return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('pt-BR'); };
+function netRenderDevs(list) {
+  const box = $('#netDevs'); box.hidden = !list.length;
+  $('#netDevList').innerHTML = list.map(s => `<div class="net-dev"><div><b>${esc(s.ip || 'endereço desconhecido')}</b><small>entrou às ${esc(netWhen(s.since))} · último acesso ${esc(ago(s.last) === 'agora' ? 'agora' : 'há ' + ago(s.last))}</small></div><button class="chip" data-id="${esc(s.id)}" title="Encerra a sessão: o aparelho precisa do PIN de novo">Desconectar</button></div>`).join('');
+  $('#netDevList').querySelectorAll('button').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const r = await api('network/sessions', {}, { method: 'POST', body: JSON.stringify({ revoke: b.dataset.id }) }); netRenderDevs(r.sessions || []); toast('Aparelho desconectado'); }
+    catch (e) { b.disabled = false; toast(e.message); }
+  });
+}
+async function netStatusPoll() {
+  clearTimeout(NET.statusT);
+  if (netAway || S.remote) return;
+  const open = !$('#netPop').hidden;
+  try {
+    if (open || (S.net && S.net.enabled)) { S.net = await api('network', {}, { quiet: true }); renderNet(); }
+    if (open && S.net && S.net.enabled) netRenderDevs((await api('network/sessions', {}, { quiet: true })).sessions || []);
+    else if (open) netRenderDevs([]);
+  } catch {}
+  NET.statusT = setTimeout(netStatusPoll, open ? 3000 : 20000);
+}
+setTimeout(netStatusPoll, 5000);
 
 // conectado a outro PC: se ele sumir (fechou, desligou a rede), avisa e oferece voltar em vez de deixar a tela parada
 let netFails = 0;

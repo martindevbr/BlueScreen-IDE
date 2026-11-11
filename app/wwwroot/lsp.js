@@ -485,7 +485,7 @@ async function applyWorkspaceEdit(we, client, skipModel) {
     try {
       const f = await api('file', { project: S.project.path, file: rel }); if (f.binary || f.tooBig) continue;
       const tmp = monaco.editor.createModel(f.content); tmp.applyEdits(edits); const text = tmp.getValue(); tmp.dispose();
-      await api('file', { project: S.project.path, file: rel }, { method: 'PUT', body: text });
+      await api('file', { project: S.project.path, file: rel, encoding: f.encoding !== 'utf-8' ? f.encoding : null, bom: f.bom ? 1 : null }, { method: 'PUT', body: text });
       const peek = monaco.editor.getModel(monaco.Uri.parse(pathToUri(abs))); if (peek) peek.setValue(text);
       disk.push({ uri: x.uri, type: 2 }); n++;
     } catch (e) { toast('Não foi possível alterar ' + rel + ': ' + e.message, 'err'); }

@@ -196,11 +196,11 @@ function tmFileLinks(t) {
 }
 
 // ----- painel: altura, botões, teclas -----
-$('#tmResize').addEventListener('mousedown', (e) => {
-  e.preventDefault(); const con = $('#termCon'); const y0 = e.clientY, h0 = con.offsetHeight; document.body.classList.add('resizing-v');
+$('#tmResize').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return; e.preventDefault(); const con = $('#termCon'); const y0 = e.clientY, h0 = con.offsetHeight; document.body.classList.add('resizing-v');
   const move = (ev) => { con.style.height = Math.max(120, Math.min(innerHeight - 160, h0 + (y0 - ev.clientY))) + 'px'; };
-  const up = () => { document.body.classList.remove('resizing-v'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); store.set('termH', con.offsetHeight); TM.active?.fit.fit(); };
-  document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  const up = () => { document.body.classList.remove('resizing-v'); store.set('termH', con.offsetHeight); TM.active?.fit.fit(); };
+  pointerDrag(e, move, up);
 });
 $('#termCon').style.height = store.get('termH', 280) + 'px';
 new ResizeObserver(() => { const t = TM.active; if (t && !$('#termCon').hidden) try { t.fit.fit(); } catch {} }).observe($('#tmBody'));

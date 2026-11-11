@@ -31,6 +31,11 @@ fn center_on(w: &Window, main: &Window, h: f64) {
     center(w, PROMPT_W, h);
 }
 
+/// "http://127.0.0.1:4747/x?y" -> "http://127.0.0.1:4747"; None para o que não tem origem (about:, data:, lixo)
+fn origin_of(u: &str) -> Option<String> {
+    reqwest::Url::parse(u).ok().map(|u| u.origin().ascii_serialization()).filter(|o| o != "null")
+}
+
 fn state_file() -> PathBuf { user_dir().join("window.json") }
 
 /// Barra de título no tema da aplicação (Windows 11: cor da legenda; Windows 10: modo escuro).
@@ -106,7 +111,8 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
         if let Ok(icon) = Icon::from_resource(1, None) { wb = wb.with_window_icon(Some(icon)); }
         wb = wb.with_undecorated_shadow(true);
     }
-    let window = wb.build(&event_loop).expect("janela");
+    // sem console no executável de release: o erro aparece numa caixa de mensagem (fatal), não some
+    let window = wb.build(&event_loop).unwrap_or_else(|e| crate::fatal(&format!("Não foi possível abrir a janela: {e}")));
     if welcome { center(&window, WELCOME.0, WELCOME.1); }
     if is_doc && !window.is_maximized() { center(&window, w, h); } // vários documentos abertos: cada um no centro
     // se a página demorar (WebView2 lento na primeira vez), a janela aparece assim mesmo
@@ -116,12 +122,13 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
 
     let data = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("BlueScreen").join("WebView2");
     let mut ctx = WebContext::new(Some(data));
-    let origin = url.trim_end_matches('/').to_string();
+    // origem = esquema + host + porta, lidos da URL (comparar texto aceitaria "http://127.0.0.1:4747@outro.site")
+    let origin = origin_of(&url).unwrap_or_default();
     let (o1, o2) = (origin.clone(), origin.clone());
     // espaço de trabalho de outro PC aberto nesta janela (Conectar, share.rs): as páginas dele também ficam aqui
     let remote: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
     let (r1, r2) = (remote.clone(), remote.clone());
-    let inside = |u: &str, o: &str, r: &std::sync::Mutex<Option<String>>| u.starts_with(o) || r.lock().unwrap().as_deref().is_some_and(|r| u == r || u.starts_with(&format!("{r}/")));
+    let inside = |u: &str, o: &str, r: &std::sync::Mutex<Option<String>>| { let uo = origin_of(u); uo.as_deref() == Some(o) || r.lock().unwrap_or_else(|e| e.into_inner()).as_deref().is_some_and(|r| uo.is_some() && uo == origin_of(r)) };
     let (pi, pt) = (proxy.clone(), proxy.clone());
     let builder = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_url(&url)
@@ -140,7 +147,7 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
         // F5, Ctrl+P, Ctrl+F... são atalhos do BlueScreen, não do navegador
         builder.with_browser_accelerator_keys(false).with_default_context_menus(devtools)
     };
-    let webview = builder.build(&window).expect("WebView2 (instale o Microsoft Edge WebView2 Runtime)");
+    let webview = builder.build(&window).unwrap_or_else(|e| crate::fatal(&format!("Não foi possível iniciar o WebView2: {e}\n\nInstale o Microsoft Edge WebView2 Runtime (https://go.microsoft.com/fwlink/p/?LinkId=2124703) e abra o BlueScreen de novo.")));
 
     // na tela de boas-vindas o tamanho da janela não é guardado: o que vale é o da IDE, restaurado ao abrir um projeto
     let save_state = move |window: &Window, dark: bool, caption: &str, welcome: bool| {
@@ -237,16 +244,16 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
                 let m: Value = serde_json::from_str(&msg).unwrap_or(Value::Null);
                 match m["type"].as_str() {
                     // só a página local escolhe para onde conectar (o endereço já foi conferido por /api/network/probe)
-                    Some("connect") if from.starts_with(&origin) => if let Some(u) = m["url"].as_str().filter(|u| u.starts_with("http://")) {
+                    Some("connect") if origin_of(&from).as_deref() == Some(origin.as_str()) => if let Some(u) = m["url"].as_str().filter(|u| u.starts_with("http://")) {
                         let u = u.trim_end_matches('/').to_string();
                         log(format!("Conectando ao espaço de trabalho {u}"));
-                        *remote.lock().unwrap() = Some(u.clone());
+                        *remote.lock().unwrap_or_else(|e| e.into_inner()) = Some(u.clone());
                         let _ = webview.load_url(&format!("{u}/"));
                     },
                     Some("disconnect") => {
                         log("Voltando ao espaço de trabalho deste PC.");
                         let _ = webview.load_url(&url);
-                        *remote.lock().unwrap() = None;
+                        *remote.lock().unwrap_or_else(|e| e.into_inner()) = None;
                     }
                     Some("shown") => if !window.is_visible() { window.set_visible(true); window.set_focus(); },
                     Some("theme") => {
@@ -315,4 +322,17 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
             _ => {}
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::origin_of;
+    #[test]
+    fn origens() {
+        assert_eq!(origin_of("http://127.0.0.1:4747/").as_deref(), Some("http://127.0.0.1:4747"));
+        assert_eq!(origin_of("http://127.0.0.1:4747/?doc=C%3A%5Ca.csv").as_deref(), Some("http://127.0.0.1:4747"));
+        assert_eq!(origin_of("http://127.0.0.1:4747@evil.com/").as_deref(), Some("http://evil.com"));
+        assert_eq!(origin_of("http://127.0.0.1:47470/").as_deref(), Some("http://127.0.0.1:47470"));
+        assert_eq!(origin_of("about:blank"), None);
+    }
 }

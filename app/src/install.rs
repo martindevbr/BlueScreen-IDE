@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::LazyLock;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Clone, Copy)]
 pub enum Recipe {
@@ -161,8 +161,8 @@ pub(crate) async fn run_cmd(id: &str, prog: &str, args: &[&str]) -> Result<(), S
     let mut child = c.spawn().map_err(|e| format!("não deu para rodar {prog}: {e}"))?;
     let (out, err) = (child.stdout.take(), child.stderr.take());
     let (a, b) = (id.to_string(), id.to_string());
-    let t1 = tokio::spawn(async move { if let Some(o) = out { let mut l = BufReader::new(o).lines(); while let Ok(Some(s)) = l.next_line().await { line(&a, &s); } } });
-    let t2 = tokio::spawn(async move { if let Some(o) = err { let mut l = BufReader::new(o).lines(); while let Ok(Some(s)) = l.next_line().await { line(&b, &s); } } });
+    let t1 = tokio::spawn(async move { if let Some(o) = out { let mut l = crate::output::Lines::new(o); while let Some(s) = l.next().await { line(&a, &s); } } });
+    let t2 = tokio::spawn(async move { if let Some(o) = err { let mut l = crate::output::Lines::new(o); while let Some(s) = l.next().await { line(&b, &s); } } });
     let st = tokio::time::timeout(std::time::Duration::from_secs(900), child.wait()).await.map_err(|_| "demorou demais (15 min)".to_string())?.map_err(|e| e.to_string())?;
     let _ = tokio::join!(t1, t2);
     if st.success() { Ok(()) } else { Err(format!("{prog} terminou com erro (código {})", st.code().unwrap_or(-1))) }
@@ -258,10 +258,24 @@ pub(crate) async fn fetch(job: &str, http: &reqwest::Client, url: &str, name: &s
         let ents: Vec<_> = std::fs::read_dir(&tmp).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
         if let [one] = ents.as_slice() && one.is_dir() { src = one.clone(); }
     }
-    let _ = tokio::fs::remove_dir_all(dest).await;
+    // a versão anterior só sai depois que a nova entrou: em uso (ou se a troca falhar), ela continua funcionando
+    let old = base.join(format!("{leaf}.old"));
+    let had = dest.exists();
+    if had {
+        let _ = tokio::fs::remove_dir_all(&old).await;
+        if let Err(e) = tokio::fs::rename(dest, &old).await {
+            let _ = tokio::fs::remove_dir_all(&tmp).await;
+            return Err(format!("não deu para trocar a pasta (algum programa dela está aberto?): {e}"));
+        }
+    }
     let moved = tokio::fs::rename(&src, dest).await;
     if src != tmp { let _ = tokio::fs::remove_dir_all(&tmp).await; }
-    moved.map_err(|e| format!("não deu para trocar a pasta (algum programa dela está aberto?): {e}"))?;
+    if let Err(e) = moved {
+        if had { let _ = tokio::fs::rename(&old, dest).await; }
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        return Err(format!("não deu para trocar a pasta (algum programa dela está aberto?): {e}"));
+    }
+    if had { let _ = tokio::fs::remove_dir_all(&old).await; }
     line(job, &format!("Instalado em {}", dest.display()));
     Ok(())
 }

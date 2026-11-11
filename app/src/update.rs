@@ -4,8 +4,10 @@
 //! (update/check): git fetch e os commits que chegaram. O que mudou decide o tamanho da atualização:
 //! - só interface (app/wwwroot, ui.js/style.css de plugins, docs): git pull e copiar os arquivos; a página recarrega;
 //! - núcleo (Rust, Cargo, build.ps1, ícone): git pull, build.ps1 numa pasta temporária, troca dos arquivos e reinício.
-//! Exe e DLL em uso não podem ser sobrescritos no Windows, mas podem ser renomeados: viram *.old-<n>.exe e somem no
-//! próximo início (cleanup). O reinício abre o exe novo com BLUESCREEN_REPLACE, que encerra esta instância.
+//!
+//! A troca dos arquivos é transacional (ver swap): os arquivos retirados ficam temporariamente em .bs-update.
+//! Um erro no meio desfaz a troca; depois de concluir, os temporários são removidos.
+//! O reinício abre o exe novo com BLUESCREEN_REPLACE, que encerra esta instância.
 use crate::build::detect::which;
 use crate::plugins::{RouteFn, ok, route_fn};
 use crate::util::*;
@@ -14,7 +16,6 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Default)]
 struct Job {
@@ -141,6 +142,10 @@ fn from_source() -> bool {
     let d = absolute(&app_dir());
     repo().is_some_and(|r| { let app = absolute(&r.join("app")); d == app || within(&app.join("target"), &d) || within(&app.join("dist"), &d) })
 }
+/// instalação compilada do código neste PC (marcador do Instalar BlueScreen.cmd ou do atualizador): a versão dela é a
+/// do Cargo.toml (X.Y.0) e os Releases são X.Y.Z, então o Release pareceria sempre "mais novo" e trocaria o build
+/// local por cima. Ela segue pelo git, como quem roda do código.
+fn local_build() -> bool { app_dir().join(LOCAL_BUILD).is_file() }
 fn http(timeout: Option<u64>) -> Result<reqwest::Client, String> {
     let b = reqwest::Client::builder().user_agent(concat!("BlueScreen-IDE/", env!("CARGO_PKG_VERSION"))).connect_timeout(Duration::from_secs(15));
     let b = match timeout { Some(s) => b.timeout(Duration::from_secs(s)), None => b };
@@ -177,6 +182,7 @@ async fn apply_release(info: Value) -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
     let url = info["url"].as_str().ok_or("Release sem endereço do pacote")?.to_string();
     let dir = app_dir();
+    let lock = update_lock(&dir)?;
     let stage = std::env::temp_dir().join("bluescreen-release");
     let _ = tokio::fs::remove_dir_all(&stage).await;
     tokio::fs::create_dir_all(&stage).await.map_err(|e| e.to_string())?;
@@ -216,17 +222,20 @@ async fn apply_release(info: Value) -> Result<(), String> {
     };
     if !want.eq_ignore_ascii_case(&have) { return Err(format!("O pacote baixado não confere com a soma publicada (esperado {want}, veio {have}). Nada foi instalado.")); }
     push(&format!("sha256 conferido: {have}"));
-    let out = stage.join("BlueScreen");
+    // extraído na pasta de troca, ao lado da instalação (mesmo disco: a troca é só renomear)
+    let out = upd(&dir).join("new");
+    let _ = tokio::fs::remove_dir_all(&out).await;
     tokio::fs::create_dir_all(&out).await.map_err(|e| e.to_string())?;
     let x = run("tar", &["-xf", &zip.to_string_lossy(), "-C", &out.to_string_lossy()], &stage, 120_000).await;
-    if !x.ok { return Err(format!("não deu para extrair o pacote: {}", x.err.trim())); }
-    if !out.join("BlueScreen.exe").is_file() { return Err("o pacote não tem o BlueScreen.exe".into()); }
+    if !x.ok { let _ = tokio::fs::remove_dir_all(&out).await; return Err(format!("não deu para extrair o pacote: {}", x.err.trim())); }
+    if !out.join(EXE).is_file() { let _ = tokio::fs::remove_dir_all(&out).await; return Err("o pacote não tem o BlueScreen.exe".into()); }
     set(|j| j.progress = 0.85);
 
-    // 3. instalar: troca os arquivos (exe e dll em uso são renomeados, ver unlock)
+    // 3. instalar: troca os arquivos por renomeação; um erro no meio desfaz (ver swap)
     set(|j| j.step = 2);
     let d2 = dir.clone();
-    tokio::task::spawn_blocking(move || copy_tree(&out, &d2)).await.map_err(|e| e.to_string())?.map_err(|e| format!("instalação em {}: {e}", dir.display()))?;
+    tokio::task::spawn_blocking(move || install_stage(&out, &d2)).await.map_err(|e| e.to_string())?.map_err(|e| format!("instalação em {}: {e}", dir.display()))?;
+    drop(lock);
     push(&format!("instalado em {}", dir.display()));
     let _ = tokio::fs::remove_dir_all(&stage).await;
     // Configurações > Apps mostra a versão nova (instalado pelo BlueScreen-Setup.exe ou pelo Instalar BlueScreen.cmd)
@@ -245,7 +254,10 @@ async fn apply_release(info: Value) -> Result<(), String> {
 
 async fn check() -> Value {
     // instalado (fora do código-fonte): a versão pronta publicada pelo GitHub Actions; sem internet ou sem Release, o git
-    if !from_source() {
+    if local_build() && repo().is_none() {
+        return json!({ "available": false, "reason": "Este BlueScreen foi compilado do código, mas a pasta do repositório não foi encontrada (source.txt). Atualize pelo repositório e rode o instalador de novo." });
+    }
+    if !from_source() && !local_build() {
         match check_release().await {
             Ok(v) => return v,
             Err(e) => { log(format!("atualização: Releases indisponíveis ({e}); tentando pelo git")); if repo().is_none() { return json!({ "available": false, "reason": format!("Não deu para consultar as versões publicadas: {e}") }); } }
@@ -299,6 +311,7 @@ async fn apply(info: Value) -> Result<(), String> {
     let build = info["needsBuild"].as_bool() == Some(true);
     let dir = app_dir();
     let in_repo_app = absolute(&dir) == absolute(&repo.join("app")); // rodando do código-fonte (wwwroot do próprio repo)
+    let _lock = if in_repo_app { None } else { Some(update_lock(&dir)?) };
 
     // 1. git pull (guarda e reaplica mudanças locais)
     set(|j| { j.step = 0; j.progress = 0.03; });
@@ -326,7 +339,7 @@ async fn apply(info: Value) -> Result<(), String> {
     let app = repo.join("app");
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     // rodando de app\target\release: o cargo precisa sobrescrever o exe em uso
-    if within(&app.join("target"), &me) { unlock(&me)?; }
+    if within(&app.join("target"), &me) { unlock(&me, &mut vec![])?; }
     let stage = std::env::temp_dir().join("bluescreen-update");
     let _ = std::fs::remove_dir_all(&stage);
     let total = std::fs::read_to_string(app.join("Cargo.lock")).map(|t| t.matches("[[package]]").count()).unwrap_or(400).max(150) as f64 * 0.8;
@@ -345,8 +358,8 @@ async fn apply(info: Value) -> Result<(), String> {
     let (out, err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let compiled = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let reader = |s: Box<dyn tokio::io::AsyncRead + Unpin + Send>, n: std::sync::Arc<std::sync::atomic::AtomicUsize>| tokio::spawn(async move {
-        let mut lines = BufReader::new(s).lines();
-        while let Ok(Some(l)) = lines.next_line().await {
+        let mut lines = crate::output::Lines::new(s);
+        while let Some(l) = lines.next().await {
             if l.trim_start().starts_with("Compiling ") {
                 let k = n.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 set(|j| j.progress = j.progress.max(0.08 + 0.72 * (k as f64 / total).min(1.0)));
@@ -366,7 +379,9 @@ async fn apply(info: Value) -> Result<(), String> {
         push("rodando do código-fonte: o exe novo fica em app\\target\\release");
         app.join("target").join("release").join("bluescreen.exe")
     } else {
-        copy_tree(&new, &dir).map_err(|e| format!("instalação em {}: {e}", dir.display()))?;
+        install_tree(&new, &dir).map_err(|e| format!("instalação em {}: {e}", dir.display()))?;
+        // compilada aqui: as próximas atualizações seguem pelo git, nunca pelo Release (ver check)
+        let _ = std::fs::write(dir.join(LOCAL_BUILD), "compilado do código-fonte pelo atualizador do BlueScreen\n");
         push(&format!("instalado em {}", dir.display()));
         dir.join("BlueScreen.exe")
     };
@@ -376,27 +391,193 @@ async fn apply(info: Value) -> Result<(), String> {
     Ok(())
 }
 
-/// arquivo em uso (exe/dll rodando): renomeia para *.old-<n> para liberar o nome
-fn unlock(p: &Path) -> Result<(), String> {
+// ---------- troca transacional dos arquivos ----------
+// Tudo acontece dentro da pasta do programa, em .bs-update\ (mesmo disco: cada troca é uma renomeação, instantânea):
+//   new\         a versão nova, copiada ou extraída inteira antes de mexer em qualquer arquivo em uso
+//   prev-<n>\    arquivos retirados durante a troca; removidos ao concluir ou no próximo início se ainda em uso.
+//   journal.json a troca em andamento: se o BlueScreen cair no meio, o próximo início desfaz (recover)
+// O manifesto (.bluescreen-files) lista os arquivos instalados. Os que saíram da versão nova são removidos,
+// sem tocar no que não é do programa (Desinstalar.cmd, source.txt, unins000.exe).
+const UPD_DIR: &str = ".bs-update";
+const MANIFEST: &str = ".bluescreen-files";
+/// marcador gravado ao lado do exe quando ele foi compilado do código (Instalar BlueScreen.cmd ou o atualizador
+/// compilando): essa instalação se atualiza pelo git e nunca recebe o Release por cima (ver check)
+pub const LOCAL_BUILD: &str = "local-build.txt";
+const EXE: &str = "BlueScreen.exe";
+
+fn upd(dir: &Path) -> PathBuf { dir.join(UPD_DIR) }
+/// arquivos de uma pasta, com caminho relativo em "/" (pastas vazias não contam)
+fn files_of(root: &Path) -> Vec<String> {
+    fn walk(root: &Path, d: &Path, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(d) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if e.file_type().is_ok_and(|t| t.is_dir()) { walk(root, &p, out); } else { out.push(rel(root, &p)); }
+        }
+    }
+    let mut out = vec![]; walk(root, root, &mut out); out.sort(); out
+}
+/// caminho relativo de um manifesto ou diário: nada de "..", absoluto ou a pasta da própria atualização
+fn safe_rel(r: &str) -> bool { !r.is_empty() && !r.starts_with('/') && !r.contains(':') && !r.contains('\\') && !r.split('/').any(|s| s.is_empty() || s == "." || s == "..") && !r.starts_with(UPD_DIR) }
+fn read_list(p: &Path) -> Option<Vec<String>> { std::fs::read_to_string(p).ok().map(|t| t.lines().map(str::trim).filter(|l| safe_rel(l)).map(String::from).collect()) }
+
+/// Lock de arquivo: duas instâncias (outra porta, outro usuário na mesma pasta) não atualizam ao mesmo tempo. O
+/// Windows solta o arquivo quando o processo sai, mesmo se cair: não sobra trava velha.
+pub struct UpdateLock(#[allow(dead_code)] std::fs::File);
+fn update_lock(dir: &Path) -> Result<UpdateLock, String> {
+    let d = upd(dir);
+    std::fs::create_dir_all(&d).map_err(|e| format!("não deu para criar {}: {e}", d.display()))?;
+    let mut o = std::fs::OpenOptions::new(); o.write(true).create(true).truncate(false);
+    #[cfg(windows)] { use std::os::windows::fs::OpenOptionsExt; o.share_mode(0); }
+    let lock = o.open(d.join("lock")).map(UpdateLock).map_err(|e| format!("Não foi possível obter a trava da atualização (outra janela pode estar atualizando): {e}"))?;
+    recover(dir)?;
+    Ok(lock)
+}
+
+/// O que uma troca fez, para desfazer: `moved` saiu do lugar para old\ (substituído ou removido); `placed` entrou
+/// vindo de new\ (e não existia antes quando também não está em `moved`).
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Journal { #[serde(default)] old: String, moved: Vec<String>, placed: Vec<String> }
+/// pastas prev-<n> da mais antiga para a mais nova
+fn prev_dirs(u: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<(u64, PathBuf)> = std::fs::read_dir(u).into_iter().flatten().flatten()
+        .filter_map(|e| { let n = e.file_name().to_string_lossy().into_owned(); n.strip_prefix("prev-")?.parse().ok().map(|k| (k, e.path())) }).collect();
+    v.sort(); v.into_iter().map(|(_, p)| p).collect()
+}
+fn mv(from: &Path, to: &Path) -> Result<(), String> {
+    if let Some(p) = to.parent() { std::fs::create_dir_all(p).map_err(|e| format!("{}: {e}", p.display()))?; }
+    std::fs::rename(from, to).map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))
+}
+/// tira pastas que ficaram vazias depois de remover arquivos (só as do caminho de cada um, nunca a raiz)
+fn prune_empty(dir: &Path, rels: &[String]) {
+    for r in rels {
+        let mut p = dir.join(r);
+        while let Some(parent) = p.parent().map(Path::to_path_buf) {
+            if parent == dir || std::fs::remove_dir(&parent).is_err() { break; }
+            p = parent;
+        }
+    }
+}
+fn save_journal(dir: &Path, j: &Journal) -> Result<(), String> {
+    write_atomic(&upd(dir).join("journal.json"), &serde_json::to_string(j).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+/// Desfaz a troca, preservando o diário e o backup se algum arquivo não puder voltar.
+fn rollback(dir: &Path, stage: Option<&Path>, old: &Path, j: &mut Journal) -> Result<(), String> {
+    // Registra as remoções antes de restaurar os originais: permite tentar novamente sem apagá-los.
+    while let Some(r) = j.placed.last().cloned() {
+        let at = dir.join(&r);
+        if at.exists() {
+            let back = stage.map(|s| s.join(&r));
+            if !back.as_ref().is_some_and(|b| mv(&at, b).is_ok()) {
+                std::fs::remove_file(&at).map_err(|e| format!("Retirada de {r}: {e}"))?;
+            }
+        }
+        j.placed.pop(); save_journal(dir, j)?;
+    }
+    while let Some(r) = j.moved.last().cloned() {
+        let o = old.join(&r);
+        if o.exists() { mv(&o, &dir.join(&r))?; }
+        j.moved.pop(); save_journal(dir, j)?;
+    }
+    Ok(())
+}
+
+/// Troca os arquivos de `dir` pelos de `stage` (mesmo disco) e remove `remove` (os que saíram da versão nova). Tudo
+/// por renomeação, o BlueScreen.exe por último; um erro no meio desfaz o que já foi trocado.
+/// Ao concluir, remove os temporários e devolve a lista nova do manifesto.
+fn swap(dir: &Path, stage: &Path, remove: &[String]) -> Result<Vec<String>, String> {
+    let u = upd(dir);
+    let mut n = now_ms() as u64;
+    while u.join(format!("prev-{n}")).exists() { n += 1; }
+    let old = u.join(format!("prev-{n}"));
+    let mut news = files_of(stage);
+    if news.is_empty() { return Err("a versão nova está vazia".into()); }
+    // o exe por último: até ele ser trocado, quem abre o programa pega a versão antiga
+    news.sort_by_key(|r| r.eq_ignore_ascii_case(EXE));
+    let mut j = Journal { old: format!("prev-{n}"), ..Default::default() };
+    let journal = u.join("journal.json");
+    let save = |j: &Journal| write_atomic(&journal, &serde_json::to_string(j).unwrap_or_default()).map_err(|e| format!("diário da atualização: {e}"));
+    let res = (|| -> Result<(), String> {
+        for r in remove.iter().filter(|r| !news.contains(r)) {
+            let at = dir.join(r);
+            if !at.is_file() { continue; }
+            j.moved.push(r.clone()); save(&j)?;
+            mv(&at, &old.join(r))?;
+        }
+        for r in &news {
+            let at = dir.join(r);
+            if at.exists() { j.moved.push(r.clone()); save(&j)?; mv(&at, &old.join(r))?; }
+            j.placed.push(r.clone()); save(&j)?;
+            mv(&stage.join(r), &at)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = res {
+        push(&format!("erro na troca: {e}; desfazendo"));
+        if let Err(back) = rollback(dir, Some(stage), &old, &mut j) {
+            return Err(format!("{e}; falha ao restaurar: {back}. Diário e backup preservados em {}", u.display()));
+        }
+        let _ = std::fs::remove_file(&journal);
+        let _ = std::fs::remove_dir_all(&old);
+        return Err(e);
+    }
+    let removed: Vec<String> = j.moved.iter().filter(|r| !news.contains(r)).cloned().collect();
+    prune_empty(dir, &removed);
+    // A troca terminou: os arquivos retirados eram apenas temporários de recuperação.
+    std::fs::remove_file(&journal).map_err(|e| e.to_string())?;
+    for p in prev_dirs(&u) { let _ = std::fs::remove_dir_all(&p); }
+    Ok(news)
+}
+
+/// Instala a pasta `src` (a versão nova, em qualquer disco) em `dst`: copia para .bs-update\new e troca (swap).
+fn install_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    let stage = upd(dst).join("new");
+    let _ = std::fs::remove_dir_all(&stage);
+    copy_tree_plain(src, &stage).map_err(|e| format!("cópia da versão nova: {e}"))?;
+    install_stage(&stage, dst)
+}
+/// Troca `dst` pela versão já em .bs-update\new, com a lista do manifesto anterior (ou, na primeira vez, o que dá
+/// para saber que é do programa: a interface e os plugins que vêm junto).
+fn install_stage(stage: &Path, dst: &Path) -> Result<(), String> {
+    let news = files_of(stage);
+    let remove = read_list(&dst.join(MANIFEST)).unwrap_or_else(|| {
+        let plugins: Vec<String> = news.iter().filter_map(|r| r.strip_prefix("plugins/")?.split('/').next().map(|id| format!("plugins/{id}/"))).collect();
+        files_of(dst).into_iter().filter(|r| r.starts_with("wwwroot/") || plugins.iter().any(|p| r.starts_with(p.as_str()))).collect()
+    });
+    let list = swap(dst, stage, &remove)?;
+    let _ = std::fs::remove_dir_all(stage);
+    write_atomic(&dst.join(MANIFEST), &(list.join("\n") + "\n")).map_err(|e| format!("manifesto: {e}"))?;
+    Ok(())
+}
+/// Troca que não terminou (o BlueScreen caiu no meio): desfaz pelo diário, no início do programa.
+fn recover(dir: &Path) -> Result<(), String> {
+    let u = upd(dir);
+    let journal = u.join("journal.json");
+    let text = match std::fs::read_to_string(&journal) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut j: Journal = serde_json::from_str(&text).map_err(|e| format!("Diário inválido; backup preservado: {e}"))?;
+    if j.moved.iter().chain(&j.placed).any(|r| !safe_rel(r)) || !(j.old.is_empty() || j.old.starts_with("prev-") && safe_rel(&j.old)) {
+        return Err("Diário com caminhos inválidos; backup preservado".into());
+    }
+    let old = if j.old.is_empty() { u.join("old") } else { u.join(&j.old) };
+    rollback(dir, None, &old, &mut j)?;
+    std::fs::remove_file(&journal).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(())
+}
+/// arquivo em uso (exe/dll rodando): renomeia para *.old-<n> para liberar o nome; anota em `moved` (nome, renomeado).
+/// Ainda usado para o exe de app\target\release (o cargo precisa sobrescrevê-lo ao compilar do código).
+fn unlock(p: &Path, moved: &mut Vec<(PathBuf, PathBuf)>) -> Result<(), String> {
     if !p.exists() || std::fs::OpenOptions::new().write(true).open(p).is_ok() { return Ok(()); }
     let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = p.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let old = p.with_file_name(format!("{stem}.old-{}.{ext}", now_ms() as u64));
     std::fs::rename(p, &old).map_err(|e| format!("{} está em uso e não pôde ser trocado: {e}", p.display()))?;
     push(&format!("{} em uso: renomeado para {}", p.display(), old.file_name().unwrap_or_default().to_string_lossy()));
-    Ok(())
-}
-fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-    for e in std::fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
-        let (from, to) = (e.path(), dst.join(e.file_name()));
-        if e.file_type().is_ok_and(|t| t.is_dir()) {
-            if e.file_name() == "wwwroot" { mirror(&from, &to)?; } else { copy_tree(&from, &to)?; }
-        } else {
-            unlock(&to)?;
-            std::fs::copy(&from, &to).map_err(|er| format!("{}: {er}", to.display()))?;
-        }
-    }
+    moved.push((p.to_path_buf(), old));
     Ok(())
 }
 /// deixa `dst` igual a `src` (remove o que saiu da versão nova)
@@ -442,13 +623,105 @@ pub fn cleanup() {
         }
     }
     let dir = app_dir();
+    // troca interrompida: volta ao que era; sobras de uma troca (new\, old\ sem diário, versões anteriores presas)
+    if let Err(e) = cleanup_update(&dir) { log(format!("Limpeza adiada: {e}")); return; }
     walk(&dir, 2);
     walk(&dir.join("target").join("release"), 0);
+}
+
+fn cleanup_update(dir: &Path) -> Result<(), String> {
+    let _lock = update_lock(dir)?;
+    let u = upd(dir);
+    let _ = std::fs::remove_dir_all(u.join("new"));
+    for p in prev_dirs(&u) { let _ = std::fs::remove_dir_all(&p); }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{native, packages, semver};
+    fn test_dir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("bs-recovery-{}-{:08x}", std::process::id(), rand::random::<u32>()));
+        std::fs::create_dir_all(&d).unwrap(); d
+    }
+    #[test]
+    fn recovery_preserves_backup_and_retries() {
+        use super::{Journal, upd, save_journal, recover};
+        let d = test_dir(); let old = upd(&d).join("prev-1");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a"), "old-a").unwrap();
+        std::fs::write(old.join("b"), "old-b").unwrap();
+        // An external directory blocks restoring a. b can already be restored.
+        std::fs::create_dir(d.join("a")).unwrap();
+        std::fs::write(d.join("a/block"), "keep").unwrap();
+        std::fs::write(d.join("b"), "new-b").unwrap();
+        save_journal(&d, &Journal { old: "prev-1".into(), moved: vec!["a".into(), "b".into()], placed: vec!["b".into()] }).unwrap();
+        assert!(recover(&d).is_err());
+        assert!(upd(&d).join("journal.json").is_file());
+        assert_eq!(std::fs::read_to_string(old.join("a")).unwrap(), "old-a");
+        assert_eq!(std::fs::read_to_string(d.join("b")).unwrap(), "old-b");
+        std::fs::remove_file(d.join("a/block")).unwrap();
+        std::fs::remove_dir(d.join("a")).unwrap();
+        recover(&d).unwrap();
+        assert_eq!(std::fs::read_to_string(d.join("a")).unwrap(), "old-a");
+        assert_eq!(std::fs::read_to_string(d.join("b")).unwrap(), "old-b");
+        assert!(!upd(&d).join("journal.json").exists());
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    #[cfg(windows)]
+    fn cleanup_respects_update_lock() {
+        let d = test_dir(); let lock = super::update_lock(&d).unwrap();
+        let stage = super::upd(&d).join("new");
+        std::fs::create_dir_all(&stage).unwrap();
+        std::fs::write(stage.join("file"), "new").unwrap();
+        let journal = super::upd(&d).join("journal.json");
+        std::fs::write(&journal, "in use").unwrap();
+        assert!(super::cleanup_update(&d).is_err());
+        assert!(stage.join("file").exists());
+        assert_eq!(std::fs::read_to_string(&journal).unwrap(), "in use");
+        drop(lock);
+        // Invalid journals also prevent cleanup from deleting recovery data.
+        assert!(super::cleanup_update(&d).is_err());
+        assert!(stage.join("file").exists());
+        std::fs::remove_file(journal).unwrap();
+        super::cleanup_update(&d).unwrap();
+        assert!(!stage.exists());
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn troca_sem_guardar_versao_anterior() {
+        use super::{MANIFEST, install_stage, prev_dirs, upd};
+        let d = std::env::temp_dir().join(format!("bs-upd-{}-{:08x}", std::process::id(), rand::random::<u32>()));
+        let w = |p: &str, t: &str| { let f = d.join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, t).unwrap(); };
+        let r = |p: &str| std::fs::read_to_string(d.join(p)).ok();
+        // instalação antiga (sem manifesto) com arquivos que não são do programa
+        w("BlueScreen.exe", "exe1"); w("wwwroot/app.js", "a1"); w("wwwroot/velho.js", "v1"); w("source.txt", "repo"); w("plugins/x/ui.js", "x1"); w("plugins/meu/ui.js", "meu");
+        // versão nova em .bs-update\new
+        w(".bs-update/new/BlueScreen.exe", "exe2"); w(".bs-update/new/wwwroot/app.js", "a2"); w(".bs-update/new/wwwroot/novo.js", "n2"); w(".bs-update/new/plugins/x/ui.js", "x2");
+        install_stage(&upd(&d).join("new"), &d).unwrap();
+        assert_eq!(r("BlueScreen.exe").as_deref(), Some("exe2"));
+        assert_eq!(r("wwwroot/app.js").as_deref(), Some("a2"));
+        assert_eq!(r("wwwroot/novo.js").as_deref(), Some("n2"));
+        assert_eq!(r("wwwroot/velho.js"), None); // saiu da versão nova
+        assert_eq!(r("source.txt").as_deref(), Some("repo")); // não é do programa: fica
+        assert_eq!(r("plugins/meu/ui.js").as_deref(), Some("meu")); // plugin que não vem junto: fica
+        assert!(r(MANIFEST).unwrap().contains("wwwroot/novo.js"));
+        assert!(prev_dirs(&upd(&d)).is_empty());
+        assert!(!upd(&d).join("journal.json").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn caminhos_do_manifesto() {
+        use super::safe_rel;
+        assert!(safe_rel("wwwroot/app.js"));
+        assert!(!safe_rel("../fora.txt"));
+        assert!(!safe_rel("a/../../b"));
+        assert!(!safe_rel("C:/Windows/x"));
+        assert!(!safe_rel("/etc/x"));
+        assert!(!safe_rel(".bs-update/lock"));
+        assert!(!safe_rel(""));
+    }
     #[test]
     fn versions() {
         assert!(semver("v2.1.10") > semver("2.1.9"));

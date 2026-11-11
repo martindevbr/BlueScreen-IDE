@@ -50,7 +50,7 @@ async function install(list) {
   }
   if (!done) { if (bs.S.tool === 'plugins') bs.renderTool(); return; }
   store.set('reopenTool', 'plugins'); toast(done > 1 ? `${done} plugins instalados. Recarregando…` : 'Plugin instalado. Recarregando…', 'ok');
-  setTimeout(() => location.reload(), 400);
+  reloadSaved(400); // grava as abas com alterações antes (app.js)
 }
 async function setServers(list) {
   try { await post('plugins/servers', { servers: list }); await check(true); }

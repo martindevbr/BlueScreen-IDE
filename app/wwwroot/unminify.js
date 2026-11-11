@@ -96,7 +96,7 @@ async function umOpen(src, pos) {
 function umToggle() {
   const t = S.active; if (!t) return;
   if (t.unmin) { // formatado -> original, na mesma posição
-    const src = t.unmin.src; if (!S.tabs.includes(src)) return openFile(src.path, 'editor');
+    const src = t.unmin.src; if (!S.tabs.includes(src)) return openFile(src.path, 'editor', undefined, undefined, src.project);
     if (!src.model) return activate(src); // leitor de arquivo grande: sem modelo para mapear a posição
     const p = umMapPos(t, false, editor.getPosition()); activate(src); revealAt(editor, p.lineNumber, p.column); return;
   }

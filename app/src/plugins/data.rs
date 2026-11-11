@@ -40,7 +40,12 @@ fn write_obj(p: &Path, o: &Map<String, Value>) -> ApiResult<()> {
 /// lê, muda e grava um dos JSON da pasta de dados
 fn edit<T>(p: &Path, f: impl FnOnce(&mut Map<String, Value>) -> T) -> ApiResult<T> {
     let _g = LOCK.lock();
-    let mut o = read_obj(p);
+    // arquivo ilegível não é "vazio": gravar por cima apagaria o que o plugin guardou
+    let mut o = match read_json_strict(p).map_err(|e| fail(e.to_string(), 500))? {
+        Value::Object(o) => o,
+        Value::Null => Map::new(),
+        _ => return Err(fail(format!("{} não é um objeto JSON; conserte ou apague o arquivo", p.display()), 500)),
+    };
     let out = f(&mut o);
     write_obj(p, &o)?;
     Ok(out)

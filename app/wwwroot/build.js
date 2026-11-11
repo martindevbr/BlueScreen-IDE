@@ -374,11 +374,11 @@ $('#bcRerun').onclick = () => { const l = BC.last || store.get('buildLast:' + (S
 $('#bcCopy').onclick = () => BC.run && copyText(BC.run.lines.join('\n'));
 $('#bcSeg').querySelectorAll('button').forEach(b => b.onclick = () => { BC.view = b.dataset.v; $('#bcSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); bcAppend(0); });
 // altura do console: arrastar a borda de cima
-$('#bcResize').addEventListener('mousedown', (e) => {
-  e.preventDefault(); const con = $('#buildCon'); const y0 = e.clientY, h0 = con.offsetHeight; document.body.classList.add('resizing-v');
+$('#bcResize').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return; e.preventDefault(); const con = $('#buildCon'); const y0 = e.clientY, h0 = con.offsetHeight; document.body.classList.add('resizing-v');
   const move = (ev) => { const h = Math.max(120, Math.min(innerHeight - 160, h0 + (y0 - ev.clientY))); con.style.height = h + 'px'; };
-  const up = () => { document.body.classList.remove('resizing-v'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); store.set('bcH', con.offsetHeight); };
-  document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  const up = () => { document.body.classList.remove('resizing-v'); store.set('bcH', con.offsetHeight); };
+  pointerDrag(e, move, up);
 });
 $('#buildCon').style.height = store.get('bcH', 280) + 'px';
 // Ctrl+F9 (Build Project no IntelliJ): repete o último build deste projeto, ou compila

@@ -1,7 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2E8BFF"/><stop offset="1" stop-color="#0B56D9"/></linearGradient></defs>
-  <path d="M128 8C34 8 8 34 8 128s26 120 120 120 120-26 120-120S222 8 128 8z" fill="url(#bg)"/>
-  <g fill="#fff"><circle cx="92" cy="96" r="16"/><circle cx="92" cy="152" r="16"/></g>
-  <path d="M100 158Q100 180 80 192" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
-  <path d="M140 72C178 98 178 158 140 184" fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17245C"/><stop offset="1" stop-color="#04060F"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7FB4FF" stop-opacity=".9"/><stop offset="1" stop-color="#2B55E6" stop-opacity=".35"/></linearGradient>
+    <radialGradient id="glow" cx="0.56" cy="0.5" r="0.46"><stop offset="0" stop-color="#2A6BFF" stop-opacity=".55"/><stop offset="1" stop-color="#2A6BFF" stop-opacity="0"/></radialGradient>
+    <linearGradient id="el" x1="100" y1="48" x2="196" y2="212" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7ADCFF"/><stop offset="1" stop-color="#1B55FF"/></linearGradient>
+  </defs>
+  <rect x="10" y="10" width="236" height="236" rx="54" fill="url(#bg)"/>
+  <rect x="10" y="10" width="236" height="236" rx="54" fill="url(#glow)"/>
+  <rect x="11.5" y="11.5" width="233" height="233" rx="52.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+  <g transform="translate(11 0) skewX(-9) translate(6 0)" fill="none" stroke-linejoin="miter" stroke-miterlimit="6">
+    <rect x="62" y="50" width="29" height="156" rx="3" fill="#F2F8FF"/>
+    <path d="M112 60L172 90L112 120" stroke="url(#el)" stroke-width="28"/>
+    <path d="M112 132L188 168L112 204" stroke="#0A1030" stroke-width="46"/>
+    <path d="M112 132L188 168L112 204" stroke="url(#el)" stroke-width="28"/>
+  </g>
 </svg>

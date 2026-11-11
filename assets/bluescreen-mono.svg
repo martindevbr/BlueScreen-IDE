@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs><mask id="cut"><rect width="256" height="256" fill="#fff"/><path d="M112 132L188 168L112 204" fill="none" stroke="#000" stroke-width="50" stroke-linejoin="miter" stroke-miterlimit="6"/></mask></defs>
+  <g transform="translate(128 128) scale(1.3) translate(-128 -128) translate(11 0) skewX(-9) translate(6 0)" fill="none" stroke="currentColor" stroke-linejoin="miter" stroke-miterlimit="6">
+    <rect x="60" y="50" width="33" height="156" rx="3" fill="currentColor" stroke="none"/>
+    <path d="M112 60L172 90L112 120" stroke-width="31" mask="url(#cut)"/>
+    <path d="M112 132L188 168L112 204" stroke-width="31"/>
+  </g>
+</svg>

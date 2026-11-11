@@ -490,20 +490,20 @@ $('#dbHide').onclick = () => show(false);
 $('#dbThread').onchange = (e) => { if (DB.cur) loadFrames(+e.target.value); };
 document.querySelectorAll('#dbgCon .db-sec > h4').forEach(h => h.onclick = (e) => { if (e.target.closest('select')) return; h.parentElement.classList.toggle('open'); store.set('dbSec:' + h.parentElement.dataset.sec, h.parentElement.classList.contains('open')); });
 document.querySelectorAll('#dbgCon .db-sec').forEach(s => { const v = store.get('dbSec:' + s.dataset.sec, null); if (v != null) s.classList.toggle('open', v); });
-$('#dbResize').addEventListener('mousedown', (e) => {
-  e.preventDefault(); const con = $('#dbgCon'); const y0 = e.clientY, h0 = con.offsetHeight; document.body.classList.add('resizing-v');
+$('#dbResize').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return; e.preventDefault(); const con = $('#dbgCon'); const y0 = e.clientY, h0 = con.offsetHeight; document.body.classList.add('resizing-v');
   const move = (ev) => { con.style.height = Math.max(160, Math.min(innerHeight - 160, h0 + (y0 - ev.clientY))) + 'px'; };
-  const up = () => { document.body.classList.remove('resizing-v'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); store.set('dbgH', con.offsetHeight); };
-  document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  const up = () => { document.body.classList.remove('resizing-v'); store.set('dbgH', con.offsetHeight); };
+  pointerDrag(e, move, up);
 });
 // barra: arrastar pela alça (a posição fica guardada, em fração da largura)
 (() => {
   const bar = $('#dbBar'), x = store.get('dbBarX', 0.5); bar.style.left = (x * 100) + '%';
-  bar.querySelector('.db-grip').addEventListener('mousedown', (e) => {
-    e.preventDefault(); const mon = $('#mon').getBoundingClientRect(), dx = e.clientX - bar.getBoundingClientRect().left - bar.offsetWidth / 2;
+  bar.querySelector('.db-grip').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; e.preventDefault(); const mon = $('#mon').getBoundingClientRect(), dx = e.clientX - bar.getBoundingClientRect().left - bar.offsetWidth / 2;
     const move = (ev) => { const f = Math.max(0.08, Math.min(0.92, (ev.clientX - dx - mon.left) / mon.width)); bar.style.left = (f * 100) + '%'; bar.dataset.f = f; };
-    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); if (bar.dataset.f) store.set('dbBarX', +bar.dataset.f); };
-    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    const up = () => { if (bar.dataset.f) store.set('dbBarX', +bar.dataset.f); };
+    pointerDrag(e, move, up);
   });
 })();
 $('#dbgCon').style.height = store.get('dbgH', 300) + 'px';

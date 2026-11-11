@@ -126,14 +126,25 @@ fn place(id: &str, files: &[(String, Vec<u8>)], origin: &Value) -> Result<(), St
     Ok(())
 }
 
+/// maior pacote aceito (o JSON com os arquivos em base64)
+const MAX_PACKAGE: usize = 256 << 20;
 async fn install(server: &str, id: &str, version: Option<&str>) -> Result<Value, String> {
     if !valid_id(id) { return Err(format!("id inválido: {id}")); }
     let server = norm_url(server)?;
+    // só dos servidores que o usuário cadastrou (Plugins › Servidores), nunca de um endereço vindo no pedido
+    if !servers().iter().any(|s| norm_url(&s.url).is_ok_and(|u| u.eq_ignore_ascii_case(&server))) { return Err(format!("{server} não está na lista de servidores de plugins")); }
     let mut url = format!("{server}/api/plugins/{id}");
     if let Some(v) = version { url.push_str(&format!("?version={}", urlencoding::encode(v))); }
-    let r = http(600)?.get(&url).send().await.map_err(|e| net_error(&server, e))?;
+    let mut r = http(600)?.get(&url).send().await.map_err(|e| net_error(&server, e))?;
     if !r.status().is_success() { return Err(server_error(r).await); }
-    let b: Value = r.json().await.map_err(|e| format!("pacote inválido: {e}"))?;
+    let too_big = || format!("o pacote passa de {} MB", MAX_PACKAGE >> 20);
+    if r.content_length().is_some_and(|n| n > MAX_PACKAGE as u64) { return Err(too_big()); }
+    let mut body: Vec<u8> = vec![];
+    while let Some(c) = r.chunk().await.map_err(|e| net_error(&server, e))? {
+        if body.len() + c.len() > MAX_PACKAGE { return Err(too_big()); }
+        body.extend_from_slice(&c);
+    }
+    let b: Value = serde_json::from_slice(&body).map_err(|e| format!("pacote inválido: {e}"))?;
     let mut files: Vec<(String, Vec<u8>)> = vec![];
     for f in b["files"].as_array().into_iter().flatten() {
         let p = f["path"].as_str().unwrap_or("");
@@ -201,6 +212,7 @@ pub fn routes() -> Vec<(&'static str, RouteFn)> {
         // POST { server, id, version? }: baixa, confere e instala (ou atualiza) na pasta do usuário
         ("plugins/install", route_fn(|r| async move {
             r.local_only()?;
+            if !r.is_post() { return Err(fail("POST", 405)); }
             let b: Value = r.body_json()?;
             let (server, id) = (b["server"].as_str().unwrap_or(""), b["id"].as_str().unwrap_or(""));
             install(server, id, b["version"].as_str().filter(|v| !v.is_empty())).await.map_err(|e| fail(e, 502)).and_then(ok)

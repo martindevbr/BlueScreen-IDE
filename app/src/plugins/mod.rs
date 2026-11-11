@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod data;
-mod external;
+pub(crate) mod external;
 pub mod remote;
 pub mod services;
 pub mod vault;
@@ -100,7 +100,13 @@ pub fn config_file() -> PathBuf { user_dir().join("plugins.json") }
 /// ~/.bluescreen/plugins.json: { disabled: [ids], servers: [{ url }] }
 pub fn config() -> Value { match read_json(&config_file()) { v @ Value::Object(_) => v, _ => json!({}) } }
 pub fn save_config(f: impl FnOnce(&mut serde_json::Map<String, Value>)) {
-    let mut v = config();
+    // config ilegível fica como está (gravar por cima perderia a lista de desligados e de servidores)
+    let mut v = match read_json_strict(&config_file()) {
+        Ok(v @ Value::Object(_)) => v,
+        Ok(Value::Null) => json!({}),
+        Ok(_) => { log(format!("{} não é um objeto JSON: não foi alterado", config_file().display())); return; }
+        Err(e) => { log(format!("{e}: não foi alterado")); return; }
+    };
     if let Some(o) = v.as_object_mut() { f(o); }
     let _ = write_atomic(&config_file(), &serde_json::to_string_pretty(&v).unwrap_or_default());
 }
@@ -160,6 +166,19 @@ pub struct Host {
     current: RwLock<Arc<Registry>>,
     core: Arc<HashMap<String, RouteFn>>,
 }
+// Ordem estável com dependências primeiro. Ciclos ficam no fim e não passam pela conferência de ativos.
+fn dependency_order(deps: &[Vec<usize>]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut done = HashSet::new();
+    loop {
+        let next = (0..deps.len()).find(|i| !done.contains(i) && deps[*i].iter().all(|d| done.contains(d)));
+        let Some(i) = next else { break };
+        done.insert(i); out.push(i);
+    }
+    out.extend((0..deps.len()).filter(|i| !done.contains(i)));
+    out
+}
+
 impl Host {
     pub fn new(core: HashMap<String, RouteFn>) -> Self {
         let h = Host { current: RwLock::new(Arc::new(Registry::default())), core: Arc::new(core) };
@@ -177,7 +196,10 @@ impl Host {
         let entries = discover();
         let ids: HashSet<String> = entries.iter().map(|e| e.manifest.id.clone()).collect();
         let mut active: HashSet<String> = HashSet::new();
-        for e in entries {
+        let deps: Vec<Vec<usize>> = entries.iter().map(|e| e.manifest.requires.iter()
+            .filter_map(|id| entries.iter().position(|p| &p.manifest.id == id)).collect()).collect();
+        for i in dependency_order(&deps) {
+            let e = &entries[i];
             let m = e.manifest.clone();
             if skip == Some(m.id.as_str()) { continue; }
             let exe = external::server_cmd(&e.path, &m.id, &m.server);
@@ -201,8 +223,15 @@ impl Host {
             if let Some(launch) = &exe {
                 match external::start(&m.id, &e.path, launch) {
                     Ok(run) => {
-                        for r in &run.routes { reg.routes.insert(r.clone(), external::proxy(m.id.clone(), run.port, r.clone())); }
-                        st.routes = run.routes.clone();
+                        // rota do núcleo ou de outro plugin não é tomada: a primeira fica, a repetida é recusada
+                        let mut mine = vec![];
+                        for r in &run.routes {
+                            if self.core.contains_key(r) { log(format!("plugin {}: a rota {r} é do núcleo; ignorada", m.id)); continue; }
+                            if reg.routes.contains_key(r) { log(format!("plugin {}: a rota {r} já é de outro plugin; ignorada", m.id)); continue; }
+                            reg.routes.insert(r.clone(), external::proxy(m.id.clone(), run.port, r.clone()));
+                            mine.push(r.clone());
+                        }
+                        st.routes = mine;
                         reg._procs.push(run);
                     }
                     Err(er) => { log(format!("plugin {} falhou: {er}", m.id)); st.error = Some(er.to_string()); reg.list.push(st); continue; }
@@ -246,5 +275,26 @@ impl Host {
         for p in &self.get().list {
             log(format!("plugin {} v{}: {}", p.id, p.version, match (&p.error, p.enabled) { (Some(e), _) => format!("ERRO: {e}"), (None, true) => "ligado".into(), _ => "desligado".into() }));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dependency_order;
+    #[test]
+    fn dependencies_start_first_and_failure_blocks_consumers() {
+        let deps = [vec![2], vec![0], vec![]];
+        assert_eq!(dependency_order(&deps), vec![2, 0, 1]);
+        let mut active = std::collections::HashSet::new();
+        for i in dependency_order(&deps) {
+            if deps[i].iter().all(|d| active.contains(d)) && i != 2 { active.insert(i); }
+        }
+        assert!(active.is_empty());
+        let cycles = [vec![1], vec![0], vec![]];
+        active.clear();
+        for i in dependency_order(&cycles) {
+            if cycles[i].iter().all(|d| active.contains(d)) { active.insert(i); }
+        }
+        assert_eq!(active, std::collections::HashSet::from([2]));
     }
 }

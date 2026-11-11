@@ -6,7 +6,7 @@ use crate::build::detect::which;
 use axum::body::Body;
 use axum::extract::FromRequest;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -148,9 +148,7 @@ fn deny(code: StatusCode, msg: &str) -> Response { (code, msg.to_string()).into_
 pub async fn ws(req: Request<Body>, remote: bool, q: HashMap<String, String>) -> Response {
     if remote { return deny(StatusCode::FORBIDDEN, "só pelo PC local"); }
     // WebSocket não passa por CORS: só a própria página pode abrir um shell
-    let host = req.headers().get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let origin = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
-    if host.is_empty() || origin != format!("http://{host}") { return deny(StatusCode::FORBIDDEN, "origem não permitida"); }
+    if !crate::server::ws_origin_ok(req.headers(), remote) { return deny(StatusCode::FORBIDDEN, "origem não permitida"); }
     let list = shells(false);
     let id = q.get("shell").cloned().unwrap_or_default();
     let Some(shell) = list.iter().find(|s| s.id == id).or_else(|| list.first()).cloned() else { return deny(StatusCode::NOT_FOUND, "nenhum shell encontrado") };
@@ -187,14 +185,14 @@ async fn session(mut ws: WebSocket, shell: Shell, cwd: PathBuf, cols: u16, rows:
     let (Ok(mut reader), Ok(mut writer)) = (pair.master.try_clone_reader(), pair.master.take_writer()) else { let _ = killer.kill(); return };
     // leitura e escrita do pseudoconsole são bloqueantes: uma thread para cada, ligadas por canais
     let (otx, mut orx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
-    std::thread::spawn(move || {
+    let _ = std::thread::Builder::new().name("bs-term-read".into()).spawn(move || {
         let mut buf = vec![0u8; 32 * 1024];
         loop { match reader.read(&mut buf) { Ok(0) | Err(_) => break, Ok(n) => if otx.blocking_send(buf[..n].to_vec()).is_err() { break } } }
     });
     let (wtx, wrx) = std::sync::mpsc::channel::<Vec<u8>>();
-    std::thread::spawn(move || { while let Ok(b) = wrx.recv() { if writer.write_all(&b).and_then(|_| writer.flush()).is_err() { break; } } });
+    let _ = std::thread::Builder::new().name("bs-term-write".into()).spawn(move || { while let Ok(b) = wrx.recv() { if writer.write_all(&b).and_then(|_| writer.flush()).is_err() { break; } } });
     let (etx, mut erx) = tokio::sync::oneshot::channel::<u32>();
-    std::thread::spawn(move || { let code = child.wait().map(|s| s.exit_code()).unwrap_or(1); let _ = etx.send(code); });
+    let _ = std::thread::Builder::new().name("bs-term-wait".into()).spawn(move || { let code = child.wait().map(|s| s.exit_code()).unwrap_or(1); let _ = etx.send(code); });
 
     let _ = ws.send(text(json!({ "ready": { "pid": pid, "shell": shell.name, "cwd": cwd_s } }))).await;
     loop {

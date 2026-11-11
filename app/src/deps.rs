@@ -3,16 +3,21 @@
 //! Erros como "Cannot find module" ou "Type annotations can only be used in TypeScript files" quase sempre vêm daqui.
 //! - Node: cada pacote de dependencies/devDependencies precisa de node_modules/<nome>/package.json nesta pasta ou
 //!   numa acima, até a raiz do projeto (workspaces instalam na raiz);
-//! - Python: precisa de um ambiente virtual (.venv, venv, env) com pyvenv.cfg;
+//!   com Yarn PnP (.pnp.cjs) não há node_modules: o próprio .pnp.cjs diz que está instalado;
+//! - Python: precisa de um ambiente virtual (.venv, venv, env) com pyvenv.cfg; Poetry e Pipenv guardam o ambiente
+//!   fora do projeto (cache do Poetry, ~/.virtualenvs), e o conda (environment.yml) nas pastas envs do conda;
 //! - PHP: vendor/autoload.php; .NET: obj/project.assets.json; Dart/Flutter: .dart_tool/package_config.json;
 //!   Ruby: Gemfile.lock; Go: go.sum quando o go.mod tem require.
+//!
+//! "Ignorar esta pasta" no aviso fica em ~/.bluescreen/deps-ignore.json, por projeto (vale para todas as janelas).
 use crate::build::detect::which;
 use crate::plugins::{RouteFn, ok, project_of, route_fn};
+use crate::util::{absolute, fail, read_json_strict, user_dir, write_atomic};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
 pub struct Item {
@@ -35,10 +40,42 @@ const SKIP: &[&str] = &["node_modules", "target", "dist", "build", "out", "vendo
 pub fn routes() -> Vec<(&'static str, RouteFn)> {
     vec![("deps/check", route_fn(|r| async move {
         let root = project_of(&r)?;
+        let ignored = ignored_dirs(&root);
         let items = tokio::task::spawn_blocking(move || check(&root)).await.unwrap_or_default();
-        ok(items)
+        // pasta ignorada (e o que está dentro dela) não aparece no aviso
+        ok(items.into_iter().filter(|it| !ignored.iter().any(|d| inside(&it.dir, d))).collect::<Vec<_>>())
+    })),
+    // POST { dir, ignore: true|false } ou { clear: true }: pastas do projeto que o aviso não confere
+    ("deps/ignore", route_fn(|r| async move {
+        if !r.is_post() { return Err(fail("POST", 405)); }
+        let root = project_of(&r)?;
+        let b: Value = r.body_json()?;
+        let file = ignore_file();
+        let mut all = read_json_strict(&file).map_err(|e| fail(e.to_string(), 500))?;
+        if !all.is_object() { all = json!({}); }
+        let key = ignore_key(&root);
+        let mut list: Vec<String> = all[&key].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        if b["clear"].as_bool() == Some(true) { list.clear(); }
+        else {
+            let dir = b["dir"].as_str().unwrap_or("").trim_matches('/').replace('\\', "/");
+            if dir.split('/').any(|s| s == "..") { return Err(fail("pasta inválida", 400)); }
+            list.retain(|d| d != &dir);
+            if b["ignore"].as_bool() != Some(false) { list.push(dir); }
+        }
+        list.sort(); list.dedup();
+        if list.is_empty() { if let Some(o) = all.as_object_mut() { o.remove(&key); } } else { all[&key] = json!(list); }
+        write_atomic(&file, &serde_json::to_string_pretty(&all).unwrap_or_default()).map_err(|e| fail(e.to_string(), 500))?;
+        ok(json!({ "ignored": list }))
     }))]
 }
+fn ignore_file() -> PathBuf { user_dir().join("deps-ignore.json") }
+/// projeto no arquivo: caminho absoluto em minúsculas (no Windows "C:\Proj" e "c:\proj\" são a mesma pasta)
+fn ignore_key(root: &Path) -> String { absolute(root).to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase() }
+fn ignored_dirs(root: &Path) -> Vec<String> {
+    crate::util::read_json(&ignore_file())[ignore_key(root)].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+}
+/// `dir` é a pasta `ignored` ou fica dentro dela (a raiz, "", vale só para os manifestos da própria raiz)
+fn inside(dir: &str, ignored: &str) -> bool { dir == ignored || (!ignored.is_empty() && dir.starts_with(&format!("{ignored}/"))) }
 
 pub fn check(root: &Path) -> Vec<Item> {
     let mut dirs = vec![root.to_path_buf()];
@@ -63,7 +100,7 @@ pub fn check(root: &Path) -> Vec<Item> {
         let rel = d.strip_prefix(root).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
         // workspaces: com a raiz sem instalar, um "npm install" na raiz resolve as subpastas também
         if let Some(it) = node(root, d, &rel) { if rel.is_empty() { root_node_missing = true; out.push(it); } else if !root_node_missing { out.push(it); } }
-        out.extend([python(d, &rel), php(d, &rel), dotnet(d, &rel), dart(d, &rel), ruby(d, &rel), go(d, &rel)].into_iter().flatten());
+        out.extend([python(d, &rel), conda(d, &rel), php(d, &rel), dotnet(d, &rel), dart(d, &rel), ruby(d, &rel), go(d, &rel)].into_iter().flatten());
     }
     out
 }
@@ -79,6 +116,13 @@ fn node(root: &Path, d: &Path, rel: &str) -> Option<Item> {
         if let Some(o) = pj[k].as_object() { for n in o.keys() { deps.insert(n.clone(), ()); } }
     }
     if deps.is_empty() { return None; }
+    // Yarn Plug'n'Play: os pacotes ficam em .yarn/cache e o .pnp.cjs (gerado pelo yarn install) os resolve
+    let mut cur = Some(d);
+    while let Some(c) = cur {
+        if c.join(".pnp.cjs").is_file() || c.join(".pnp.js").is_file() { return None; }
+        if c == root { break; }
+        cur = c.parent();
+    }
     let installed = |name: &str| {
         let mut cur = Some(d);
         while let Some(c) = cur {
@@ -102,11 +146,54 @@ fn node(root: &Path, d: &Path, rel: &str) -> Option<Item> {
 }
 
 fn has_venv(d: &Path) -> bool { [".venv", "venv", "env", ".env"].iter().any(|v| d.join(v).join("pyvenv.cfg").is_file()) }
+/// pasta com ambiente cujo nome começa com `prefix` (Poetry: "<nome>-<hash>-py3.12"; Pipenv: "<pasta>-<hash>")
+fn env_named(dirs: &[PathBuf], prefix: &str) -> bool {
+    let prefix = prefix.to_lowercase();
+    dirs.iter().any(|d| fs::read_dir(d).into_iter().flatten().flatten().any(|e| e.file_name().to_string_lossy().to_lowercase().starts_with(&prefix) && e.path().join("pyvenv.cfg").is_file()))
+}
+/// Poetry fora do projeto: o ambiente fica no cache do Poetry (POETRY_VIRTUALENVS_PATH ou %LOCALAPPDATA%\pypoetry)
+fn poetry_env(d: &Path) -> bool {
+    let toml = fs::read_to_string(d.join("pyproject.toml")).unwrap_or_default();
+    // [tool.poetry] name = "meu-app" (ou [project] name): o Poetry normaliza para minúsculas com "-"
+    let name = toml.lines().find_map(|l| l.trim().strip_prefix("name").map(str::trim_start).and_then(|v| v.strip_prefix('=')).map(|v| v.trim().trim_matches(['"', '\'']).to_string()));
+    let Some(name) = name.filter(|n| !n.is_empty()) else { return false };
+    let name = name.to_lowercase().replace(['_', '.', ' '], "-");
+    let mut dirs: Vec<PathBuf> = std::env::var_os("POETRY_VIRTUALENVS_PATH").map(PathBuf::from).into_iter().collect();
+    for base in [dirs::cache_dir(), dirs::data_local_dir()].into_iter().flatten() { dirs.push(base.join("pypoetry").join("Cache").join("virtualenvs")); dirs.push(base.join("pypoetry").join("virtualenvs")); }
+    env_named(&dirs, &format!("{name}-"))
+}
+/// Pipenv fora do projeto: WORKON_HOME ou ~/.virtualenvs, numa pasta "<nome da pasta>-<hash>"
+fn pipenv_env(d: &Path) -> bool {
+    let Some(folder) = d.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
+    let mut dirs: Vec<PathBuf> = std::env::var_os("WORKON_HOME").map(PathBuf::from).into_iter().collect();
+    if let Some(h) = dirs::home_dir() { dirs.push(h.join(".virtualenvs")); dirs.push(h.join(".local").join("share").join("virtualenvs")); }
+    env_named(&dirs, &format!("{folder}-"))
+}
+/// conda: o ambiente "name:" do environment.yml existe numa das pastas envs (CONDA_ENVS_PATH, ~/.conda, miniconda, anaconda...)
+fn conda_env(name: &str) -> bool {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("CONDA_ENVS_PATH").map(|v| std::env::split_paths(&v).collect()).unwrap_or_default();
+    if let Some(p) = std::env::var_os("CONDA_PREFIX").map(PathBuf::from) { dirs.push(p.join("envs")); if let Some(up) = p.parent() { dirs.push(up.to_path_buf()); } }
+    if let Some(h) = dirs::home_dir() { for b in [".conda", "miniconda3", "anaconda3", "miniforge3", "mambaforge"] { dirs.push(h.join(b).join("envs")); } }
+    if let Some(l) = dirs::data_local_dir() { for b in ["miniconda3", "anaconda3", "miniforge3"] { dirs.push(l.join(b).join("envs")); } }
+    dirs.iter().any(|d| d.join(name).join("conda-meta").is_dir())
+}
+fn conda(d: &Path, rel: &str) -> Option<Item> {
+    let file = ["environment.yml", "environment.yaml"].into_iter().find(|f| d.join(f).is_file())?;
+    let spec = fs::read_to_string(d.join(file)).ok()?;
+    let name = spec.lines().find_map(|l| l.strip_prefix("name:").map(|v| v.trim().trim_matches(['"', '\'']).to_string())).filter(|n| !n.is_empty())?;
+    if conda_env(&name) { return None; }
+    let tool = if which("mamba").is_some() { "mamba" } else { "conda" };
+    Some(item("python", "Python · conda", rel, format!("o ambiente conda \"{name}\" do {file} não foi criado"), tool, vec![format!("{tool} env create -f {file}")]))
+}
 fn python(d: &Path, rel: &str) -> Option<Item> {
     let f = |n: &str| d.join(n).is_file();
     if !(f("requirements.txt") || f("pyproject.toml") || f("Pipfile")) || has_venv(d) { return None; }
     // um ambiente na pasta de cima (monorepo) também serve
     if d.parent().is_some_and(has_venv) { return None; }
+    // conda cuida do ambiente: o environment.yml manda (aviso próprio, em conda())
+    if f("environment.yml") || f("environment.yaml") { return None; }
+    if f("poetry.lock") && poetry_env(d) { return None; }
+    if f("Pipfile") && pipenv_env(d) { return None; }
     let py = if which("py").is_some() { "py" } else { "python" };
     let reason = "nenhum ambiente virtual (.venv) com as dependências foi encontrado".to_string();
     Some(if f("uv.lock") || (f("pyproject.toml") && fs::read_to_string(d.join("pyproject.toml")).is_ok_and(|t| t.contains("[tool.uv]"))) {
@@ -152,6 +239,21 @@ fn go(d: &Path, rel: &str) -> Option<Item> {
 mod tests {
     use super::check;
     use std::fs;
+    #[test]
+    fn yarn_pnp_e_pasta_ignorada() {
+        let d = std::env::temp_dir().join(format!("bs-deps-pnp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("web")).unwrap();
+        fs::write(d.join("web/package.json"), r#"{"dependencies":{"react":"18"}}"#).unwrap();
+        assert_eq!(check(&d).len(), 1);
+        // Yarn PnP: sem node_modules, mas instalado
+        fs::write(d.join(".pnp.cjs"), "").unwrap();
+        assert!(check(&d).is_empty());
+        assert!(super::inside("web", "web") && super::inside("web/app", "web") && super::inside("", ""));
+        assert!(!super::inside("web", ""));
+        assert!(!super::inside("website", "web"));
+        let _ = fs::remove_dir_all(&d);
+    }
     #[test]
     fn node_missing_and_installed() {
         let d = std::env::temp_dir().join(format!("bs-deps-{}", std::process::id()));

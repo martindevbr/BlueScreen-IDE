@@ -90,7 +90,7 @@ Outra ferramenta ou outro caminho: liste em `~/.bluescreen/tools.json`.
 - **Renomear arquivos e pastas:** botão direito › **Renomear…**, `F2` ou `Shift+F6` na árvore (ou no menu da aba). As abas abertas acompanham, e em Java/Kotlin a classe de mesmo nome é renomeada junto.
 - **Planilhas:** `.csv` e `.xlsx` abrem numa tabela editável, com fórmulas e formatação (plugin [`sheets`](app/plugins/sheets/README.md)). No Windows, o BlueScreen aparece no **Abrir com** desses arquivos e abre só o documento, numa janela leve, sem mexer na IDE aberta (`BlueScreen.exe --doc arquivo.xlsx`). Para ser o programa padrão, marque "Sempre usar este aplicativo".
 - **Mudanças feitas fora da IDE** (git pull, formatador, outro editor) entram na aba aberta; se você também mexeu, é feito merge de três vias.
-- **Rede local:** o ícone de wifi abre `http://<ip-do-pc>:4748` com PIN, para usar pelo celular. Build, terminal, depurador e plugins só funcionam no próprio PC.
+- **Rede local:** o ícone de wifi abre `http://<ip-do-pc>:4748` com PIN, para usar pelo celular. Build, terminal, depurador e plugins só funcionam no próprio PC. Abra sempre pelo IP (um nome como `meupc.local` é recusado), e pela rede só os projetos dentro da pasta do BlueScreen aparecem. PIN errado demais trava o login por um tempo e, sem `BLUESCREEN_PIN`, troca o PIN; a sessão vale 24 h.
 
 ## Compilar
 

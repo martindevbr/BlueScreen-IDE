@@ -95,9 +95,9 @@ fn registry_path() -> Vec<PathBuf> {
         let text = String::from_utf8_lossy(&o.stdout);
         // "    Path    REG_EXPAND_SZ    C:\a;%USERPROFILE%\b"
         let Some(v) = text.lines().find_map(|l| l.split_once("REG_EXPAND_SZ").or_else(|| l.split_once("REG_SZ")).map(|(_, v)| v.trim().to_string())) else { continue };
-        let var = Regex::new(r"%([^%]+)%").unwrap();
+        static VAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"%([^%]+)%").unwrap());
         for d in v.split(';').filter(|d| !d.trim().is_empty()) {
-            let d = var.replace_all(d.trim(), |c: &regex::Captures| std::env::var(&c[1]).unwrap_or_else(|_| c[0].to_string()));
+            let d = VAR.replace_all(d.trim(), |c: &regex::Captures| std::env::var(&c[1]).unwrap_or_else(|_| c[0].to_string()));
             out.push(PathBuf::from(d.as_ref()));
         }
     }
@@ -109,7 +109,8 @@ fn first_tool(cands: &[&str]) -> (String, bool) {
 }
 
 // ---------- montagem das tarefas ----------
-struct Ctx<'a> { dir: &'a Path, rel: String, sys: String, java: bool, tasks: Vec<Task>, marker: String }
+/// `from`: `simple` acha um sistema por vez; ele marca de onde continuar na tabela (0 = não há mais o que procurar)
+struct Ctx<'a> { dir: &'a Path, rel: String, sys: String, java: bool, tasks: Vec<Task>, marker: String, from: usize }
 impl Ctx<'_> {
     fn add(&mut self, label: &str, desc: &str, program: &str, args: &[&str]) { self.add_s(label, desc, program, args.iter().map(|s| s.to_string()).collect(), false); }
     fn add_long(&mut self, label: &str, desc: &str, program: &str, args: &[&str]) { self.add_s(label, desc, program, args.iter().map(|s| s.to_string()).collect(), true); }
@@ -126,8 +127,8 @@ impl Ctx<'_> {
 }
 fn read(dir: &Path, f: &str) -> String { read_text(&dir.join(f), 1024 * 1024) }
 fn json_keys(v: &Value, key: &str) -> Vec<String> { v[key].as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default() }
-fn long_running(name: &str) -> bool { Regex::new(r"(?i)^(start|serve|dev|watch|preview)(:|$)").unwrap().is_match(name) }
 macro_rules! re { ($s:expr) => {{ static R: LazyLock<Regex> = LazyLock::new(|| Regex::new($s).unwrap()); &*R }}; }
+fn long_running(name: &str) -> bool { re!(r"(?i)^(start|serve|dev|watch|preview)(:|$)").is_match(name) }
 
 /// Um sistema de build numa pasta: devolve (nome, ferramenta, disponível, nota) e acrescenta as tarefas em `c`.
 type Detector = fn(&mut Ctx, &HashSet<String>) -> Option<(String, String, bool, Option<String>)>;
@@ -148,7 +149,8 @@ fn gradle(c: &mut Ctx, n: &HashSet<String>) -> Option<(String, String, bool, Opt
         c.add(l, d, &prog, &[a]);
     }
     if script.contains("org.springframework.boot") { c.add_long("Spring Boot", "sobe a aplicação", &prog, &["bootRun"]); }
-    else if script.contains("application") { c.add_long("Executar", "plugin application", &prog, &["run"]); }
+    // o plugin application (id 'application', apply plugin: 'application'), não qualquer "application" (com.android.application)
+    else if re!(r#"(?m)\bid\s*\(?\s*["']application["']|apply\s+plugin\s*:\s*["']application["']|^\s*application\s*\{"#).is_match(&script) { c.add_long("Executar", "plugin application", &prog, &["run"]); }
     if script.contains("com.android") { c.add("APK debug", "gera o APK", &prog, &["assembleDebug"]); }
     Some(("Gradle".into(), prog, ok, (!ok).then(|| "Gradle não encontrado (nem gradlew no projeto)".into())))
 }
@@ -317,7 +319,7 @@ fn simple(c: &mut Ctx, n: &HashSet<String>) -> Option<(String, String, bool, Opt
         (&["elm.json"], "Elm", "elm", false, &[("Build", &["make", "src/Main.elm", "--output=main.js"], false)]),
         (&["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"], "Docker Compose", "docker", false, &[("Subir", &["compose", "up", "-d", "--build"], false), ("Derrubar", &["compose", "down"], false), ("Status", &["compose", "ps"], false), ("Logs", &["compose", "logs", "-f"], true)]),
     ];
-    for (marks, name, prog, java, tasks) in table {
+    for (i, (marks, name, prog, java, tasks)) in table.iter().enumerate().skip(c.from) {
         if let Some(m) = marks.iter().find(|m| n.contains(**m)) {
             // Project.toml é do Julia só se não for de outro sistema; DESCRIPTION só se for pacote R
             if *m == "DESCRIPTION" && !read(c.dir, m).contains("Package:") { continue; }
@@ -325,6 +327,7 @@ fn simple(c: &mut Ctx, n: &HashSet<String>) -> Option<(String, String, bool, Opt
             c.marker = m.to_string();
             for (l, a, long) in tasks.iter() { if *long { c.add_long(l, name, prog, a) } else { c.add(l, name, prog, a) } }
             c.sys = format!("{}:{}", name.to_lowercase().split(' ').next().unwrap_or(name), c.rel);
+            c.from = i + 1; // a pasta pode ter outro sistema da tabela (compose.yaml junto do Gemfile)
             return Some((name.to_string(), prog.to_string(), which(prog).is_some(), None));
         }
     }
@@ -382,6 +385,57 @@ fn extra_files(c: &mut Ctx, n: &HashSet<String>) -> Option<(String, String, bool
 
 const DETECTORS: &[Detector] = &[gradle, node, deno, cargo, go, dotnet, python, cmake, make, simple, extra_files];
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("bs-detect-{tag}-{}-{:08x}", std::process::id(), rand::random::<u32>()));
+        std::fs::create_dir_all(&d).unwrap(); d
+    }
+    #[test]
+    fn ids_estaveis() {
+        let d = tmp("ids");
+        std::fs::write(d.join("package.json"), r#"{"scripts":{"build":"tsc","dev":"vite"}}"#).unwrap();
+        let (s1, t1) = detect(&d, None);
+        let npm = s1.iter().find(|s| s.file == "package.json").expect("sistema do package.json");
+        assert!(npm.id.ends_with("@package.json"), "{}", npm.id);
+        let dev = t1.iter().find(|t| t.label == "dev").unwrap();
+        assert!(dev.long && dev.id.starts_with(&npm.id));
+        // uma pasta nova com outro sistema, achada antes na varredura: o id do npm e o da tarefa não mudam
+        std::fs::create_dir_all(d.join("aaa")).unwrap();
+        std::fs::write(d.join("aaa").join("go.mod"), "module x\n").unwrap();
+        std::fs::write(d.join("Makefile"), "all:\n\techo\n").unwrap();
+        let (s2, t2) = detect(&d, None);
+        assert!(s2.len() > s1.len());
+        assert_eq!(s2.iter().find(|s| s.file == "package.json").unwrap().id, npm.id);
+        assert!(t2.iter().any(|t| t.id == dev.id));
+        // ids únicos
+        let mut ids: Vec<&str> = s2.iter().map(|s| s.id.as_str()).collect(); ids.sort(); ids.dedup();
+        assert_eq!(ids.len(), s2.len());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn varios_sistemas_na_mesma_pasta() {
+        let d = tmp("multi");
+        std::fs::write(d.join("Gemfile"), "source 'x'\n").unwrap();
+        std::fs::write(d.join("compose.yaml"), "services: {}\n").unwrap();
+        let (s, _) = detect(&d, None);
+        assert!(s.iter().any(|x| x.name.starts_with("Bundler")));
+        assert!(s.iter().any(|x| x.name == "Docker Compose"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+/// Id do sistema pelo que ele é e onde está ("npm@web/package.json"), não pela ordem em que foi achado: criar uma
+/// pasta ou um arquivo no projeto não troca a tarefa que "Executar de novo" e os grupos recolhidos lembram.
+fn sys_id(systems: &[System], name: &str, file: &str) -> String {
+    let slug: String = name.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    let base = format!("{slug}@{file}");
+    let (mut id, mut n) = (base.clone(), 1);
+    while systems.iter().any(|s| s.id == id) { n += 1; id = format!("{base}~{n}"); }
+    id
+}
+
 /// Varre a pasta aberta (e subpastas até 2 níveis) e devolve os sistemas de build e as tarefas de cada um.
 /// `skip_maven_root`: o pom.xml dessa pasta já é tratado pelo Maven completo (com escolha de Maven, JDK e repositório).
 pub fn detect(project: &Path, skip_maven_root: Option<&Path>) -> (Vec<System>, Vec<Task>) {
@@ -404,24 +458,31 @@ pub fn detect(project: &Path, skip_maven_root: Option<&Path>) -> (Vec<System>, V
         let names: HashSet<String> = std::fs::read_dir(&dir).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
         if names.is_empty() { continue; }
         for det in DETECTORS {
-            let mut c = Ctx { dir: &dir, rel: rel.clone(), sys: String::new(), java: false, tasks: vec![], marker: String::new() };
-            c.sys = format!("{}:{rel}", systems.len());
-            if let Some((name, tool, available, note)) = det(&mut c, &names) {
-                let id = format!("s{}", systems.len());
-                for t in c.tasks.iter_mut() { t.system = id.clone(); t.id = format!("{id}#{}", t.steps[0].label); }
+            let mut from = 0;
+            loop {
+                let mut c = Ctx { dir: &dir, rel: rel.clone(), sys: String::new(), java: false, tasks: vec![], marker: String::new(), from };
+                c.sys = format!("{}:{rel}", systems.len());
+                let Some((name, tool, available, note)) = det(&mut c, &names) else { break };
                 let marker = c.marker.clone();
-                systems.push(System { id, name, file: if rel.is_empty() { marker } else { format!("{rel}/{marker}") }.trim_end_matches('/').to_string(), tool, available, note });
+                let file = if rel.is_empty() { marker } else { format!("{rel}/{marker}") }.trim_end_matches('/').to_string();
+                let id = sys_id(&systems, &name, &file);
+                for t in c.tasks.iter_mut() { t.system = id.clone(); t.id = format!("{id}#{}", t.steps[0].label); }
+                systems.push(System { id, name, file, tool, available, note });
                 tasks.extend(c.tasks);
+                // só o `simple` continua (um sistema por chamada); os outros acham um por pasta
+                if c.from <= from { break; }
+                from = c.from;
             }
         }
         // pom.xml de submódulo (não o da raiz do Maven completo): tarefas genéricas com mvn/mvnw
         if names.contains("pom.xml") && skip_maven_root.is_none_or(|r| absolute(r) != absolute(&dir)) && !rel.is_empty() && !names.contains("mvnw.cmd") { continue; }
         if names.contains("pom.xml") && skip_maven_root.is_none_or(|r| absolute(r) != absolute(&dir)) && (rel.is_empty() || names.contains("mvnw.cmd")) {
-            let mut c = Ctx { dir: &dir, rel: rel.clone(), sys: String::new(), java: true, tasks: vec![], marker: "pom.xml".into() };
+            let mut c = Ctx { dir: &dir, rel: rel.clone(), sys: String::new(), java: true, tasks: vec![], marker: "pom.xml".into(), from: 0 };
             if let Some((name, tool, available, note)) = maven_generic(&mut c, &names) {
-                let id = format!("s{}", systems.len());
+                let file = if rel.is_empty() { "pom.xml".into() } else { format!("{rel}/pom.xml") };
+                let id = sys_id(&systems, &name, &file);
                 for t in c.tasks.iter_mut() { t.system = id.clone(); t.id = format!("{id}#{}", t.steps[0].label); }
-                systems.push(System { id, name, file: if rel.is_empty() { "pom.xml".into() } else { format!("{rel}/pom.xml") }, tool, available, note });
+                systems.push(System { id, name, file, tool, available, note });
                 tasks.extend(c.tasks);
             }
         }
@@ -476,7 +537,9 @@ pub fn run_file(project: &Path, rel: &str) -> Option<(String, Vec<TaskStep>)> {
         "fs" => one("dotnet", &["fsi", "{f}"]),
         "ps1" => one("powershell", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{f}"]),
         "sh" | "bash" => one("bash", &["{f}"]),
-        "bat" | "cmd" => one("cmd.exe", &["/d", "/c", "{f}"]),
+        // o próprio .bat/.cmd como programa: o Rust chama o cmd com as aspas e escapes certos (um caminho com espaço,
+        // & ou % quebrava ou virava outro comando no "cmd /c")
+        "bat" | "cmd" => vec![step(&f, vec![])],
         "vbs" => one("cscript", &["//nologo", "{f}"]),
         "sql" => return None,
         "tex" => one("latexmk", &["-pdf", "{f}"]),

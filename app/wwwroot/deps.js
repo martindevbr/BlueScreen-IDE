@@ -58,7 +58,7 @@ function render(before) {
     const k = sig(it), st = D.running.get(k);
     const color = KIND_COLOR[it.kind] || 'var(--accent-2)';
     return `<div class="dp-row ${st === 'run' ? 'run' : ''} ${before && !before.has(k) ? 'new' : ''}" data-k="${esc(k)}" style="--i:${i};--kc:${color}">
-      <div class="dp-row-top"><span class="dp-kind">${esc(it.label)}</span><span class="dp-dir" title="${esc(it.dir || '/')}">${esc(nm(it))}</span></div>
+      <div class="dp-row-top"><span class="dp-kind">${esc(it.label)}</span><span class="dp-dir" title="${esc(it.dir || '/')}">${esc(nm(it))}</span>${st === 'run' ? '' : `<button class="dp-link dp-ign" data-dir="${esc(it.dir)}" title="Não avisar mais sobre ${esc(it.dir ? 'esta pasta' : 'a raiz do projeto')} (vale para todas as janelas)">Ignorar</button>`}</div>
       <div class="dp-reason">${esc(it.reason)}${it.sample && it.sample.length ? `<span class="dp-sample">${it.sample.map(esc).join(', ')}${it.missing > it.sample.length ? '…' : ''}</span>` : ''}</div>
       <div class="dp-cmd"><code>${it.commands.map(esc).join('<br>')}</code>
         ${st === 'run' ? '<span class="dp-spin"></span>' : `<button class="dp-go" data-k="${esc(k)}" ${it.tool_ok ? '' : 'disabled'} title="${it.tool_ok ? 'Rodar no terminal, nesta pasta' : esc(it.tool) + ' não está no PATH'}">${ICO.play}<span>Instalar</span></button>`}</div>
@@ -78,6 +78,13 @@ function render(before) {
   show();
   el.querySelectorAll('.dp-go').forEach(b => b.onclick = () => install([D.items.find(it => sig(it) === b.dataset.k)]));
   el.querySelector('.dp-all')?.addEventListener('click', () => install(runnable));
+  // ignorar a pasta: guardado no núcleo (~/.bluescreen/deps-ignore.json), some daqui e das outras janelas
+  el.querySelectorAll('.dp-ign').forEach(b => b.onclick = async () => {
+    try { await api('deps/ignore', { project: D.project }, { method: 'POST', body: JSON.stringify({ dir: b.dataset.dir, ignore: true }) }); }
+    catch (e) { toast('Dependências: ' + e.message); return; }
+    const d = b.dataset.dir; D.items = D.items.filter(it => !(it.dir === d || (d && it.dir.startsWith(d + '/')))); render();
+    toast(`Não vou mais avisar sobre ${b.dataset.dir || 'a raiz do projeto'}. "Verificar dependências do projeto" volta a conferir.`);
+  });
   el.querySelector('.dp-x').onclick = el.querySelector('.dp-later').onclick = () => { items.forEach(it => D.snoozed.add(sig(it))); hide(); };
   el.querySelector('.dp-never').onclick = () => {
     const nv = never(); items.forEach(it => nv.add(D.project + '|' + sig(it))); store.set('depsNever', [...nv]);
@@ -132,7 +139,7 @@ function stopPoll() { if (D.poll) { clearInterval(D.poll); D.poll = null; } }
 // ----- gatilhos -----
 bs.hooks.on('project:select', (p) => { stopPoll(); D.items = []; D.running.clear(); hide(); if (p) setTimeout(() => check(true), 1200); });
 bs.hooks.on('project:refresh', () => check(false));
-bs.hooks.on('tab:save', (t) => { if (/(^|\/)(package\.json|requirements\.txt|pyproject\.toml|Pipfile|composer\.json|pubspec\.yaml|Gemfile|go\.mod|[^/]+\.(cs|fs|vb)proj)$/i.test(t.path || '')) check(true); });
+bs.hooks.on('tab:save', (t) => { if (/(^|\/)(package\.json|requirements\.txt|pyproject\.toml|Pipfile|environment\.ya?ml|composer\.json|pubspec\.yaml|Gemfile|go\.mod|[^/]+\.(cs|fs|vb)proj)$/i.test(t.path || '')) check(true); });
 // erro de pacote faltando no editor: traz o aviso de volta (mesmo depois de "Depois") e diz por quê
 bs.hooks.on('editor:ready', () => {
   const monaco = bs.monaco; if (!monaco) return;
@@ -149,7 +156,12 @@ bs.hooks.on('editor:ready', () => {
     }, 600);
   });
 });
-bs.actions.add({ label: 'Verificar dependências do projeto', icon: ICO.box, run: () => { const nv = never(); [...nv].filter(k => k.startsWith(D.project + '|')).forEach(k => nv.delete(k)); store.set('depsNever', [...nv]); D.snoozed.clear(); check(true).then(() => { if (!visibleItems().length) toast('Todas as dependências estão instaladas.'); }); } });
+bs.actions.add({ label: 'Verificar dependências do projeto', icon: ICO.box, run: async () => {
+  const nv = never(); [...nv].filter(k => k.startsWith(D.project + '|')).forEach(k => nv.delete(k)); store.set('depsNever', [...nv]); D.snoozed.clear();
+  // as pastas ignoradas voltam a ser conferidas
+  if (bs.S.project) try { await api('deps/ignore', { project: bs.S.project.path }, { method: 'POST', body: JSON.stringify({ clear: true }) }); } catch {}
+  check(true).then(() => { if (!visibleItems().length) toast('Todas as dependências estão instaladas.'); });
+} });
 // projeto restaurado ao abrir a IDE: os ganchos de seleção podem ter rodado antes deste arquivo carregar
 setTimeout(() => { if (bs.S.project && D.project !== bs.S.project.path) check(true); }, 1500);
 bs.deps = { check, items: () => D.items };

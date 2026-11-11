@@ -54,11 +54,14 @@ fn entries(dir: &Path) -> Vec<Ent> {
         // no Windows, metadata() de DirEntry vem da própria enumeração (sem abrir o arquivo)
         let md = e.metadata().ok();
         let ft = e.file_type().ok();
+        let link = ft.is_some_and(|t| t.is_symlink());
         Ent {
             name: e.file_name().to_string_lossy().into_owned(),
             path: e.path(),
-            is_dir: ft.map(|t| t.is_dir()).unwrap_or(false),
-            reparse: ft.map(|t| t.is_symlink()).unwrap_or(false),
+            // junção/atalho de pasta: no Windows o tipo diz "link", não "pasta"; o destino decide (reparse continua
+            // marcando, para o índice e a varredura não entrarem nele)
+            is_dir: ft.is_some_and(|t| t.is_dir()) || (link && e.path().is_dir()),
+            reparse: link,
             size: md.as_ref().map(|m| m.len()).unwrap_or(0),
             mtime: md.and_then(|m| m.modified().ok()).map(mtime_ms).unwrap_or(0.0),
         }
@@ -78,10 +81,12 @@ fn has_java(abs: &Path, depth: u32) -> bool {
     if depth > 8 { return false; }
     let ents = entries(abs);
     if ents.iter().any(|e| !e.is_dir && JVM_SRC.is_match(&e.name)) { return true; }
-    ents.iter().any(|e| e.is_dir && !IGNORED_DIRS.contains(e.name.as_str()) && has_java(&e.path, depth + 1))
+    ents.iter().any(|e| e.is_dir && !e.reparse && !IGNORED_DIRS.contains(e.name.as_str()) && has_java(&e.path, depth + 1))
 }
+/// conteúdo de <t>...</t> (uma regex só para qualquer tag: compilar uma por chamada custava mais que ler o pom)
+static XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<([A-Za-z][\w.-]*)>([^<]+)</([A-Za-z][\w.-]*)>").unwrap());
 fn tags(x: &str, t: &str) -> Vec<String> {
-    Regex::new(&format!("<{t}>([^<]+)</{t}>")).unwrap().captures_iter(x).map(|c| c[1].to_string()).collect()
+    XML_TAG.captures_iter(x).filter(|c| &c[1] == t && &c[3] == t).map(|c| c[2].to_string()).collect()
 }
 
 static MODEL: LazyLock<TtlCache<PathBuf, Arc<ProjectModel>>> = LazyLock::new(|| TtlCache::new(Duration::from_secs(60)));
@@ -143,7 +148,7 @@ fn scan(dir: &Path, m: &mut ProjectModel, rel: &str, depth: u32) {
     if depth >= 3 { return; }
     for e in &ents {
         let r = j(rel, &e.name);
-        if e.is_dir && !IGNORED_DIRS.contains(e.name.as_str()) && !e.name.starts_with('.') && !m.roots.contains_key(&r) && !inside_root(m, &r) { scan(dir, m, &r, depth + 1); }
+        if e.is_dir && !e.reparse && !IGNORED_DIRS.contains(e.name.as_str()) && !e.name.starts_with('.') && !m.roots.contains_key(&r) && !inside_root(m, &r) { scan(dir, m, &r, depth + 1); }
     }
 }
 pub fn root_of<'a>(m: &'a ProjectModel, rel: &str) -> Option<(&'a str, &'static str)> {
@@ -155,7 +160,12 @@ pub fn root_of<'a>(m: &'a ProjectModel, rel: &str) -> Option<(&'a str, &'static 
 }
 
 // ---------- tipo da classe Java pelo cabeçalho (ícone C, I, E, @, R ou abstrata) ----------
+/// (arquivo, data) -> tipo; com teto: passou de KIND_MAX entradas (projetos grandes, muitas versões do mesmo arquivo),
+/// recomeça vazio
 static KIND_CACHE: LazyLock<Mutex<HashMap<(PathBuf, u64), &'static str>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+const KIND_MAX: usize = 50_000;
+/// declarações de tipo: (o que vem antes, palavra-chave, nome); a de `name` é a que conta
+static JAVA_DECL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([^;{}]*?)\b(@interface|interface|enum|record|class)\s+([A-Za-z_$][\w$]*)\b").unwrap());
 static STRIP_JAVA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"/\*[\s\S]*?\*/|//[^\n]*|"(?:[^"\\\n]|\\.)*""#).unwrap());
 static ABSTRACT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\babstract\b").unwrap());
 pub fn java_kind(abs: &Path, name: &str, mtime: f64) -> &'static str {
@@ -165,8 +175,7 @@ pub fn java_kind(abs: &Path, name: &str, mtime: f64) -> &'static str {
     let n = match std::fs::File::open(abs) { Ok(mut f) => { use std::io::Read; let mut n = 0; while n < buf.len() { match f.read(&mut buf[n..]) { Ok(0) | Err(_) => break, Ok(k) => n += k } } n } Err(_) => return "class" };
     let t = String::from_utf8_lossy(&buf[..n]);
     let t = STRIP_JAVA.replace_all(&t, |c: &regex::Captures| if c[0].starts_with('"') { "\"\"" } else { " " });
-    let re = Regex::new(&format!(r"([^;{{}}]*?)\b(@interface|interface|enum|record|class)\s+{}\b", regex::escape(name))).unwrap();
-    let res = match re.captures(&t) {
+    let res = match JAVA_DECL.captures_iter(&t).find(|c| &c[3] == name) {
         None => "class",
         Some(c) => match &c[2] {
             "@interface" => "annotation",
@@ -178,7 +187,7 @@ pub fn java_kind(abs: &Path, name: &str, mtime: f64) -> &'static str {
             _ => "class",
         },
     };
-    if mtime > 0.0 { KIND_CACHE.lock().insert(key, res); }
+    if mtime > 0.0 { let mut c = KIND_CACHE.lock(); if c.len() >= KIND_MAX { c.clear(); } c.insert(key, res); }
     res
 }
 
@@ -242,13 +251,23 @@ pub async fn file_index(project: &Path, fresh: bool) -> Index {
     // pedidos simultâneos do mesmo projeto esperam a mesma varredura
     let cell = INDEX_BUILD.lock().entry(key.clone()).or_insert_with(|| Arc::new(tokio::sync::OnceCell::new())).clone();
     let ix = cell.get_or_init(|| { let k = key.clone(); async move {
-        tokio::task::spawn_blocking(move || Arc::new(build_index(&k, fresh))).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || {
+            let (v, cut) = build_index(&k, fresh);
+            let mut t = TRUNCATED.lock(); if cut { t.insert(k); } else { t.remove(&k); }
+            Arc::new(v)
+        }).await.unwrap_or_default()
     } }).await.clone();
     INDEX_BUILD.lock().remove(&key);
     INDEX.lock().insert(key, (Instant::now(), ix.clone()));
     ix
 }
-fn build_index(project: &Path, fresh: bool) -> Vec<IndexEntry> {
+/// arquivos no índice, no máximo (a busca de texto avisa "truncated" quando o projeto passa disso)
+pub const MAX_INDEX: usize = 30000;
+/// projetos cujo índice passou de MAX_INDEX arquivos na última varredura (o resto ficou de fora)
+static TRUNCATED: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = LazyLock::new(Default::default);
+pub fn index_truncated(project: &Path) -> bool { TRUNCATED.lock().contains(project) }
+/// (arquivos, passou do limite?)
+fn build_index(project: &Path, fresh: bool) -> (Vec<IndexEntry>, bool) {
     let m = model(project, fresh);
     // varredura paralela por subpasta; a ordem final é a mesma de uma busca em profundidade
     fn walk(m: &ProjectModel, rel: &str, abs: &Path, depth: u32) -> Vec<IndexEntry> {
@@ -272,8 +291,9 @@ fn build_index(project: &Path, fresh: bool) -> Vec<IndexEntry> {
         parts.into_iter().flatten().collect()
     }
     let mut v = walk(&m, "", project, 0);
-    v.truncate(30000);
-    v
+    let cut = v.len() > MAX_INDEX;
+    v.truncate(MAX_INDEX);
+    (v, cut)
 }
 
 // ---------- busca de texto (funciona igual para Git, SVN e pasta solta) ----------
@@ -284,7 +304,13 @@ impl Matcher {
     /// primeira ocorrência na linha: (início, fim) em bytes
     fn find(&self, line: &str) -> Option<(usize, usize)> {
         match self {
-            Matcher::Fast(r) => r.find(line.as_bytes()).map(|m| (m.start(), m.end())),
+            // regex de bytes pode casar no meio de uma letra ((?-u:.), \xNN): alarga até a borda dos caracteres
+            Matcher::Fast(r) => r.find(line.as_bytes()).map(|m| {
+                let (mut s, mut e) = (m.start(), m.end());
+                while !line.is_char_boundary(s) { s -= 1; }
+                while !line.is_char_boundary(e) { e += 1; }
+                (s, e)
+            }),
             Matcher::Fancy(r) => r.find(line).ok().flatten().map(|m| (m.start(), m.end())),
         }
     }
@@ -311,7 +337,8 @@ pub async fn search_text(project: &Path, q: &str, case: bool, is_regex: bool) ->
     tokio::task::spawn_blocking(move || {
         let files: Vec<&IndexEntry> = idx.iter().filter(|f| (f.size as f64) <= 1.5 * 1024.0 * 1024.0 && !BIN_EXT.is_match(&f.p)).collect();
         let deadline = Instant::now() + Duration::from_secs(8);
-        let mut hits = Vec::new(); let mut nfiles = 0; let mut truncated = false;
+        // índice cortado no limite: há arquivos que a busca não viu
+        let mut hits = Vec::new(); let mut nfiles = 0; let mut truncated = index_truncated(&project);
         // lotes em paralelo, juntados na ordem do índice: o resultado é o mesmo de uma busca sequencial
         for chunk in files.chunks(512) {
             if hits.len() >= MAX_HITS || Instant::now() > deadline { truncated = true; break; }
@@ -370,8 +397,8 @@ pub async fn overview(project: &Path) -> serde_json::Value {
     let idx = file_index(project, false).await;
     let mut langs: HashMap<&'static str, (u64, usize)> = HashMap::new();
     // bibliotecas copiadas (vendor, minificados) não contam: distorcem a linguagem do projeto
-    let third = Regex::new(r"(?i)(^|/)(vendor|vendors|third[-_]?party|bower_components|lib/(jquery|bootstrap))/|\.min\.(js|css)$|\.bundle\.js$").unwrap();
-    for f in idx.iter().filter(|f| !third.is_match(&f.p)) { if let Some(l) = language_of(&f.p) { let e = langs.entry(l).or_default(); e.0 += f.size; e.1 += 1; } }
+    static THIRD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(^|/)(vendor|vendors|third[-_]?party|bower_components|lib/(jquery|bootstrap))/|\.min\.(js|css)$|\.bundle\.js$").unwrap());
+    for f in idx.iter().filter(|f| !THIRD.is_match(&f.p)) { if let Some(l) = language_of(&f.p) { let e = langs.entry(l).or_default(); e.0 += f.size; e.1 += 1; } }
     let mut langs: Vec<_> = langs.into_iter().collect();
     langs.sort_by(|a, b| b.1.0.cmp(&a.1.0));
     // README: na raiz primeiro; README.md ganha dos outros formatos
@@ -387,4 +414,47 @@ pub async fn overview(project: &Path) -> serde_json::Value {
         "languages": langs.iter().take(8).map(|(l, (b, n))| serde_json::json!({ "name": l, "bytes": b, "files": n })).collect::<Vec<_>>(),
         "systems": systems,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn put(d: &Path, rel: &str, text: &str) { let f = d.join(rel); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, text).unwrap(); }
+    #[test]
+    fn tipo_da_classe_java() {
+        let d = std::env::temp_dir().join(format!("bs-kind-{}-{:08x}", std::process::id(), rand::random::<u32>()));
+        put(&d, "A.java", "package x;\n// class Errado\npublic abstract class A { }");
+        put(&d, "B.java", "package x;\nimport java.util.*;\n/* interface B */ public enum B { X }");
+        put(&d, "C.java", "package x;\nclass Interna {}\n@Deprecated public interface C {}");
+        put(&d, "FalhaException.java", "public class FalhaException extends RuntimeException {}");
+        assert_eq!(java_kind(&d.join("A.java"), "A", 0.0), "abstract");
+        assert_eq!(java_kind(&d.join("B.java"), "B", 0.0), "enum");
+        assert_eq!(java_kind(&d.join("C.java"), "C", 0.0), "interface"); // a outra classe do arquivo não conta
+        assert_eq!(java_kind(&d.join("FalhaException.java"), "FalhaException", 0.0), "exception");
+        assert_eq!(tags("<a><sourceDirectory>src/java</sourceDirectory><x>1</x></a>", "sourceDirectory"), vec!["src/java".to_string()]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn arvore_e_indice() {
+        let d = std::env::temp_dir().join(format!("bs-ws-{}-{:08x}", std::process::id(), rand::random::<u32>()));
+        put(&d, "pom.xml", "<project></project>");
+        put(&d, "src/main/java/com/acme/Servico.java", "package com.acme;\npublic interface Servico {}");
+        put(&d, "src/test/java/com/acme/ServicoTest.java", "package com.acme;\nclass ServicoTest {}");
+        put(&d, "node_modules/lib/index.js", "x");
+        put(&d, "README.md", "# oi");
+        let (ix, cut) = build_index(&d, true);
+        assert!(!cut);
+        let paths: Vec<&str> = ix.iter().map(|e| e.p.as_str()).collect();
+        assert!(paths.contains(&"README.md"));
+        assert!(!paths.iter().any(|p| p.starts_with("node_modules"))); // pasta ignorada
+        let s = ix.iter().find(|e| e.p.ends_with("Servico.java")).unwrap();
+        assert_eq!((s.cls.as_deref(), s.pkg.as_deref(), s.java), (Some("Servico"), Some("com.acme"), Some("interface")));
+        assert_eq!(ix.iter().find(|e| e.p.ends_with("ServicoTest.java")).unwrap().test, Some(true));
+        // raiz da árvore: pastas e arquivos do projeto, sem as ignoradas
+        let t = tree(&d, "", true, true).unwrap();
+        let names: Vec<&str> = t.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.contains(&"src") && names.contains(&"pom.xml") && !names.contains(&"node_modules"));
+        assert!(tree(&d, "nao-existe", true, false).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

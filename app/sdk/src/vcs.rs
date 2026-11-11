@@ -47,7 +47,20 @@ pub struct Changes {
     pub rev: Option<String>,
 }
 #[derive(Serialize, Clone)]
-pub struct DiffPair { pub original: String, pub modified: String }
+pub struct DiffPair {
+    pub original: String,
+    pub modified: String,
+    /// lado direito lido do disco (editável): como o arquivo está gravado, para salvar do mesmo jeito (ver /api/file)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<&'static str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bom: bool,
+}
+impl DiffPair {
+    fn pair(original: String, modified: String) -> Self { DiffPair { original, modified, encoding: None, bom: false } }
+    /// lado direito do disco: leva a codificação junto
+    fn with_disk(original: String, (modified, enc, bom): (String, &'static str, bool)) -> Self { DiffPair { original, modified, encoding: Some(enc), bom } }
+}
 
 pub async fn git(cwd: &Path, a: &[&str]) -> ProcResult {
     let mut v = vec!["-c", "core.quotepath=off"];
@@ -171,8 +184,17 @@ fn apply_numstat(files: &mut [ChangedFile], out: &str, pre: &str) {
     for f in files.iter_mut() { if let Some(&(a, d)) = stat.get(&f.path) { f.add = Some(a); f.del = Some(d); } }
 }
 
+/// Revisão vinda de um pedido (hash, branch, tag, HEAD~1, número do SVN, {data}): nunca uma opção ("--output=...")
+/// nem espaços. As que não passam viram resposta vazia.
+pub fn safe_rev(r: &str) -> bool {
+    r.len() <= 256 && r.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '{')
+        && r.chars().all(|c| c.is_ascii_alphanumeric() || "._/~^@{}+-".contains(c))
+}
+fn bad_rev(r: Option<&str>) -> bool { r.is_some_and(|r| !r.is_empty() && !safe_rev(r)) }
+
 pub async fn changes(dir: &Path, mode: &str, rev: Option<&str>, base: Option<&str>) -> Changes {
     let vcs = detect(dir);
+    if bad_rev(rev) || bad_rev(base) { return Changes { vcs, files: vec![], rev: None }; }
     match vcs {
         None => Changes { vcs, files: vec![], rev: None },
         Some("git") => {
@@ -198,7 +220,7 @@ pub async fn changes(dir: &Path, mode: &str, rev: Option<&str>, base: Option<&st
             let key = format!("{}|{target}", dir.display());
             if fixed(&target) && let Some(c) = CHANGES.lock().get(&key) { return c; }
             // um processo só: o hash (%H), a lista com o tipo da mudança (--raw) e as linhas (--numstat)
-            let r = git(dir, &["show", "--format=%H", "--raw", "--numstat", "-m", "--first-parent", &target, "--", "."]).await;
+            let r = git(dir, &["show", "--format=%H", "--raw", "--numstat", "-m", "--first-parent", "--end-of-options", &target, "--", "."]).await;
             let hash = r.out.lines().next().map(str::trim).filter(|h| fixed(h)).map(str::to_string);
             let c = Changes { vcs, files: parse_raw_numstat(&r.out, &pre), rev: Some(hash.clone().unwrap_or(target)) };
             // guardado pelo hash: o "último commit" (HEAD) de agora também serve quando ele for aberto pelo hash
@@ -208,8 +230,8 @@ pub async fn changes(dir: &Path, mode: &str, rev: Option<&str>, base: Option<&st
         Some(_) => {
             if mode == "working" {
                 let st = svn(dir, &["status"]).await;
-                let files = st.out.lines().filter(|l| !l.trim().is_empty() && !l.starts_with("Status against") && l.len() > 8)
-                    .map(|l| ChangedFile { path: norm(l.get(8..).unwrap_or("").trim()), code: l[..1].to_string(), staged: None, add: None, del: None })
+                let files = st.out.lines().filter(|l| svn_file_line(l))
+                    .map(|l| ChangedFile { path: norm(l.get(8..).unwrap_or("").trim()), code: l.get(..1).unwrap_or("?").to_string(), staged: None, add: None, del: None })
                     .filter(|f| !is_build_output(f)).collect();
                 return Changes { vcs, files, rev: None };
             }
@@ -263,12 +285,20 @@ fn parse_raw_numstat(out: &str, pre: &str) -> Vec<ChangedFile> {
     apply_numstat(&mut files, &ns, pre);
     files
 }
+/// linha de arquivo do "svn status"/"--summarize": 7 colunas de estado (ASCII), um espaço e o caminho. As outras
+/// ("Summary of conflicts:", "--- Changelist", "Status against revision") ficam de fora.
+fn svn_file_line(l: &str) -> bool {
+    let b = l.as_bytes();
+    b.len() > 8 && b[..8].is_ascii() && b[7] == b' ' && "ACDIMRX?!~ ".contains(b[0] as char) && !l.starts_with("Status against") && !l[8..].trim().is_empty()
+}
 fn parse_svn_summarize(dir: &Path, out: &str) -> Vec<ChangedFile> {
-    let nd = norm(&dir.to_string_lossy()).to_lowercase();
-    out.lines().filter(|l| !l.trim().is_empty() && l.len() > 8).map(|l| {
+    let od = norm(&dir.to_string_lossy());
+    let nd = od.to_lowercase();
+    out.lines().filter(|l| svn_file_line(l)).map(|l| {
         let p = norm(l.get(8..).unwrap_or("").trim());
-        let path = if p.to_lowercase().starts_with(&nd) { p[nd.len()..].trim_start_matches('/').to_string() } else { p };
-        ChangedFile { path, code: l[..1].to_string(), staged: None, add: None, del: None }
+        // corta pelo tamanho do caminho original (em minúsculas ele pode mudar de tamanho em bytes)
+        let path = match p.get(od.len()..) { Some(x) if p.to_lowercase().starts_with(&nd) => x.trim_start_matches('/').to_string(), _ => p };
+        ChangedFile { path, code: l.get(..1).unwrap_or("?").to_string(), staged: None, add: None, del: None }
     }).collect()
 }
 
@@ -277,26 +307,31 @@ fn parse_svn_summarize(dir: &Path, out: &str) -> Vec<ChangedFile> {
 pub async fn compare(dir: &Path, base: &str, target: Option<&str>) -> Changes {
     let target = target.filter(|t| !t.is_empty());
     let vcs = detect(dir);
+    if bad_rev(Some(base)) || bad_rev(target) { return Changes { vcs, files: vec![], rev: None }; }
     let key = format!("{}|{base}..{}", dir.display(), target.unwrap_or(""));
     let cache = fixed(base) && target.is_some_and(fixed);
     if cache && let Some(c) = CHANGES.lock().get(&key) { return c; }
+    // só vai para o cache o que o Git/SVN respondeu (um tempo esgotado não pode virar "nenhuma mudança" para sempre)
+    let mut answered = true;
     let c = match vcs {
         Some("git") => {
             let pre = git_prefix(dir).await;
-            let mut a = vec!["diff", "--raw", "--numstat", base];
+            let mut a = vec!["diff", "--raw", "--numstat", "--end-of-options", base];
             if let Some(t) = target { a.push(t); }
             a.extend(["--", "."]);
             let r = git(dir, &a).await;
+            answered = r.ok;
             Changes { vcs, files: parse_raw_numstat(&r.out, &pre), rev: target.map(str::to_string) }
         }
         Some(_) => {
             let range = match target { Some(t) => format!("{base}:{t}"), None => base.to_string() };
             let r = svn(dir, &["diff", "--summarize", "-r", &range]).await;
+            answered = r.ok;
             Changes { vcs, files: parse_svn_summarize(dir, &r.out), rev: target.map(str::to_string) }
         }
         None => Changes { vcs, files: vec![], rev: None },
     };
-    if cache { let cost = c.files.iter().map(|f| f.path.len() + 40).sum(); CHANGES.lock().put(key, c.clone(), cost); }
+    if cache && answered { let cost = c.files.iter().map(|f| f.path.len() + 40).sum(); CHANGES.lock().put(key, c.clone(), cost); }
     c
 }
 
@@ -325,7 +360,7 @@ pub async fn history_of(dir: &Path, n: usize, file: Option<&str>) -> Vec<Commit>
         }
         Some("svn") => {
             let mut a = vec!["log", "-l", &n, "--xml"];
-            if let Some(f) = file { a.push(f); }
+            if let Some(f) = file { a.extend(["--", f]); }
             let r = svn(dir, &a).await;
             parse_svn_log(&r.out).into_iter().map(|mut c| { c.id = Some(c.hash.clone()); c.hash = format!("r{}", c.hash); c }).collect()
         }
@@ -338,6 +373,7 @@ pub async fn history_of(dir: &Path, n: usize, file: Option<&str>) -> Vec<Commit>
 pub async fn diff(dir: &Path, file: &str, mode: &str, rev: Option<&str>, base: Option<&str>) -> DiffPair {
     let rev = rev.filter(|r| !r.is_empty());
     let base = base.filter(|b| !b.is_empty());
+    if bad_rev(rev) || bad_rev(base) { return DiffPair::pair(String::new(), String::new()); }
     // as duas versões são imutáveis: guarda (o mesmo diff aberto de novo, ou pré-carregado pela interface)
     let key = match (mode, rev, base) {
         ("last", Some(r), _) if fixed(r) => Some(format!("{}|{r}|{file}", dir.display())),
@@ -345,38 +381,42 @@ pub async fn diff(dir: &Path, file: &str, mode: &str, rev: Option<&str>, base: O
         _ => None,
     };
     if let Some(k) = &key && let Some(d) = DIFFS.lock().get(k) { return d; }
-    let d = diff_uncached(dir, file, mode, rev, base).await;
-    if let Some(k) = key { let cost = d.original.len() + d.modified.len() + 64; DIFFS.lock().put(k, d.clone(), cost); }
+    // falha passageira (tempo esgotado, git que não abriu) não vai para o cache: a próxima vez pergunta de novo
+    let transient = std::sync::atomic::AtomicBool::new(false);
+    let d = diff_uncached(dir, file, mode, rev, base, &transient).await;
+    if let Some(k) = key.filter(|_| !transient.load(std::sync::atomic::Ordering::Relaxed)) { let cost = d.original.len() + d.modified.len() + 64; DIFFS.lock().put(k, d.clone(), cost); }
     d
 }
-async fn diff_uncached(dir: &Path, file: &str, mode: &str, rev: Option<&str>, base: Option<&str>) -> DiffPair {
+async fn diff_uncached(dir: &Path, file: &str, mode: &str, rev: Option<&str>, base: Option<&str>, transient: &std::sync::atomic::AtomicBool) -> DiffPair {
+    // arquivo que não existe naquela versão é resposta (vazio); código -1 é o processo que não rodou ou passou do tempo
+    let failed = |r: &ProcResult| if r.code == -1 { transient.store(true, std::sync::atomic::Ordering::Relaxed); };
     let abs = dir.join(file);
-    let disk = || async { tokio::fs::read(&abs).await.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default() };
+    // o disco e as versões guardadas passam pela mesma decodificação do /api/file: um arquivo Windows-1252 aparece (e é
+    // gravado de volta) com os acentos certos, sem "�" que corromperia o arquivo ao salvar pelo diff
+    let disk = || async { tokio::fs::read(&abs).await.map(|b| decode_text(&b)).unwrap_or_else(|_| (String::new(), "utf-8", false)) };
     match detect(dir) {
         Some("git") => {
             let pre = git_prefix(dir).await;
             let nf = norm(file);
             let show = |spec: String| { let pre = pre.clone(); let nf = nf.clone(); async move {
-                let r = git(dir, &["show", &format!("{spec}:{pre}{nf}")]).await;
-                if r.ok { r.out } else { String::new() }
+                let (r, raw) = run_raw("git", &["-c", "core.quotepath=off", "show", "--end-of-options", &format!("{spec}:{pre}{nf}")], dir, 20000).await;
+                if r.ok { decode_text(&raw).0 } else { failed(&r); String::new() }
             } };
-            if mode == "working" { let (a, b) = tokio::join!(show("HEAD".into()), disk()); return DiffPair { original: a, modified: b }; }
+            if mode == "working" { let (a, b) = tokio::join!(show("HEAD".into()), disk()); return DiffPair::with_disk(a, b); }
             if mode == "range" {
                 let b = base.unwrap_or("HEAD").to_string();
-                let (a, m) = match rev { Some(t) => tokio::join!(show(b), show(t.to_string())), None => { let (a, m) = tokio::join!(show(b), disk()); (a, m) } };
-                return DiffPair { original: a, modified: m };
+                return match rev { Some(t) => { let (a, m) = tokio::join!(show(b), show(t.to_string())); DiffPair::pair(a, m) } None => { let (a, m) = tokio::join!(show(b), disk()); DiffPair::with_disk(a, m) } };
             }
             let t = rev.unwrap_or("HEAD").to_string();
             let (a, b) = tokio::join!(show(format!("{t}~1")), show(t.clone()));
-            DiffPair { original: a, modified: b }
+            DiffPair::pair(a, b)
         }
         Some("svn") => {
-            let cat = |r: String| async move { let x = svn(dir, &["cat", "-r", &r, file]).await; if x.ok { x.out } else { String::new() } };
-            if mode == "working" { let (a, b) = tokio::join!(cat("BASE".into()), disk()); return DiffPair { original: a, modified: b }; }
+            let cat = |r: String| async move { let (x, raw) = run_raw("svn", &["--non-interactive", "cat", "-r", &r, "--", file], dir, 20000).await; if x.ok { decode_text(&raw).0 } else { failed(&x); String::new() } };
+            if mode == "working" { let (a, b) = tokio::join!(cat("BASE".into()), disk()); return DiffPair::with_disk(a, b); }
             if mode == "range" {
                 let b = base.unwrap_or("BASE").to_string();
-                let (a, m) = match rev { Some(t) => tokio::join!(cat(b), cat(t.to_string())), None => { let (a, m) = tokio::join!(cat(b), disk()); (a, m) } };
-                return DiffPair { original: a, modified: m };
+                return match rev { Some(t) => { let (a, m) = tokio::join!(cat(b), cat(t.to_string())); DiffPair::pair(a, m) } None => { let (a, m) = tokio::join!(cat(b), disk()); DiffPair::with_disk(a, m) } };
             }
             let t = match rev {
                 Some(r) => r.to_string(),
@@ -384,9 +424,9 @@ async fn diff_uncached(dir: &Path, file: &str, mode: &str, rev: Option<&str>, ba
             };
             let n: i64 = t.parse().unwrap_or(0);
             let (a, b) = tokio::join!(cat((n - 1).to_string()), cat(t.clone()));
-            DiffPair { original: a, modified: b }
+            DiffPair::pair(a, b)
         }
-        _ => DiffPair { original: String::new(), modified: disk().await },
+        _ => DiffPair::with_disk(String::new(), disk().await),
     }
 }
 
@@ -432,7 +472,7 @@ pub async fn blame(dir: &Path, file: &str, line: usize, contents: Option<&str>) 
             Blame { commit: Some(c), line: orig }
         }
         Some("svn") => {
-            let r = svn(dir, &["blame", "--xml", file]).await;
+            let r = svn(dir, &["blame", "--xml", "--", file]).await;
             let rev = SVN_BLAME.captures_iter(&r.out).find(|c| c[1].parse::<usize>().ok() == Some(line)).and_then(|c| c.get(2).map(|m| m.as_str().to_string()));
             let Some(rev) = rev else { return Blame { commit: None, line } };
             let lg = svn(dir, &["log", "-r", &rev, "--xml"]).await;
@@ -473,6 +513,25 @@ mod tests {
     }
 
     #[test]
+    fn log_do_svn() {
+        let xml = r#"<log><logentry revision="12"><author>ana</author><date>2024-01-02T03:04:05.000000Z</date><msg>corrige &amp; testa
+segunda linha</msg></logentry><logentry revision="11"><author></author><msg></msg></logentry></log>"#;
+        let c = parse_svn_log(xml);
+        assert_eq!(c.len(), 2);
+        assert_eq!((c[0].hash.as_str(), c[0].author.as_str(), c[0].subject.as_str()), ("12", "ana", "corrige & testa"));
+        assert_eq!(c[0].ts, Some(1704164645));
+        assert_eq!((c[1].hash.as_str(), c[1].ts), ("11", None));
+    }
+    #[test]
+    fn numstat_com_caminho_entre_aspas_e_fora_do_prefixo() {
+        let mut f = vec![ChangedFile { path: "ação.rs".into(), code: "M".into(), staged: None, add: None, del: None }];
+        apply_numstat(&mut f, "4\t2\t\"sub/ação.rs\"\n1\t1\toutro/x.rs\n", "sub/");
+        assert_eq!((f[0].add, f[0].del), (Some(4), Some(2)));
+        assert_eq!(strip_prefix("sub/a/b.rs", "sub/").as_deref(), Some("a/b.rs"));
+        assert_eq!(strip_prefix("outro/x.rs", "sub/"), None);
+        assert_eq!(unquote("\"a b\""), "a b");
+    }
+    #[test]
     fn so_versoes_fixas_vao_para_o_cache() {
         assert!(fixed("a7a487c74e44859aa703ac41f9724ed195abecd0"));
         assert!(fixed("1234"));
@@ -482,6 +541,22 @@ mod tests {
         assert!(!fixed(""));
     }
 
+    #[test]
+    fn linhas_do_svn_status() {
+        assert!(svn_file_line("M       src/ação.rs"));
+        assert!(svn_file_line("A  +    novo.txt"));
+        assert!(!svn_file_line("Summary of conflicts:"));
+        assert!(!svn_file_line("  Text conflicts: 1"));
+        assert!(!svn_file_line("Status against revision:    12"));
+        assert!(!svn_file_line("ção"));
+        let f = parse_svn_summarize(Path::new("C:/Repo"), "M       C:/repo/Ação/x.rs\n");
+        assert_eq!(f[0].path, "Ação/x.rs");
+    }
+    #[test]
+    fn revisoes_de_pedido() {
+        for ok in ["HEAD", "HEAD~1", "abc123^", "origin/main", "v1.2.0", "HEAD@{2}", "123", "BASE", "{2024-01-01}", "feature/x-y"] { assert!(safe_rev(ok), "{ok}"); }
+        for bad in ["--output=C:/x", "-p", "", "a b", "a\nb", "HEAD:arquivo", "/etc", ".git"] { assert!(!safe_rev(bad), "{bad}"); }
+    }
     #[test]
     fn lru_respeita_o_limite() {
         let mut l: Lru<String> = Lru::new(100);

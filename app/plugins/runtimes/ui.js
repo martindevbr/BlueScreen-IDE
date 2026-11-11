@@ -52,7 +52,7 @@ const R = runtimesCore({
   which: (progs) => api('sdk/which', {}, { method: 'POST', body: JSON.stringify({ progs }) }),
   jdks: () => api('sdk/jdks'),
   mavens: () => api('sdk/mavens'),
-  core: (route, q) => api(route, q),
+  core: (route, q) => api(route, q, { method: 'POST' }), // sdk/default e sdk/path só aceitam POST
   async workDir() { if (!workDir) workDir = (await plugin.info()).filesDir.replace(/[\\/]+$/, '') + (WIN ? '\\' : '/') + 'run'; return workDir; },
   writeWork: (rel, content) => plugin.files.write('run/' + rel, content),
   // a pasta de programas dentro do que o usuário escolheu (a própria, bin, Scripts ou uma subpasta, a versão mais nova

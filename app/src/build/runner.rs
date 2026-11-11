@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 const IS_WIN: bool = cfg!(windows);
 
@@ -181,7 +180,11 @@ fn new_run(dir: &str, title: &str, steps: Vec<String>, interactive: bool) -> Run
     let id = rs.seq;
     let r = Arc::new(Mutex::new(Run { id: id.to_string(), dir: dir.into(), title: title.into(), steps, lines: vec![], base: 0, tail: String::new(), status: "running", started: now_ms(), ended: None, exit: None, step: 0, pid: None, stopped: false, interactive, input: None }));
     rs.map.insert(id, r.clone());
-    while rs.map.len() > 12 { let k = *rs.map.keys().next().unwrap(); rs.map.remove(&k); }
+    // guarda as 12 mais recentes, mas nunca tira uma que ainda está rodando (a aba Build perderia a saída e o Parar)
+    while rs.map.len() > 12 {
+        let Some(k) = rs.map.iter().find(|(k, v)| **k != id && v.try_lock().is_some_and(|r| r.status != "running")).map(|(k, _)| *k) else { break };
+        rs.map.remove(&k);
+    }
     r
 }
 static ANSI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[[0-9;]*m").unwrap());
@@ -213,6 +216,9 @@ async fn exec(r: &RunRef, cmd: &str, args: &[String], cwd: &Path, env: &[(String
         Err(e) => { push(r, &format!("[BlueScreen] Falha ao iniciar: {e}\n")); return -1; }
     };
     r.lock().pid = child.id();
+    // no Job Object dos plugins: se o BlueScreen fechar (ou cair), o build e o que ele abriu saem junto
+    #[cfg(windows)]
+    if let Some(h) = child.raw_handle() { crate::plugins::external::job::assign_raw(h); }
     // entrada do console -> stdin do processo (cada passo tem o seu; o canal some quando o passo acaba)
     let feeder = child.stdin.take().map(|mut sin| {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -222,14 +228,11 @@ async fn exec(r: &RunRef, cmd: &str, args: &[String], cwd: &Path, env: &[(String
             while let Some(s) = rx.recv().await { if sin.write_all(s.as_bytes()).await.is_err() || sin.flush().await.is_err() { break; } }
         })
     });
+    // linhas pelo leitor comum (output.rs): code page do Windows quando não é UTF-8, \r de barra de progresso
     async fn pump<R: tokio::io::AsyncRead + Unpin>(r: RunRef, s: Option<R>) {
         let Some(s) = s else { return };
-        let mut rd = BufReader::new(s);
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            match rd.read_until(b'\n', &mut buf).await { Ok(0) | Err(_) => break, Ok(_) => push(&r, &String::from_utf8_lossy(&buf)) }
-        }
+        let mut lines = crate::output::Lines::new(s);
+        while let Some(l) = lines.next().await { push(&r, &(l + "\n")); }
     }
     /// programa interativo: o que chegar vai para o console na hora, mesmo sem quebra de linha ("Digite seu nome: ");
     /// um caractere UTF-8 cortado entre dois pedaços espera o resto
@@ -242,10 +245,10 @@ async fn exec(r: &RunRef, cmd: &str, args: &[String], cwd: &Path, env: &[(String
             pend.extend_from_slice(&chunk[..n]);
             let keep = match std::str::from_utf8(&pend) { Err(e) if e.error_len().is_none() => pend.len() - e.valid_up_to(), _ => 0 };
             let cut = pend.len() - keep;
-            push(&r, &String::from_utf8_lossy(&pend[..cut]));
+            push(&r, &crate::output::decode_console(&pend[..cut]));
             pend.drain(..cut);
         }
-        if !pend.is_empty() { push(&r, &String::from_utf8_lossy(&pend)); }
+        if !pend.is_empty() { push(&r, &crate::output::decode_console(&pend)); }
     }
     let (o, e) = (child.stdout.take(), child.stderr.take());
     if r.lock().interactive { tokio::join!(pump_raw(r.clone(), o), pump_raw(r.clone(), e)); }

@@ -14,7 +14,7 @@
 //!     (o mesmo do uv) · Go: go.dev/dl · .NET: builds.dotnet.microsoft.com · Zig: ziglang.org · Kotlin: GitHub
 use crate::build::detect::which;
 use crate::install::{Sum, begin, fetch, finish, line, upd};
-use crate::util::{read_json, user_dir, write_atomic};
+use crate::util::{absolute, read_json, read_json_strict, user_dir, within, write_atomic};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -61,7 +61,13 @@ fn exe(name: &str) -> String { if cfg!(windows) { format!("{name}.exe") } else {
 
 /// "1.27.2" x "1.9.10" em ordem numérica
 fn vkey(s: &str) -> Vec<u64> { s.split(|c: char| !c.is_ascii_digit()).filter(|x| !x.is_empty()).map(|x| x.parse().unwrap_or(0)).collect() }
-fn under(p: &Path, base: &Path) -> bool { p.to_string_lossy().to_lowercase().starts_with(&base.to_string_lossy().to_lowercase()) }
+/// `p` dentro de `base`, com ".." resolvido (comparar o texto deixava "...\.jdks\..\Documents" passar)
+fn under(p: &Path, base: &Path) -> bool { within(base, p) }
+/// SDK que a IDE baixou: uma pasta logo abaixo de root(kind), nunca a própria nem algo mais fundo ou fora
+fn managed_dir(p: &Path, kind: &str) -> bool {
+    let (p, base) = (absolute(p), absolute(&root(kind)));
+    p.parent().is_some_and(|d| within(&base, d) && within(d, &base)) && p.file_name().is_some()
+}
 
 // ---------- padrão de cada tipo (~/.bluescreen/sdks.json: { tipo: pasta }) ----------
 fn defaults_file() -> PathBuf { user_dir().join("sdks.json") }
@@ -72,12 +78,15 @@ pub fn chosen(kind: &str) -> Option<PathBuf> { explicit_default(kind) }
 pub fn extra_paths() -> Vec<(String, PathBuf)> {
     read_json(&defaults_file())["paths"].as_object().map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), PathBuf::from(v.as_str()?)))).filter(|(_, p)| p.is_dir()).collect()).unwrap_or_default()
 }
+/// sdks.json para mudar e gravar: ilegível é erro (gravar por cima perderia os outros padrões)
+fn defaults_for_edit() -> Result<Value, String> {
+    match read_json_strict(&defaults_file()).map_err(|e| e.to_string())? { v @ Value::Object(_) => Ok(v), Value::Null => Ok(json!({})), _ => Err(format!("{} não é um objeto JSON; conserte ou apague o arquivo", defaults_file().display())) }
+}
 /// aponta (ou esquece, com path vazio) a pasta de programas de um runtime que a IDE não baixa
 pub fn set_path(name: &str, path: &str) -> Result<(), String> {
     if name.is_empty() || find_kind(name).is_some() { return Err("use sdk/default para os SDKs que a IDE baixa".into()); }
     if !path.is_empty() && !Path::new(path).is_dir() { return Err(format!("a pasta {path} não existe")); }
-    let mut v = read_json(&defaults_file());
-    if !v.is_object() { v = json!({}); }
+    let mut v = defaults_for_edit()?;
     if !v["paths"].is_object() { v["paths"] = json!({}); }
     if path.is_empty() { v["paths"].as_object_mut().map(|o| o.remove(name)); } else { v["paths"][name] = json!(path); }
     write_atomic(&defaults_file(), &serde_json::to_string_pretty(&v).unwrap_or_default()).map_err(|e| e.to_string())?;
@@ -85,8 +94,9 @@ pub fn set_path(name: &str, path: &str) -> Result<(), String> {
     Ok(())
 }
 pub fn set_default(kind: &str, path: &str) -> Result<(), String> {
-    let mut v = read_json(&defaults_file());
-    if !v.is_object() { v = json!({}); }
+    kind_of(kind)?;
+    if !path.is_empty() && !Path::new(path).is_dir() { return Err(format!("a pasta {path} não existe")); }
+    let mut v = defaults_for_edit()?;
     if path.is_empty() { v.as_object_mut().map(|o| o.remove(kind)); } else { v[kind] = json!(path); }
     write_atomic(&defaults_file(), &serde_json::to_string_pretty(&v).unwrap_or_default()).map_err(|e| e.to_string())?;
     crate::build::detect::forget_which();
@@ -95,7 +105,7 @@ pub fn set_default(kind: &str, path: &str) -> Result<(), String> {
 /// pastas baixadas pela IDE para um tipo (a mais nova primeiro)
 fn managed(kind: &str) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(root(kind)).map(|rd| rd.flatten().map(|e| e.path())
-        .filter(|p| p.is_dir() && !p.extension().is_some_and(|e| e == "new" || e == "download")).collect()).unwrap_or_default();
+        .filter(|p| p.is_dir() && !p.extension().is_some_and(|e| e == "new" || e == "download" || e == "old")).collect()).unwrap_or_default();
     v.sort_by(|a, b| vkey(&b.to_string_lossy()).cmp(&vkey(&a.to_string_lossy())));
     v
 }
@@ -395,14 +405,18 @@ async fn resolve(kind: &str, p: &Pkg, c: &reqwest::Client) -> Result<(String, Op
             (s(&f["url"]), f["hash"].as_str().map(|h| Sum::Sha512(h.to_string())))
         }
         "node" => {
+            // a soma é publicada: sem conseguir baixá-la (ou sem o pacote nela), não instala sem conferir
             let file = p.url.rsplit('/').next().unwrap_or("").to_string();
-            let sums = get_text(c, &p.lazy).await.unwrap_or_default();
-            (p.url.clone(), sums.lines().find(|l| l.ends_with(&file)).map(|l| Sum::Sha256(first_word(l.to_string()))))
+            let sums = get_text(c, &p.lazy).await.map_err(|e| format!("não deu para baixar a soma publicada do Node.js ({e}); nada foi instalado"))?;
+            let sum = sums.lines().find(|l| l.ends_with(&file)).map(|l| Sum::Sha256(first_word(l.to_string()))).ok_or_else(|| format!("{file} não está na lista de somas publicada; nada foi instalado"))?;
+            (p.url.clone(), Some(sum))
         }
         "gradle" | "maven" => {
-            let t = if p.lazy.is_empty() { String::new() } else { get_text(c, &p.lazy).await.unwrap_or_default() };
+            // com soma publicada (lazy), ela tem de chegar e ser legível; sem ela, o download segue sem conferir (avisado)
+            let t = if p.lazy.is_empty() { String::new() } else { get_text(c, &p.lazy).await.map_err(|e| format!("não deu para baixar a soma publicada ({e}); nada foi instalado"))? };
             let h = first_word(t);
             let sum = if h.len() == 128 { Some(Sum::Sha512(h)) } else if h.len() == 64 { Some(Sum::Sha256(h)) } else { None };
+            if !p.lazy.is_empty() && sum.is_none() { return Err("a soma publicada veio num formato inesperado; nada foi instalado".into()); }
             (p.url.clone(), sum)
         }
         _ => (p.url.clone(), p.sum.clone().map(to_sum)),
@@ -477,7 +491,7 @@ async fn rust(job: &str, channel: &str, c: &reqwest::Client) -> Result<(), Strin
 
 /// sem o C++ do Visual Studio (o Rust MSVC precisa do link.exe dele)
 fn msvc_missing() -> bool {
-    let vswhere = PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installerswhere.exe");
+    let vswhere = PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
     !vswhere.is_file() || run_out(&vswhere, &["-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"]).trim().is_empty()
 }
 
@@ -486,14 +500,16 @@ pub async fn remove(kind: &str, path: &str) -> Result<(), String> {
     let k = kind_of(kind)?;
     if k.id == "rust" {
         let r = rustup().ok_or("rustup não encontrado")?;
+        // o nome do toolchain nunca é uma opção do rustup
+        if path.is_empty() || path.starts_with('-') { return Err("toolchain inválido".into()); }
         let mut c = tokio::process::Command::new(r);
-        c.args(["toolchain", "uninstall", path]);
+        c.args(["toolchain", "uninstall", "--", path]);
         crate::install::hidden(&mut c);
         let ok = c.status().await.map(|s| s.success()).unwrap_or(false);
         return if ok { Ok(()) } else { Err("o rustup não conseguiu remover".into()) };
     }
-    let p = PathBuf::from(path);
-    if !under(&p, &root(k.id)) || p == root(k.id) { return Err("só dá para remover o que a IDE baixou".into()); }
+    let p = absolute(&PathBuf::from(path));
+    if !managed_dir(&p, k.id) { return Err("só dá para remover o que a IDE baixou".into()); }
     if explicit_default(k.id).is_some_and(|d| d == p) { set_default(k.id, "")?; }
     tokio::fs::remove_dir_all(&p).await.map_err(|e| format!("não deu para apagar (algum programa dela está aberto?): {e}"))?;
     crate::build::detect::forget_which();
@@ -515,4 +531,19 @@ pub fn for_program(prog: &str) -> Option<&'static str> {
         "kotlinc" | "kotlin" => "kotlin",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn so_remove_o_que_baixou() {
+        let r = root("node");
+        assert!(managed_dir(&r.join("node-v20"), "node"));
+        assert!(!managed_dir(&r, "node"));
+        assert!(!managed_dir(&r.join("..").join("..").join("Documents"), "node"));
+        assert!(!managed_dir(&r.join("node-v20").join("..").join("..").join("Documents"), "node"));
+        assert!(!managed_dir(&r.join("a").join("b"), "node"));
+        assert!(under(&r.join("x"), &r) && !under(&r.join("..").join("y"), &r));
+    }
 }

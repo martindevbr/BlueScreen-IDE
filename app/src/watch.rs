@@ -88,21 +88,41 @@ fn classify(rel: &str) -> Option<Kind> {
     Some(Kind::Change)
 }
 
-fn get_or_start(root: &Path) -> Arc<Watch> {
-    let mut m = WATCHES.lock();
-    // desliga os vigias que ninguém consulta há um tempo (outro projeto aberto, aba fechada)
-    m.retain(|p, w| {
-        let keep = p == root || (!w.dead.load(Ordering::SeqCst) && w.state.lock().last_poll.elapsed() < IDLE);
+/// Chave do vigia: o mesmo projeto pedido como "C:\Proj", "c:\proj\" ou "C:/Proj" é uma pasta só (no Windows os
+/// nomes não diferenciam maiúsculas); sem isso cada grafia abria um vigia próprio na mesma pasta.
+fn key(root: &Path) -> PathBuf {
+    let s = crate::util::absolute(root).to_string_lossy().replace('/', "\\");
+    let s = s.trim_end_matches('\\');
+    // "C:\" vira "C:" no trim: a raiz do disco continua sendo a raiz
+    let s = if s.ends_with(':') { format!("{s}\\") } else { s.to_string() };
+    PathBuf::from(if cfg!(windows) { s.to_lowercase() } else { s })
+}
+/// desliga os vigias que ninguém consulta há um tempo (outro projeto aberto, janela fechada) e os que morreram
+fn reap(keep: Option<&Path>) {
+    WATCHES.lock().retain(|p, w| {
+        let keep = Some(p.as_path()) == keep || (!w.dead.load(Ordering::SeqCst) && w.state.lock().last_poll.elapsed() < IDLE);
         if !keep { w.stop.store(true, Ordering::SeqCst); }
         keep
     });
-    if let Some(w) = m.get(root) { if !w.dead.load(Ordering::SeqCst) { return w.clone(); } }
+}
+fn get_or_start(root: &Path) -> Arc<Watch> {
+    let k = key(root);
+    // limpeza também por tempo: sem isso um vigia ocioso só caía quando outro projeto pedisse o seu
+    static REAPER: std::sync::Once = std::sync::Once::new();
+    if tokio::runtime::Handle::try_current().is_ok() {
+        REAPER.call_once(|| { tokio::spawn(async { loop { tokio::time::sleep(IDLE / 3).await; reap(None); } }); });
+    }
+    reap(Some(&k));
+    let mut m = WATCHES.lock();
+    if let Some(w) = m.get(&k) { if !w.dead.load(Ordering::SeqCst) { return w.clone(); } }
     let first = SEQ.load(Ordering::SeqCst);
     let w = Arc::new(Watch { state: Mutex::new(State { events: VecDeque::new(), first, dropped: 0, last_poll: Instant::now() }), notify: Notify::new(), stop: AtomicBool::new(false), dead: AtomicBool::new(false) });
-    m.insert(root.to_path_buf(), w.clone());
+    m.insert(k, w.clone());
     let (w2, root) = (w.clone(), root.to_path_buf());
     let started = std::thread::Builder::new().name("bs-watch".into()).spawn(move || {
-        run(&root, &w2);
+        // erro interno no vigia: ele morre (anotado no log pelo gancho de main.rs) e a página passa a conferir as abas
+        // de tempos em tempos (native: false); o próximo pedido abre outro
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&root, &w2)));
         w2.dead.store(true, Ordering::SeqCst);
         w2.notify.notify_waiters();
     });
@@ -212,5 +232,14 @@ mod tests {
         assert!(classify(".git/objects/ab/cdef").is_none());
         assert!(classify("web/node_modules/x/index.js").is_none());
         assert!(classify("target/debug/app.exe").is_none());
+    }
+    #[test]
+    #[cfg(windows)]
+    fn mesma_pasta_mesma_chave() {
+        assert_eq!(key(Path::new(r"C:\Proj\App")), key(Path::new("c:/proj/app/")));
+        assert_eq!(key(Path::new(r"C:\Proj\App\")), key(Path::new(r"C:\PROJ\APP")));
+        assert_eq!(key(Path::new(r"C:\Proj\.\App")), key(Path::new(r"C:\Proj\App")));
+        assert_ne!(key(Path::new(r"C:\Proj\App")), key(Path::new(r"C:\Proj\App2")));
+        assert_eq!(key(Path::new("C:\\")), PathBuf::from("c:\\"));
     }
 }

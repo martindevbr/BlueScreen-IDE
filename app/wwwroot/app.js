@@ -3,15 +3,19 @@ const $ = (s) => document.querySelector(s);
 // pedidos ao servidor; a barra fina no topo aparece quando algum demora
 let busyN = 0;
 const busy = (d) => { busyN = Math.max(0, busyN + d); document.getElementById('busy').classList.toggle('on', busyN > 0); };
+// Erro de um pedido: a mensagem do servidor e, em e.route / e.status / e.data, de onde veio (409 de conflito ao
+// salvar, por exemplo). Erro interno (5xx), resposta que não é JSON e falta de resposta dizem a rota e o status na
+// própria mensagem: "salvar falhou" sozinho não ajuda ninguém a achar o problema.
+class ApiError extends Error { constructor(msg, route, status, data) { super(msg); this.route = route; this.status = status; this.data = data; } }
 const api = async (p, params = {}, opt = {}) => {
   const u = new URL('/api/' + p, location.origin);
   Object.entries(params).forEach(([k, v]) => v != null && u.searchParams.set(k, v));
   const quiet = opt.quiet; if (!quiet) busy(1);
   try {
-    const r = await fetch(u, opt);
-    if (r.status === 401) { showLogin(); throw new Error('login'); }
-    const j = await r.json();
-    if (j && j.error) throw new Error(j.error);
+    let r; try { r = await fetch(u, opt); } catch (e) { if (e.name === 'AbortError') throw e; throw new ApiError(`sem resposta do BlueScreen (/api/${p}): ${e.message}`, p, 0); }
+    if (r.status === 401) { showLogin(); throw new ApiError('login', p, 401); }
+    let j; try { j = await r.json(); } catch { throw new ApiError(r.ok ? `resposta inválida do servidor (/api/${p})` : `o servidor respondeu ${r.status} ${r.statusText} em /api/${p}`.replace('  ', ' '), p, r.status); }
+    if (j && j.error) throw new ApiError(r.status >= 500 ? `${j.error} (/api/${p}, ${r.status})` : j.error, p, r.status, j);
     return j;
   } finally { if (!quiet) busy(-1); }
 };
@@ -46,7 +50,7 @@ function ago(ms) { if (!ms) return ''; const s = (Date.now() - ms) / 1000; if (s
 function sorted(items, dirsFirst) { const a = items.slice(); return a.sort((x, y) => (dirsFirst ? ((y.dir ? 1 : 0) - (x.dir ? 1 : 0)) : 0) || (S.sortRecent ? (y.mtime || 0) - (x.mtime || 0) : x.name.localeCompare(y.name, 'pt-BR'))); }
 let monaco, editor, diffEditor, viewer = null; // viewer: 'editor' | 'diff'
 const chgOf = (p) => S.changes.find(c => c.path === p);
-const codeCls = (p) => { const c = chgOf(p); return c ? ' c-' + c.code.replace('?', '\\?') : ''; };
+const codeCls = (p) => { const c = chgOf(p); return c ? ' c-' + c.code : ''; }; // o CSS escreve .c-\? para casar com a classe c-?
 const statHtml = (c) => (c && (c.add || c.del)) ? `<span class="stat">${c.add ? `<span class="a">+${c.add}</span>` : ''}${c.del ? `<span class="d">−${c.del}</span>` : ''}</span>` : '';
 const unsavedPaths = () => new Set(S.tabs.filter(t => t.dirty).map(t => t.path));
 function syncUnsaved() {
@@ -112,7 +116,8 @@ require(['vs/editor/editor.main'], () => {
   registerGherkin();
   window.registerSmartTokens?.(); // antes do servidor de linguagem, que tem prioridade quando liga
   applyTheme();
-  boot();
+  // falha ao abrir (servidor fora, resposta estranha): a mensagem aparece em vez da tela em branco
+  boot().catch((e) => { splash(); if (e.message !== 'login') toast('Não foi possível abrir o BlueScreen: ' + e.message, 'err'); console.error(e); });
 });
 // JSP: a gramática de HTML do próprio Monaco com o Java dos scriptlets (<% %>, <%= %>, <%! %>) colorido como Java,
 // diretivas <%@ %>, comentários <%-- --%> e EL ${ } / #{ }. Completar tags e atributos: html.js.
@@ -201,12 +206,13 @@ const langOf = (f) => { const n = f.toLowerCase(); if (n.endsWith('dockerfile'))
 const splash = (t) => { if (window.BS_SPLASH) t ? BS_SPLASH.step(t) : BS_SPLASH.done(); };
 async function boot() {
   splash('Conectando…');
-  const sess = await fetch('/api/session').then(r => r.json());
+  const sess = await fetch('/api/session').then(r => r.json()).catch(() => { throw new Error('o servidor do BlueScreen não respondeu'); });
   S.remote = !!sess.remote;
   if (sess.remote && !sess.authed) { splash(); showLogin(); return; }
   try { await start(); } finally { splash(); }
 }
 async function start() {
+  S.started = true;
   const cfg = await api('config');
   if (!S.root) S.root = cfg.root;
   S.net = cfg.network; S.hostName = cfg.host; renderNet(); BS.version = cfg.version;
@@ -245,7 +251,9 @@ function docMode(file) {
 function showLogin() { $('#login').hidden = false; $('#loginPin').focus(); }
 $('#loginBtn').onclick = async () => {
   const r = await fetch('/api/login', { method: 'POST', body: JSON.stringify({ pin: $('#loginPin').value.trim() }) });
-  if (r.ok) { $('#login').hidden = true; start(); } else $('#loginErr').textContent = 'PIN incorreto';
+  // login de novo no meio do uso (a sessão expirou): recarrega, em vez de rodar start() de novo (plugins em dobro)
+  if (r.ok) { $('#login').hidden = true; if (S.started) location.reload(); else start(); }
+  else { let m = 'PIN incorreto'; try { m = (await r.json()).error || m; } catch {} $('#loginErr').textContent = m; }
 };
 $('#loginPin').addEventListener('keydown', e => e.key === 'Enter' && $('#loginBtn').click());
 
@@ -549,7 +557,7 @@ function renamePath(rel, isDir) {
         try {
           const f = await api('file', { project: S.project.path, file: to });
           const re = new RegExp(`(?<![\\w$.])${cls.replace(/\$/g, '\\$')}(?![\\w$])`, 'g');
-          if (!f.binary && re.test(f.content)) await api('file', { project: S.project.path, file: to }, { method: 'PUT', body: f.content.replace(re, newStem) });
+          if (!f.binary && re.test(f.content)) await api('file', { project: S.project.path, file: to, encoding: f.encoding !== 'utf-8' ? f.encoding : null, bom: f.bom ? 1 : null }, { method: 'PUT', body: f.content.replace(re, newStem) });
         } catch (e) { toast('A classe não foi renomeada: ' + e.message); }
       }
       // abas: reabre no caminho novo, mantendo a ativa por último (e a posição do cursor nela)
@@ -608,7 +616,7 @@ function deletePath(rel, isDir) {
 }
 function tabMenu(e, t) {
   showMenu(e, BS.hooks.apply('menu:tab', [
-    { label: t.mode === 'diff' ? 'Abrir como editor' : 'Ver diff', icon: t.mode === 'diff' ? I.edit : I.diff, action: () => openFile(t.path, t.mode === 'diff' ? 'editor' : 'diff') },
+    { label: t.mode === 'diff' ? 'Abrir como editor' : 'Ver diff', icon: t.mode === 'diff' ? I.edit : I.diff, action: () => openFile(t.path, t.mode === 'diff' ? 'editor' : 'diff', undefined, undefined, t.project) },
     { label: 'Apresentar', icon: I.present, k: 'F11', action: () => { activate(t); present(true); } },
     '-',
     { label: 'Fechar', icon: I.x, k: 'Ctrl+W', action: () => askClose(t) },
@@ -769,6 +777,7 @@ function quickProject() {
 }
 async function refreshProject() {
   if (!S.project) return;
+  const proj = S.project; // trocou de projeto enquanto esperava: a resposta é do anterior e vai fora
   const vcs = S.project.vcs, none = { files: [] };
   const chg = (mode, rev, base) => vcs ? api('changes', { project: S.project.path, mode, rev, base }).catch(() => none) : none;
   const cur = chg(S.changeMode, S.rev, S.changeMode === 'range' ? S.base : null);
@@ -779,6 +788,7 @@ async function refreshProject() {
     S.changeMode === 'working' ? cur : chg('working'),
     S.changeMode === 'last' && !S.rev ? cur : chg('last'),
   ]);
+  if (S.project !== proj) return;
   // o Git/SVN pode ter sido criado (git init, checkout) ou apagado depois que a pasta entrou nos recentes: o resumo
   // de agora manda. Mudou: guarda e busca de novo as alterações e o histórico com o tipo certo
   if (sum && (sum.vcs || null) !== (S.project.vcs || null)) {
@@ -916,7 +926,11 @@ function setTool(t) {
   $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true);
 }
 function openTool(t) { const def = BS.tools.get(t); if (!def) return; if (def.toggle) { BS.dock && BS.dock.claim(t); def.toggle(true); return; } $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true); }
-function btnState() { document.querySelectorAll('#strip [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool && !$('#app').classList.contains('no-tool'))); }
+function btnState() {
+  const shown = !$('#app').classList.contains('no-tool');
+  document.querySelectorAll('#strip [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool && shown));
+  const p = $('#btnPanel'); if (p) { p.classList.toggle('on', shown); p.setAttribute('aria-expanded', shown); }
+}
 function renderTool() {
   const t = BS.tools.get(S.tool) || BS.tools.get('project'); S.tool = t.id;
   $('#toolTitle').textContent = t.title; $('#toolSub').textContent = ''; $('#toolActions').innerHTML = ''; $('#toolBody').onscroll = null;
@@ -1073,7 +1087,7 @@ function bindTree(el) {
     treeSelect(p); el.focus({ preventScroll: true });
     // pasta: todo clique abre/fecha, por mais rápido que venha; "Abrir arquivo com um clique" vale só para arquivos
     if (row.dataset.dir) treeToggle(p);
-    else if (S.singleClick) treeActivate(p);
+    else if (S.singleClick || lastPointer === 'touch') treeActivate(p); // no toque não há duplo clique
   };
   el.ondblclick = (e) => { const row = rowFrom(e); if (!row || row.dataset.dir || S.singleClick) return; treeActivate(row.dataset.p); };
   el.oncontextmenu = (e) => {
@@ -1190,7 +1204,8 @@ function ensureEditors() {
     editor.onDidChangeCursorPosition(e => $('#stPos').textContent = `${e.position.lineNumber}:${e.position.column}`);
     editor.onDidChangeModelContent(() => markDirty(editor.getModel()));
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, save);
-    editor.addAction({ id: 'bs.diff', label: 'Ver diff', contextMenuGroupId: 'navigation', contextMenuOrder: 0, run: () => S.active && openFile(S.active.path, 'diff') });
+    editor.addCommand(monaco.KeyCode.F1, () => showKeys()); // F1 é a tela de atalhos do BlueScreen, não a paleta do Monaco
+    editor.addAction({ id: 'bs.diff', label: 'Ver diff', contextMenuGroupId: 'navigation', contextMenuOrder: 0, run: () => S.active && openFile(S.active.path, 'diff', undefined, undefined, S.active.project) });
     editor.addAction({ id: 'bs.lint', label: 'Lint', contextMenuGroupId: 'navigation', contextMenuOrder: 1, run: () => runLint() });
     editor.addAction({ id: 'bs.present', label: 'Apresentar', contextMenuGroupId: 'navigation', contextMenuOrder: 2, run: () => present(true) });
   }
@@ -1200,7 +1215,11 @@ function ensureEditors() {
     diffEditor.getModifiedEditor().onDidChangeCursorPosition(e => $('#stPos').textContent = `${e.position.lineNumber}:${e.position.column}`);
     diffEditor.getModifiedEditor().onDidChangeModelContent(() => { const m = diffEditor.getModifiedEditor().getModel(); if (m && m._tab) m._tab.preview = false; markDirty(m); });
     diffEditor.getModifiedEditor().addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, save);
-    diffEditor.getModifiedEditor().addAction({ id: 'bs.edit', label: 'Abrir como editor', contextMenuGroupId: 'navigation', contextMenuOrder: 0, run: () => S.active && openFile(S.active.path, 'editor') });
+    // no diff editável o Monaco usaria Alt+↑/↓ para mover a linha: aqui eles andam entre as alterações, como no diff só leitura
+    diffEditor.getModifiedEditor().addCommand(monaco.KeyMod.Alt | monaco.KeyCode.DownArrow, () => goDiff('next'));
+    diffEditor.getModifiedEditor().addCommand(monaco.KeyMod.Alt | monaco.KeyCode.UpArrow, () => goDiff('previous'));
+    diffEditor.getModifiedEditor().addCommand(monaco.KeyCode.F1, () => showKeys());
+    diffEditor.getModifiedEditor().addAction({ id: 'bs.edit', label: 'Abrir como editor', contextMenuGroupId: 'navigation', contextMenuOrder: 0, run: () => S.active && openFile(S.active.path, 'editor', undefined, undefined, S.active.project) });
     diffEditor.getModifiedEditor().addAction({ id: 'bs.inline', label: 'Lado a lado / em linha', contextMenuGroupId: 'navigation', contextMenuOrder: 1, run: () => $('#btnInline').click() });
     diffEditor.getModifiedEditor().addAction({ id: 'bs.present2', label: 'Apresentar', contextMenuGroupId: 'navigation', contextMenuOrder: 2, run: () => present(true) });
     diffEditor.onDidUpdateDiff(() => updateDiffInfo());
@@ -1226,39 +1245,56 @@ function updateDiffInfo() {
   const list = tabInList() ? chgList() : []; const fi = list.findIndex(c => c.path === S.active.path);
   $('#diffFile').hidden = fi < 0; if (fi >= 0) $('#diffFileN').textContent = `arquivo ${fi + 1}/${list.length}`;
 }
-function tabKey(path, mode) { return path + '::' + (mode === 'diff' ? S.changeMode + ':' + (S.rev || '') + (S.changeMode === 'range' ? '<' + (S.base || '') : '') : 'editor'); }
+// a chave leva o projeto: o mesmo caminho em dois projetos são abas (e arquivos) diferentes
+function tabKey(path, mode, project = S.project?.path) { return (project || '') + '|' + path + '::' + (mode === 'diff' ? S.changeMode + ':' + (S.rev || '') + (S.changeMode === 'range' ? '<' + (S.base || '') : '') : 'editor'); }
+// URI do modelo: única por aba e terminando no nome real do arquivo (o worker do TypeScript decide .ts/.js pela extensão)
+const tabUri = (tab) => monaco.Uri.parse('bs:/' + encodeURIComponent(tab.key) + '/' + encodeURIComponent(tab.path.split('/').pop()));
 // preview: aberta pela lista de Alterações; ao andar para o próximo arquivo, ela é trocada em vez de empilhar
-async function openFile(path, mode, line, preview) {
+// project: o da aba que pede (reabrir uma aba de outro projeto); sem ele, o projeto aberto
+// OPENING: aberturas em andamento por chave (o mesmo arquivo pedido duas vezes espera a primeira, em vez de criar o
+// modelo duas vezes); openSeq: só a abertura mais recente leva o foco (uma resposta lenta não rouba a aba de outra)
+const OPENING = new Map(); let openSeq = 0;
+async function openFile(path, mode, line, preview, project) {
   ensureEditors();
+  const proj = project || S.project.path;
+  // diff de outro projeto: o Git/SVN e as Alterações são do projeto aberto
+  if (mode === 'diff' && proj !== S.project.path) return toast('O arquivo é de outro projeto: abra o projeto para ver o diff');
   // imagens, PDF, áudio, vídeo, fontes e binários conhecidos abrem no visualizador (viewer.js)
-  const vk = mode !== 'diff' && BS.fileViewer && BS.fileViewer.kind(path);
+  const vk = mode !== 'diff' && proj === S.project.path && BS.fileViewer && BS.fileViewer.kind(path);
   if (vk) return BS.fileViewer.open(path, vk, line);
-  const key = tabKey(path, mode);
+  const key = tabKey(path, mode, proj);
+  const my = ++openSeq;
   let tab = S.tabs.find(t => t.key === key);
+  if (!tab && OPENING.has(key)) { await OPENING.get(key); tab = S.tabs.find(t => t.key === key); if (!tab) return; }
   if (!tab) {
-    tab = { key, path, mode, project: S.project.path, lang: langOf(path), changeMode: S.changeMode, rev: S.rev, cmpBase: S.changeMode === 'range' ? S.base : undefined };
+    tab = { key, path, mode, project: proj, lang: langOf(path), changeMode: S.changeMode, rev: S.rev, cmpBase: S.changeMode === 'range' ? S.base : undefined };
+    let opened; OPENING.set(key, new Promise(r => { opened = r; }));
     try {
       if (mode === 'diff') {
         const d = await vcDiff(path); // commits guardados e pré-carregados (vcs.js)
         tab.original = monaco.editor.createModel(d.original, tab.lang);
-        tab.model = monaco.editor.createModel(d.modified, tab.lang, monaco.Uri.parse('bs:/' + encodeURIComponent(tab.key)));
+        tab.model = monaco.editor.createModel(d.modified, tab.lang, tabUri(tab));
         tab.editable = S.changeMode === 'working' || (S.changeMode === 'range' && !S.rev); // Comparar com o disco: o lado direito é o arquivo
+        if (tab.editable) { tab.enc = d.encoding; tab.bom = !!d.bom; } // lado do disco: grava de volta na mesma codificação
       } else {
-        const f = await api('file', { project: S.project.path, file: path });
+        const f = await api('file', { project: proj, file: path });
         if (f.binary) return BS.fileViewer ? BS.fileViewer.open(path, 'hex') : toast('Arquivo binário');
         if (f.tooBig) return BS.fileViewer ? BS.fileViewer.openBig(path, f.size, line) : toast('Arquivo grande demais');
-        tab.model = monaco.editor.createModel(f.content, tab.lang, monaco.Uri.parse('bs:/' + encodeURIComponent(tab.key)));
+        tab.model = monaco.editor.createModel(f.content, tab.lang, tabUri(tab));
         tab.editable = true; tab.stamp = f.mtime + ':' + f.size; // data/tamanho no disco: base para notar alterações de fora
-        if (S.project.vcs && S.changes.some(c => c.path === path && c.code !== '?')) {
-          api('diff', { project: S.project.path, file: path, mode: 'working' }).then(d => { tab.base = d.original; gutterMarks(tab); }).catch(() => {});
+        tab.enc = f.encoding; tab.bom = f.bom; // Windows-1252 / BOM: o arquivo é gravado de volta do mesmo jeito
+        if (proj === S.project.path && S.project.vcs && S.changes.some(c => c.path === path && c.code !== '?')) {
+          api('diff', { project: proj, file: path, mode: 'working' }).then(d => { tab.base = d.original; gutterMarks(tab); }).catch(() => {});
         }
       }
       tab.saved = tab.model.getValue(); tab.model._tab = tab;
+      tab.preview = !!preview;
+      S.tabs.push(tab); BS.hooks.run('tab:open', tab); liveLintSoon(tab, 0);
     } catch (e) { toast(e.message); return; }
-    tab.preview = !!preview;
-    S.tabs.push(tab); BS.hooks.run('tab:open', tab); liveLintSoon(tab, 0);
+    finally { OPENING.delete(key); opened(); }
   } else if (!preview) tab.preview = false; // aberta de propósito por outro caminho: fica
   if (tab.mode === 'diff' && tab.changeMode === 'last') markSeen(path, tab.rev);
+  if (my !== openSeq) return; // outro arquivo foi pedido enquanto este carregava: a aba fica aberta, sem o foco
   activate(tab); seRemember(path);
   if (line) revealAt(tab.mode === 'diff' ? diffEditor.getModifiedEditor() : editor, line);
 }
@@ -1275,6 +1311,7 @@ function revealAt(ed, line, col = 1) {
 function activate(tab) {
   if (S.active && S.active !== tab) autoSaveAll(); // trocar de aba salva as outras
   S.active = tab; viewer = tab.mode;
+  hideToolIfNarrow(); // tela estreita: o painel flutua por cima do editor; abrir a aba mostra o arquivo
   $('#welcome').hidden = true;
   $('#ed').style.display = tab.mode === 'editor' ? '' : 'none';
   $('#dd').style.display = tab.mode === 'diff' ? '' : 'none';
@@ -1311,15 +1348,31 @@ function renderTabs() {
   syncUnsaved();
 }
 function closeTab(t) {
+  if (!S.tabs.includes(t)) return; // já fechada (ex.: o diff "EXTERNO", que sai junto com a aba dona)
   S.tabs.filter(x => x.owner === t).forEach(closeTab); // diff "EXTERNO" usa o mesmo modelo da aba dona
-  if (S.autoSave && t.dirty && !t.owner && !t.conflict && !t.gone) saveTab(t, true, t.model?.getValue()); // fechar = salvar (o texto vai junto: o modelo é descartado já)
+  // fechar = salvar (o texto vai junto: o modelo é descartado já); espera a gravação que estiver em curso
+  const pend = S.autoSave && t.dirty && !t.owner && !t.conflict && !t.gone ? closeSave(t, t.model?.getValue()) : null;
   const i = S.tabs.indexOf(t); S.tabs.splice(i, 1);
   if (t.original && diffEditor && diffEditor.getModel()?.original === t.original) diffEditor.setModel(null); // o Monaco reclama de modelo descartado ainda em uso
   if (!t.owner) { BS.hooks.run('tab:close', t); t.model?.dispose(); }
   t.original?.dispose();
   if (S.active === t) { const n = S.tabs[i] || S.tabs[i - 1]; if (n) activate(n); else { S.active = null; viewer = null; $('#welcome').hidden = false; $('#ed').style.display = 'none'; $('#dd').style.display = 'none'; $('#vw').style.display = 'none'; $('#diffInfo').hidden = true; $('#stLang').textContent = ''; $('#stPos').textContent = ''; renderTabs(); renderCrumbs(); renderDashboard(); } }
   else renderTabs();
-  if (DOC && !S.tabs.length) desktop({ type: 'close' }); // janela de documento: sem o documento, a janela fecha
+  // janela de documento: sem o documento, a janela fecha (depois de gravar, se estava gravando)
+  if (DOC && !S.tabs.length) (pend || Promise.resolve()).then(() => { if (!S.tabs.length) desktop({ type: 'close' }); });
+}
+// Gravação de uma aba que acabou de ser fechada com o salvamento automático: entra depois da que estiver em curso
+// (senão as últimas teclas se perdem) e, se não gravar, o arquivo volta numa aba com o texto, sem perder nada.
+async function closeSave(t, body) {
+  if (t.mode !== 'view' && body == null) return;
+  while (t.saving) await new Promise(r => setTimeout(r, 30));
+  await saveTab(t, t.mode === 'view' ? true : 'close', body);
+  if (t.mode === 'view' || t.saved === body) return;
+  toast(`${t.path.split('/').pop()} não foi salvo: o texto voltou para uma aba`, 'err');
+  if (!S.project || S.project.path !== t.project) return;
+  await openFile(t.path, 'editor', undefined, undefined, t.project);
+  const n = S.tabs.find(x => x.key === tabKey(t.path, 'editor', t.project));
+  if (n && n.model && n.model.getValue() !== body) n.model.setValue(body);
 }
 // fechar pelo usuário (X, Ctrl+W, menu): se alguma aba perderia alterações, pergunta antes.
 // Com o salvamento automático, fechar já salva; só pergunta quando ele não pode gravar (conflito, arquivo apagado).
@@ -1387,17 +1440,23 @@ async function saveTab(t, auto, body) {
   try {
     if (body == null) body = t.model.getValue();
     t.pending = body;
-    const r = await api('file', { project: t.project, file: t.path }, { method: 'PUT', body });
+    // expect*: como o arquivo estava quando foi lido; se mudou no disco nesse meio-tempo, o núcleo recusa (409)
+    const [em, es] = (t.stamp || '').split(':');
+    const r = await api('file', { project: t.project, file: t.path, encoding: t.enc && t.enc !== 'utf-8' ? t.enc : null, bom: t.bom ? 1 : null, expectMtime: t.stamp ? em : null, expectSize: t.stamp ? es : null }, { method: 'PUT', body });
     t.saved = body; if (r.mtime) t.stamp = r.mtime + ':' + r.size;
     if (!live()) return;
     t.dirty = t.model.getValue() !== body; renderTabs();
     BS.hooks.run('tab:save', t);
-    // sincroniza outras abas do mesmo arquivo
-    S.tabs.filter(x => x !== t && x.model !== t.model && x.path === t.path && x.project === t.project && x.editable).forEach(x => { x.model.setValue(t.saved); x.saved = t.saved; x.dirty = false; x.stamp = t.stamp; });
+    // sincroniza outras abas do mesmo arquivo (as com alterações próprias não salvas ficam como estão)
+    S.tabs.filter(x => x !== t && x.model !== t.model && x.path === t.path && x.project === t.project && x.editable && !x.dirty).forEach(x => { x.model.setValue(t.saved); x.saved = t.saved; x.dirty = false; x.stamp = t.stamp; });
     // sem aviso: a aba perde a marca de "não salvo" e o lint aparece na barra de status (e em Problemas, se houver)
     runLint(t, auto ? 'auto' : true);
     refreshProject();
-  } catch (e) { toast('Erro ao salvar ' + t.path.split('/').pop() + ': ' + e.message, 'err'); }
+  } catch (e) {
+    // mudou fora da IDE entre a conferência e a gravação: o sync.js lê o disco e mostra o conflito (diff EXTERNO)
+    if (e.status === 409 && e.data && e.data.conflict && BS.ext) { t.pending = null; t.saving = false; await BS.ext.check(t); toast(`${t.path.split('/').pop()} mudou fora da IDE: confira o diff antes de salvar`, 'err', 'ext:' + t.key); return; }
+    toast('Erro ao salvar ' + t.path.split('/').pop() + ': ' + e.message, 'err');
+  }
   finally { t.pending = null; t.saving = false; }
 }
 
@@ -1459,7 +1518,8 @@ function gutterMarks(tab) {
   const decos = [];
   d.filter(x => x.t === 'add').forEach(x => decos.push({ range: new monaco.Range(x.line, 1, x.line, 1), options: { linesDecorationsClassName: dels.has(x.line) ? 'gut-mod' : 'gut-add', isWholeLine: true } }));
   dels.forEach(l => { if (!d.some(x => x.t === 'add' && x.line === l)) decos.push({ range: new monaco.Range(Math.min(l, tab.model.getLineCount()), 1, Math.min(l, tab.model.getLineCount()), 1), options: { linesDecorationsClassName: 'gut-del' } }); });
-  tab.decos = editor.deltaDecorations(tab.decos || [], decos);
+  // no modelo da aba (o editor pode estar mostrando outra aba quando a base do diff chega)
+  if (!tab.model.isDisposed()) tab.decos = tab.model.deltaDecorations(tab.decos || [], decos);
 }
 
 // ===== Lint =====
@@ -1553,7 +1613,7 @@ $('#btnProbClose').onclick = () => $('#problems').hidden = true;
 // ===== Toolbar =====
 $('#btnSave').onclick = save; $('#btnSaveMenu').onclick = saveMenu; renderSaveBtn();
 function refreshAll() { S.overview = null; S.tree = {}; S.walk = {}; S.treeFresh = true; SE.index = null; SE.indexFor = null; if (S.project) seIndex(true); refreshProject(); loadProjects(); BS.hooks.run('refresh'); }
-$('#btnView').onclick = () => { if (!S.active) return; const t = S.active; openFile(t.path, t.mode === 'diff' ? 'editor' : 'diff'); };
+$('#btnView').onclick = () => { if (!S.active) return; const t = S.active; openFile(t.path, t.mode === 'diff' ? 'editor' : 'diff', undefined, undefined, t.project); };
 $('#btnInline').onclick = () => { S.inline = !S.inline; store.set('inline', S.inline); $('#btnInline').classList.toggle('on', S.inline); diffEditor?.updateOptions({ renderSideBySide: !S.inline }); };
 $('#btnWrap').onclick = () => { S.wrap = !S.wrap; store.set('wrap', S.wrap); $('#btnWrap').classList.toggle('on', S.wrap); editor?.updateOptions({ wordWrap: S.wrap ? 'on' : 'off' }); diffEditor?.updateOptions({ diffWordWrap: S.wrap ? 'on' : 'off', wordWrap: S.wrap ? 'on' : 'off' }); };
 $('#btnInline').classList.toggle('on', S.inline); $('#btnWrap').classList.toggle('on', S.wrap);
@@ -1580,11 +1640,17 @@ function codeFont(size, quiet) {
   if (!quiet) toast(`Fonte do código: ${n}px`, null, 'font');
 }
 S.fontSize = store.get('fontSize', FONT.def);
+let wheelAcc = 0, wheelT = null;
 window.addEventListener('wheel', (e) => {
   if (!e.ctrlKey) return;
   e.preventDefault(); // sem isso o navegador dá zoom na página inteira
   if ($('#app').classList.contains('present')) return;
-  codeFont(S.fontSize + (e.deltaY < 0 ? 1 : -1));
+  // touchpad e pinça mandam dezenas de eventos pequenos: soma o deslocamento e anda um passo a cada "clique" de roda
+  wheelAcc += e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY;
+  clearTimeout(wheelT); wheelT = setTimeout(() => { wheelAcc = 0; }, 300);
+  if (Math.abs(wheelAcc) < 50) return;
+  const step = wheelAcc < 0 ? 1 : -1; wheelAcc = 0;
+  codeFont(S.fontSize + step);
 }, { passive: false, capture: true });
 
 $('#projChip').onclick = () => projectSwitcher();
@@ -1599,7 +1665,7 @@ function present(on) {
 $('#present-exit').onclick = () => present(false);
 
 // ===== Rede =====
-$('#btnNet').onclick = () => { const p = $('#netPop'); p.hidden = !p.hidden; const r = $('#btnNet').getBoundingClientRect(); p.style.top = r.bottom + 6 + 'px'; p.style.right = (innerWidth - r.right) + 'px'; BS.hooks.run('net:pop', !p.hidden); };
+$('#btnNet').onclick = () => { const p = $('#netPop'); p.hidden = !p.hidden; const r = $('#btnNet').getBoundingClientRect(); p.style.top = r.bottom + 6 + 'px'; p.style.right = Math.max(8, Math.min(innerWidth - r.right, innerWidth - 8 - p.offsetWidth)) + 'px'; BS.hooks.run('net:pop', !p.hidden); }; // tela estreita: o popover não sai pela esquerda
 $('#netClose').onclick = () => { $('#netPop').hidden = true; BS.hooks.run('net:pop', false); };
 $('#netToggle').onclick = async () => { try { S.net = await api('network', {}, { method: 'POST', body: JSON.stringify({ enable: !S.net.enabled }) }); renderNet(); toast(S.net.enabled ? 'Rede ligada' : 'Rede desligada'); } catch (e) { toast(e.message); } };
 function renderNet() {
@@ -1609,7 +1675,14 @@ function renderNet() {
   $('#stNet').textContent = n.enabled ? `rede · ${n.urls[0]?.url || ''}` : ''; $('#stNet').className = 's ' + (n.enabled ? 'net-on' : '');
   $('#netUrls').innerHTML = n.urls.map(u => `<div class="url"><span title="${esc(u.iface)}">${esc(u.url)}</span><button class="icon-btn" data-c="${esc(u.url)}" title="Copiar"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>`).join('');
   $('#netUrls').querySelectorAll('button').forEach(b => b.onclick = () => navigator.clipboard.writeText(b.dataset.c).then(() => toast('Copiado')).catch(() => {}));
-  $('#netPin').textContent = n.pin || '';
+  // PIN trocado depois de muitas tentativas erradas: o novo aparece aqui na hora (o popover se atualiza sozinho)
+  const pinEl = $('#netPin'), changed = n.enabled && S.netPinChanges != null && (n.pinChanges || 0) > S.netPinChanges;
+  pinEl.textContent = n.pin || '';
+  if (changed) { pinEl.classList.remove('flash'); void pinEl.offsetWidth; pinEl.classList.add('flash'); toast('Muitos PINs errados pela rede: o PIN foi trocado para ' + (n.pin || ''), 'err', 'netpin'); }
+  if (n.enabled) S.netPinChanges = n.pinChanges || 0;
+  const lock = $('#netLock');
+  lock.hidden = !(n.enabled && (n.lockedFor || n.pinChanges));
+  lock.textContent = n.lockedFor ? `Muitos PINs errados: o login pela rede está fechado por mais ${n.lockedFor} s${n.pinChanges ? '; o PIN acima é o novo' : ''}.` : n.pinChanges ? 'O PIN foi trocado depois de muitas tentativas erradas: use o de cima.' : '';
   if (location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') { $('#netToggle').style.display = 'none'; }
 }
 
@@ -1623,7 +1696,12 @@ async function seIndex(fresh) {
   if (SE.index && SE.indexFor === S.project.path && !fresh) return SE.index;
   const proj = S.project.path;
   if (SE.loading && SE.loading.proj === proj && !fresh) return SE.loading.pr;
-  const pr = api('index', { project: proj, fresh: fresh ? '1' : null }).catch(() => []).then(idx => { if (S.project && S.project.path === proj) { SE.index = idx; SE.indexFor = proj; } SE.loading = null; return idx; });
+  // meta=1: { files, truncated, limit } (sem ele a rota devolve só a lista, o formato que os plugins usam)
+  const pr = api('index', { project: proj, fresh: fresh ? '1' : null, meta: '1' }).catch(() => []).then(r => {
+    const idx = Array.isArray(r) ? r : (r.files || []);
+    if (S.project && S.project.path === proj) { SE.index = idx; SE.indexFor = proj; SE.indexCut = !Array.isArray(r) && r.truncated ? r.limit : 0; }
+    SE.loading = null; return idx;
+  });
   SE.loading = { proj, pr }; return pr;
 }
 // início de palavra: maiúscula depois de minúscula, letra depois de separador, número depois de letra
@@ -1699,7 +1777,7 @@ function seActions() {
     A('Ver diff / editor do arquivo atual', '', () => $('#btnView').click(), I.diff), A('Diff lado a lado / em linha', '', () => $('#btnInline').click(), I.diff), A('Quebra de linha', '', () => $('#btnWrap').click(), I.edit),
     A('Apresentar (tela cheia)', 'F11', () => present(true), I.present), A('Tema claro / escuro', '', () => $('#btnTheme').click(), I.edit), A('Rede local', '', () => $('#btnNet').click(), I.ext),
     A('Atualizar projeto', 'F5', () => refreshAll(), I.refresh), A('Mostrar projeto no Explorer', '', () => S.project && reveal(S.project.path), I.explorer),
-    A('Fechar todas as abas', '', () => S.tabs.slice().forEach(closeTab), I.x), A('Compactar pacotes intermediários (liga/desliga)', '', () => { S.compact = !S.compact; store.set('compact', S.compact); S.tree = {}; renderTool(); }, I.pkg),
+    A('Fechar todas as abas', '', () => askClose(S.tabs.slice()), I.x), A('Compactar pacotes intermediários (liga/desliga)', '', () => { S.compact = !S.compact; store.set('compact', S.compact); S.tree = {}; renderTool(); }, I.pkg),
     ...BS.actions.list().map(a => A(a.label, a.k || '', a.run, a.icon)),
   ];
 }
@@ -1736,6 +1814,8 @@ function seBuild() {
     } else items.push({ type: 'note', text: 'Procurando…', spin: true });
   }
   if (!items.some(x => x.type !== 'sec' && x.type !== 'note') && !items.some(x => x.type === 'note') && q.trim()) items.push({ type: 'note', text: 'Nada encontrado' + (t === 'all' ? '. Tab troca de aba; a aba Texto busca dentro dos arquivos.' : '.') });
+  // projeto grande demais: o índice parou no limite e o resto dos arquivos não aparece na busca
+  if (SE.indexCut && S.project && SE.indexFor === S.project.path && t !== 'actions' && q.trim()) items.push({ type: 'note', text: `O projeto passa de ${SE.indexCut.toLocaleString('pt-BR')} arquivos: só esses entram na busca, o resto ficou de fora.` });
   SE.items = items;
   const sel = items.findIndex((x, i) => i >= SE.sel && seSelectable(x)); SE.sel = sel >= 0 ? sel : items.findIndex(seSelectable);
 }
@@ -1747,7 +1827,7 @@ function seRow(x, i) {
   if (x.type === 'note') return `<div class="se-note">${x.spin ? '<span class="spin"></span> ' : ''}${esc(x.text)}</div>`;
   if (x.type === 'gotext') return `<div class="se-row${on}" data-i="${i}">${SEARCH_ICO}<span class="nm">Buscar <b>${esc(x.text)}</b> no texto dos arquivos</span><span class="kb" style="margin-left:auto">Ctrl+Shift+F</span></div>`;
   if (x.type === 'sym' && x.s.ext) { const s = x.s, k = SE_KIND[s.kind] || ['•', 'sym'];
-    return `<div class="se-row${on}" data-i="${i}" title="${esc(decodeURIComponent(s.uri))}"><span class="se-kind k-${k[1]}">${k[0]}</span><span class="nm">${seHl(s.name, x.m && x.m.idx)}</span>${s.container ? `<span class="kb">${esc(s.container)}</span>` : ''}<span class="loc">${esc(s.lib)}</span></div>`; }
+    return `<div class="se-row${on}" data-i="${i}" title="${esc((() => { try { return decodeURIComponent(s.uri); } catch { return s.uri; } })())}"><span class="se-kind k-${k[1]}">${k[0]}</span><span class="nm">${seHl(s.name, x.m && x.m.idx)}</span>${s.container ? `<span class="kb">${esc(s.container)}</span>` : ''}<span class="loc">${esc(s.lib)}</span></div>`; }
   if (x.type === 'sym') { const s = x.s, k = SE_KIND[s.kind] || ['•', 'sym'];
     return `<div class="se-row${on}" data-i="${i}" title="${esc(s.p)}:${s.line}"><span class="se-kind k-${k[1]}">${k[0]}</span><span class="nm">${esc(s.name)}</span>${s.container ? `<span class="kb">${esc(s.container)}</span>` : ''}<span class="loc">${esc(s.p)}:${s.line}</span></div>`; }
   if (x.type === 'action') return `<div class="se-row${on}" data-i="${i}">${x.a.icon || ''}<span class="nm">${seHl(x.a.label, x.m.idx)}</span>${x.a.k ? `<span class="kb">${esc(x.a.k)}</span>` : ''}</div>`;
@@ -1862,12 +1942,15 @@ async function openSearch(tab) {
   if (SE.tab === 'text') seTextSearch(); else { seBuild(); seRender(); }
   if (S.project && (!SE.index || SE.indexFor !== S.project.path)) { await seIndex(); if (!box.hidden) { seBuild(); seRender(); if (SE.pendingEnter) seGo(SE.sel); } }
 }
+// login ou diálogo (.dlg) aberto na frente da IDE
+const modalOpen = () => !$('#login').hidden || !!document.querySelector('.dlg.scrim:not([hidden])');
 // Shift duas vezes, sem outra tecla no meio (vale também com o foco dentro do editor)
 (() => {
   let last = 0, clean = false;
   window.addEventListener('keydown', (e) => { if (e.key === 'Shift') { if (!e.repeat) clean = true; } else { clean = false; last = 0; } }, true);
   window.addEventListener('keyup', (e) => {
     if (e.key !== 'Shift' || !clean) return; clean = false;
+    if (modalOpen()) return;
     const now = performance.now();
     if (now - last < 400) { last = 0; openSearch(); } else last = now;
   }, true);
@@ -1875,15 +1958,66 @@ async function openSearch(tab) {
 })();
 function quickOpen() { openSearch('files'); }
 
+// Arrastar com mouse, caneta ou dedo (Pointer Events): move(ev) a cada passo, done(ev) ao soltar ou cancelar.
+// O ponteiro fica preso à alça (setPointerCapture): passar por cima de um iframe (preview) não perde o arraste.
+// A alça precisa de touch-action: none no CSS, senão o dedo rola a página em vez de arrastar.
+function pointerDrag(e, move, done) {
+  const el = e.currentTarget; try { el.setPointerCapture(e.pointerId); } catch {}
+  const mv = (ev) => { if (ev.pointerId === e.pointerId) move(ev); };
+  const up = (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
+    try { el.releasePointerCapture(e.pointerId); } catch {}
+    if (done) done(ev);
+  };
+  el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+}
+
+// ===== Tela de toque e tela estreita (celular pela rede local) =====
+// Até 640px o painel lateral flutua por cima do editor: o botão #btnPanel no topo mostra/esconde, e abrir uma aba
+// esconde o painel. Toque único abre arquivo na árvore; segurar o dedo (toque longo) abre o menu de contexto.
+function narrow() { return matchMedia('(max-width: 640px)').matches; }
+var lastPointer = 'mouse'; // tipo do último ponteiro: 'touch' muda o clique na árvore
+function hideToolIfNarrow() { if (narrow() && !$('#app').classList.contains('no-tool')) { $('#app').classList.add('no-tool'); btnState(); } }
+(() => {
+  let t = 0, x0 = 0, y0 = 0, firedAt = 0, target = null;
+  const clear = () => { clearTimeout(t); t = 0; };
+  const recent = () => Date.now() - firedAt < 800;
+  addEventListener('pointerdown', (e) => {
+    lastPointer = e.pointerType || 'mouse'; clear();
+    if (e.pointerType !== 'touch') return;
+    x0 = e.clientX; y0 = e.clientY; target = e.target;
+    // o editor, o terminal e os campos de texto têm o toque longo deles (selecionar, colar)
+    if (target.closest('input, textarea, select, .monaco-editor, .xterm, iframe')) return;
+    t = setTimeout(() => {
+      t = 0; firedAt = Date.now();
+      target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x0, clientY: y0, button: 2 }));
+      try { navigator.vibrate && navigator.vibrate(12); } catch {}
+    }, 550);
+  }, true);
+  addEventListener('pointermove', (e) => { if (t && Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) > 10) clear(); }, true);
+  addEventListener('pointerup', clear, true); addEventListener('pointercancel', clear, true);
+  // o navegador abriu o menu sozinho (Android): vale o dele; se o nosso já abriu, o dele não abre de novo
+  addEventListener('contextmenu', (e) => { if (!e.isTrusted) return; if (t) clear(); else if (recent()) { e.preventDefault(); e.stopPropagation(); } }, true);
+  // soltar o dedo depois do toque longo não vira clique (nem fecha o menu que acabou de abrir)
+  for (const ev of ['click', 'mousedown']) addEventListener(ev, (e) => { if (recent()) { e.preventDefault(); e.stopPropagation(); } }, true);
+})();
+$('#btnPanel').onclick = () => {
+  if ($('#app').classList.contains('no-tool')) openTool(S.tool || 'project');
+  else { $('#app').classList.add('no-tool'); btnState(); }
+};
+
 // ===== Sidebar redimensionável =====
-$('#app').style.setProperty('--tw', (store.get('tw', 300)) + 'px');
-$('#toolResize').addEventListener('mousedown', (e) => {
-  e.preventDefault(); const h = $('#toolResize'); h.classList.add('on'); document.body.classList.add('resizing');
+// a largura lembrada vale até onde a janela deixa (mesmo limite do arrastar)
+const fitTw = () => $('#app').style.setProperty('--tw', Math.max(180, Math.min(innerWidth - 400, store.get('tw', 300))) + 'px');
+fitTw(); window.addEventListener('resize', () => { if (!document.body.classList.contains('resizing')) fitTw(); });
+$('#toolResize').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return; e.preventDefault(); const h = $('#toolResize'); h.classList.add('on'); document.body.classList.add('resizing');
   // com o painel à direita (dock.js, tool-right), a borda de arrastar é a da esquerda
   const right = $('#app').classList.contains('tool-right');
   const move = (ev) => { const w = Math.max(180, Math.min(innerWidth - 400, right ? innerWidth - ev.clientX - 8 : ev.clientX - 40)); $('#app').style.setProperty('--tw', w + 'px'); $('#app').classList.remove('no-tool'); btnState(); };
-  const up = () => { h.classList.remove('on'); document.body.classList.remove('resizing'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); store.set('tw', parseInt($('#app').style.getPropertyValue('--tw')) || 300); };
-  document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  const up = () => { h.classList.remove('on'); document.body.classList.remove('resizing'); store.set('tw', parseInt($('#app').style.getPropertyValue('--tw')) || 300); };
+  pointerDrag(e, move, up);
 });
 $('#toolResize').addEventListener('dblclick', () => { $('#app').style.setProperty('--tw', '300px'); store.set('tw', 300); });
 
@@ -1899,7 +2033,8 @@ const keyName = (k) => k.length === 1 ? k.toUpperCase() : k;
 const keyBase = (e) => /^Digit\d$/.test(e.code) ? e.code.slice(5) : /^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : keyName(e.key);
 const keyCombo = (e) => (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + keyBase(e);
 function normCombo(s) {
-  const parts = String(s).split('+').map(x => x.trim()).filter(Boolean); const key = parts.pop() || ''; const mods = new Set(parts.map(p => p.toLowerCase()));
+  s = String(s).trim(); const plus = s === '+' || s.endsWith('++'); // "Ctrl++": a tecla é o próprio +
+  const parts = (plus ? s.slice(0, -1) : s).split('+').map(x => x.trim()).filter(Boolean); const key = plus ? '+' : (parts.pop() || ''); const mods = new Set(parts.map(p => p.toLowerCase()));
   return (mods.has('ctrl') || mods.has('cmd') || mods.has('meta') ? 'Ctrl+' : '') + (mods.has('alt') ? 'Alt+' : '') + (mods.has('shift') ? 'Shift+' : '') + keyName(key);
 }
 // o que cada plugin registra enquanto o ui.js dele roda (painéis, teclas, ações, status, cards, ganchos, balão):
@@ -2304,15 +2439,23 @@ function pluginRemove(p) {
       ok.disabled = true;
       try {
         await api('plugins/uninstall', {}, { method: 'POST', body: JSON.stringify({ id: p.id, data: el.querySelector('#plDelData').checked }) });
-        el.hidden = true; store.set('reopenTool', 'plugins'); toast(`${p.name} foi para a Lixeira. Recarregando…`, 'ok'); setTimeout(() => location.reload(), 300);
+        el.hidden = true; store.set('reopenTool', 'plugins'); toast(`${p.name} foi para a Lixeira. Recarregando…`, 'ok'); reloadSaved(300);
       } catch (er) { ok.disabled = false; toast(er.message); }
     };
   });
 }
 BS.pluginRemove = pluginRemove;
+// recarrega a janela para aplicar um plugin: antes, grava as abas com alterações; se alguma não gravar (erro,
+// conflito), não recarrega e avisa, em vez de jogar o texto fora
+async function reloadSaved(ms) {
+  for (const t of S.tabs.filter(savable)) await saveTab(t, 'all');
+  const left = S.tabs.filter(losesWork);
+  if (left.length) return toast(`Não recarreguei: ${left.map(t => t.path.split('/').pop()).join(', ')} não foi salvo. Salve e recarregue (F5) para aplicar o plugin.`, 'err');
+  setTimeout(() => location.reload(), ms);
+}
 async function pluginsPost(body) {
   // a janela recarrega para aplicar o plugin; volta direto para a aba Plugins
-  try { await api('plugins', {}, { method: 'POST', body: JSON.stringify(body) }); store.set('reopenTool', 'plugins'); toast('Recarregando…'); setTimeout(() => location.reload(), 150); }
+  try { await api('plugins', {}, { method: 'POST', body: JSON.stringify(body) }); store.set('reopenTool', 'plugins'); toast('Recarregando…'); reloadSaved(150); }
   catch (e) { toast(e.message); }
 }
 
@@ -2347,12 +2490,13 @@ function renderReadme(el, o) {
 function mdBind(el, scope, dir, project) {
   const raw = (rel) => '/api/raw?project=' + encodeURIComponent(project) + '&file=' + encodeURIComponent(rel);
   const isLocal = (u) => u && !/^([a-z]+:|\/\/|#|data:)/i.test(u);
+  const dec = (u) => { try { return decodeURIComponent(u); } catch { return u; } }; // "100%.png" não derruba a tela
   const resolve = (u) => { const parts = (dir ? dir.split('/') : []); for (const seg of u.replace(/^\.\//, '').split(/[?#]/)[0].split('/')) { if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg); } return parts.join('/'); };
-  el.querySelectorAll('img').forEach(img => { const s = img.getAttribute('src'); if (isLocal(s)) img.src = raw(decodeURIComponent(resolve(s))); img.loading = 'lazy'; });
+  el.querySelectorAll('img').forEach(img => { const s = img.getAttribute('src'); if (isLocal(s)) img.src = raw(dec(resolve(s))); img.loading = 'lazy'; });
   el.querySelectorAll('a[href]').forEach(a => {
     const h = a.getAttribute('href');
     if (h.startsWith('#')) { a.onclick = (e) => { e.preventDefault(); const t = scope.querySelector('#' + CSS.escape(h.slice(1))) || [...scope.querySelectorAll('h1,h2,h3,h4')].find(x => x.textContent.trim().toLowerCase().replace(/\s+/g, '-') === h.slice(1).toLowerCase()); t?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }; }
-    else if (isLocal(h)) { a.onclick = (e) => { e.preventDefault(); openFile(decodeURIComponent(resolve(h)), 'editor'); }; a.title = 'Abrir no editor'; }
+    else if (isLocal(h)) { a.onclick = (e) => { e.preventDefault(); openFile(dec(resolve(h)), 'editor'); }; a.title = 'Abrir no editor'; }
     else a.target = '_blank';
   });
   // blocos de código com as cores do editor
@@ -2368,7 +2512,7 @@ function renderDashboard() {
   dash.hidden = false;
   loadOverview();
   const p = S.project, s = S.summary || p.summary; const last = s && s.last; const o = S.overview && S.overview.for === p.path ? S.overview : null;
-  const chgRow = (c, cls) => `<div class="row chg ${cls || ''}" data-p="${esc(c.path)}" title="${esc(c.path)}"><span class="st ${esc(c.code)}">${esc(c.code)}</span><span class="name c-${esc(c.code.replace('?', '\\?'))}">${esc(c.path.split('/').pop())}</span><span class="meta">${statHtml(c)}</span></div>`;
+  const chgRow = (c, cls) => `<div class="row chg ${cls || ''}" data-p="${esc(c.path)}" title="${esc(c.path)}"><span class="st ${esc(c.code)}">${esc(c.code)}</span><span class="name c-${esc(c.code)}">${esc(c.path.split('/').pop())}</span><span class="meta">${statHtml(c)}</span></div>`;
   const tot = (fs) => fs.reduce((a, c) => ({ add: a.add + (c.add || 0), del: a.del + (c.del || 0) }), { add: 0, del: 0 });
   // coluna da direita: Git/SVN do núcleo + cards dos plugins
   const core = [
@@ -2469,7 +2613,9 @@ BS.keys.add('Alt+PageUp', () => { if (S.changeMode === 'last') goCommit(commitIx
 document.addEventListener('keydown', (e) => {
   const c = keyCombo(e);
   if (document.body.classList.contains('welcome') && !/^(Escape|F1|Ctrl\+Alt\+S|Alt\+P)$/.test(c)) return; // sem projeto, a IDE está escondida
-  const h = BS.keys.get(c); if (!h) return;
+  if (modalOpen() && c !== 'Escape') return; // login ou diálogo aberto: os atalhos da IDE esperam
+  // "+" sai com Shift em muitos teclados: Ctrl+Shift++ também vale como Ctrl++
+  const h = BS.keys.get(c) || (e.shiftKey && e.key.length === 1 && !/[\p{L}\p{N}]/u.test(e.key) ? BS.keys.get(c.replace('Shift+', '')) : null); if (!h) return;
   if (h(e) !== false) e.preventDefault();
 });
 window.addEventListener('beforeunload', (e) => { if (S.tabs.some(t => t.dirty)) { e.preventDefault(); e.returnValue = ''; } });

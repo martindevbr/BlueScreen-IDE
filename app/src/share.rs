@@ -9,7 +9,7 @@ use crate::util::log;
 use axum::body::Body;
 use axum::extract::FromRequest;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
@@ -27,10 +27,13 @@ fn instance() -> &'static str { static I: OnceLock<String> = OnceLock::new(); I.
 // ---------- anúncio ----------
 /// Liga o anúncio enquanto a rede local estiver ligada (chamado por lan_enable; sai sozinho quando ela desliga).
 pub fn announce_start() {
-    tokio::spawn(async {
+    // desligar e religar a rede em menos de 2 s deixaria duas tarefas anunciando: cada início vale só a última
+    static GEN: AtomicUsize = AtomicUsize::new(0);
+    let me = GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    tokio::spawn(async move {
         let Ok(sock) = tokio::net::UdpSocket::bind(("0.0.0.0", 0)).await else { return };
         let _ = sock.set_broadcast(true);
-        while lan_enabled() {
+        while lan_enabled() && GEN.load(Ordering::SeqCst) == me {
             let (port, project) = { let l = app().lan.lock(); (l.port, l.project.clone()) };
             let msg = json!({ "bs": "bluescreen", "id": instance(), "host": gethostname(), "port": port, "project": project, "v": VERSION }).to_string();
             // broadcast geral e o da sub-rede de cada endereço (/24): com várias placas, o geral sai só por uma
@@ -58,9 +61,11 @@ pub fn discovered() -> Value {
     static LISTEN: OnceLock<Result<(), String>> = OnceLock::new();
     let state = LISTEN.get_or_init(|| {
         let sock = std::net::UdpSocket::bind(("0.0.0.0", BEACON)).map_err(|e| format!("Não deu para escutar a porta UDP {BEACON}: {e}"))?;
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 2048];
-            while let Ok((n, from)) = sock.recv_from(&mut buf) {
+        let _ = std::thread::Builder::new().name("bs-discover".into()).spawn(move || {
+            // 64 KB: um datagrama maior que o buffer dá erro no Windows (WSAEMSGSIZE); erro não encerra a escuta
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let (n, from) = match sock.recv_from(&mut buf) { Ok(x) => x, Err(_) => { std::thread::sleep(Duration::from_millis(100)); continue; } };
                 let Ok(v) = serde_json::from_slice::<Value>(&buf[..n]) else { continue };
                 if v["bs"] != "bluescreen" || v["id"] == instance() { continue; }
                 let Some(port) = v["port"].as_u64() else { continue };
@@ -104,9 +109,7 @@ fn peers_msg() -> String { json!({ "t": "peers", "n": PEERS.load(Ordering::SeqCs
 
 /// GET /api/mirror/ws — só a própria página (Origin = Host); pela rede, o login com PIN já foi conferido em handle().
 pub async fn mirror_ws(req: Request<Body>, remote: bool) -> Response {
-    let host = req.headers().get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let origin = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
-    if host.is_empty() || origin != format!("http://{host}") { return (StatusCode::FORBIDDEN, "origem não permitida").into_response(); }
+    if !crate::server::ws_origin_ok(req.headers(), remote) { return (StatusCode::FORBIDDEN, "origem não permitida").into_response(); }
     let who = if remote { "rede" } else { "local" };
     match WebSocketUpgrade::from_request(req, &()).await {
         Ok(up) => up.on_upgrade(move |s| mirror_session(s, who)),

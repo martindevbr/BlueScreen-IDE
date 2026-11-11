@@ -68,9 +68,9 @@ fn command(b: &Value, f: &mut Fill) -> ApiResult<tokio::process::Command> {
     let exe = crate::build::detect::which(prog).ok_or_else(|| fail(format!("{prog} não encontrado. Instale ou adicione ao PATH."), 404))?;
     let cwd = b["cwd"].as_str().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
     if !cwd.is_dir() { return Err(fail(format!("pasta não existe: {}", cwd.display()), 400)); }
-    // .cmd/.bat (npm, gradlew) só rodam pelo cmd
-    let script = exe.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
-    let mut c = if script { let mut c = tokio::process::Command::new("cmd"); c.arg("/d").arg("/c").arg(&exe); c } else { tokio::process::Command::new(&exe) };
+    // .cmd/.bat (npm, gradlew) também vão direto: o Rust chama o cmd com as aspas e escapes certos e recusa argumento
+    // que não dá para passar com segurança ("cmd /d /c exe args" quebrava com espaços e deixava & e % virarem comandos)
+    let mut c = tokio::process::Command::new(&exe);
     let args = strs(&b["args"]);
     if args.iter().any(|a| has_marker(a)) { return Err(fail("segredos vão em env (variáveis de ambiente) ou stdin, não nos argumentos", 400)); }
     c.args(args).current_dir(cwd).kill_on_drop(true).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -80,7 +80,8 @@ fn command(b: &Value, f: &mut Fill) -> ApiResult<tokio::process::Command> {
     c.creation_flags(0x0800_0000);
     Ok(c)
 }
-fn text(bytes: &[u8]) -> String { String::from_utf8_lossy(bytes).into_owned() }
+/// saída de programa como texto: UTF-8, ou a code page do Windows (o mesmo leitor do build, output.rs)
+fn text(bytes: &[u8]) -> String { crate::output::decode_console(bytes) }
 
 // ---------- processos longos ----------
 struct Proc {
@@ -121,11 +122,16 @@ impl Proc {
 async fn pump(p: Arc<Proc>, mut r: impl tokio::io::AsyncRead + Unpin, stream: &'static str) {
     let mut buf = vec![0u8; 16 * 1024];
     let mut rest: Vec<u8> = vec![];
+    // com segredos: limpa o que juntou e segura o fim (um segredo pode estar cortado entre dois pedaços)
+    let keep = if p.hide.is_empty() { 0 } else { vault::scrub_tail(&p.hide) };
     while let Ok(n) = r.read(&mut buf).await {
         if n == 0 { break; }
         rest.extend_from_slice(&buf[..n]);
+        if keep > 0 { rest = vault::scrub_bytes(&rest, &p.hide); }
         // não corta um caractere UTF-8 no meio
         let cut = match std::str::from_utf8(&rest) { Ok(_) => rest.len(), Err(e) if e.error_len().is_none() => e.valid_up_to(), Err(_) => rest.len() };
+        let mut cut = cut.min(rest.len().saturating_sub(keep));
+        while cut > 0 && cut < rest.len() && (rest[cut] & 0xC0) == 0x80 { cut -= 1; }
         let piece: Vec<u8> = rest.drain(..cut).collect();
         if !piece.is_empty() { p.push(stream, text(&piece)); }
     }
@@ -210,7 +216,8 @@ async fn fetch(who: &Caller, b: &Value) -> ApiResult<Value> {
     Ok(json!({
         "status": status, "ok": (200..300).contains(&status), "url": final_url, "headers": headers,
         "body": if binary { Value::Null } else { json!(f.scrub(&text(&bytes))) },
-        "bodyBase64": if binary { json!(B64.encode(&bytes)) } else { Value::Null },
+        // binário: o valor sai dos bytes antes de virar base64 (depois, não daria mais para achar)
+        "bodyBase64": if binary { json!(B64.encode(if f.values.is_empty() { bytes.to_vec() } else { vault::scrub_bytes(&bytes, &f.values) })) } else { Value::Null },
     }))
 }
 
@@ -227,6 +234,8 @@ pub fn routes() -> Vec<(&'static str, RouteFn)> {
             vault::check(&who, &f.vault, Target::Program(b["program"].as_str().unwrap_or("")))?;
             c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
             let mut child = c.spawn().map_err(|e| fail(format!("não deu para iniciar: {e}"), 500))?;
+            #[cfg(windows)]
+            if let Some(h) = child.raw_handle() { super::external::job::assign_raw(h); }
             if let (Some(s), Some(mut w)) = (input, child.stdin.take()) { tokio::spawn(async move { let _ = w.write_all(s.as_bytes()).await; }); }
             let ms = b["timeout"].as_u64().unwrap_or(60_000).clamp(100, 3_600_000);
             match tokio::time::timeout(Duration::from_millis(ms), child.wait_with_output()).await {

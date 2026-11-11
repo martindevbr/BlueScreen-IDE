@@ -57,7 +57,7 @@ svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-widt
 #app.tool-right #toolResize { left: -4px; right: auto; }
 /* janela de documento (--doc): só o arquivo, sem faixa lateral, painel, abas nem barra de status */
 body.doc-mode #app { grid-template-rows: 44px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "editor"; }
-body.doc-mode #strip, body.doc-mode #tool, body.doc-mode #status, body.doc-mode #tabs, body.doc-mode #crumbs, body.doc-mode #seBtn, body.doc-mode #btnNet, body.doc-mode #btnKeys, body.doc-mode #projBranch, body.doc-mode #wel { display: none !important; }
+body.doc-mode #strip, body.doc-mode #btnPanel, body.doc-mode #tool, body.doc-mode #status, body.doc-mode #tabs, body.doc-mode #crumbs, body.doc-mode #seBtn, body.doc-mode #btnNet, body.doc-mode #btnKeys, body.doc-mode #projBranch, body.doc-mode #wel { display: none !important; }
 body.doc-mode #editor { margin: 0 var(--gap) var(--gap); grid-template-rows: minmax(0, 1fr); }
 body.doc-mode #projChip { pointer-events: none; } body.doc-mode #projChip > svg, body.doc-mode #plugPill, body.doc-mode #updPill { display: none !important; }
 body.doc-mode #saveGrp { margin-left: auto; }
@@ -490,6 +490,18 @@ body.ly-dragging, body.ly-dragging * { cursor: grabbing !important; user-select:
 .pop .net-addr input { flex: 1; min-width: 0; font-size: 12px; padding: 5px 8px; }
 .pop .net-err { color: var(--del); min-height: 0; }
 .pop .net-err:empty { display: none; }
+#netPop { max-width: calc(100vw - 16px); max-height: calc(100vh - 60px); overflow: auto; }
+.pop .net-warn { display: flex; gap: 6px; margin-top: 8px; padding: 6px 8px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--fg-2); font-size: 11.5px; line-height: 1.4; }
+.pop .net-lock { color: var(--warn); font-size: 12px; text-align: center; }
+.pop .net-lock[hidden], #netDevs[hidden] { display: none; }
+.pop .pin.flash { animation: net-pin 1.2s ease-out 2; }
+@keyframes net-pin { 30% { color: var(--warn); transform: scale(1.06); } }
+.pop .net-dev { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 4px 0; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg); font-size: 12px; }
+.pop .net-dev div { flex: 1; min-width: 0; }
+.pop .net-dev b, .pop .net-dev small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop .net-dev b { font-family: var(--mono); font-weight: 600; }
+.pop .net-dev small { color: var(--muted); font-size: 11px; }
+.pop .net-dev .chip { flex: none; }
 .s.mirror-on { color: var(--accent-2); }
 #netLost { position: fixed; left: 50%; top: 46px; transform: translateX(-50%); z-index: 120; display: flex; gap: 10px; align-items: center; background: var(--panel); border: 1px solid var(--del); border-radius: var(--r); box-shadow: var(--shadow); padding: 8px 12px; font-size: 12.5px; }
 #netLost[hidden] { display: none; }
@@ -792,9 +804,30 @@ body.ly-dragging, body.ly-dragging * { cursor: grabbing !important; user-select:
   #app { grid-template-columns: 40px var(--tw, 240px) var(--lw) minmax(0, 1fr) var(--rw); }
   #seBtn span, .proj-chip .branch, #btnSave span { display: none; }
 }
+/* alças de arrastar (painéis, consoles, divisórias): o dedo arrasta em vez de rolar a página */
+#toolResize, #dockResize, #bcResize, #dbResize, #tmResize, #pvSplit, .db-grip { touch-action: none; }
+#btnPanel { display: none; }
+/* tela estreita (celular): o painel flutua por cima do editor, com a barra de painéis em cima dele, e abre e fecha
+   pelo botão do topo; atalhos de teclado e tema saem do topo (o tema continua na Aparência) */
 @media (max-width: 640px) {
   #app, #app.tool-right { grid-template-columns: 0 0 0 minmax(0, 1fr) 0; } #strip { display: none; } #tool { display: none; } .dk-region { display: none !important; }
-  #app:not(.no-tool) #tool { display: flex; position: fixed; left: 8px; right: 8px; top: 48px; bottom: 30px; z-index: 30; margin: 0; box-shadow: var(--shadow); }
+  #app:not(.no-tool) #tool { display: flex; position: fixed; left: 8px; right: 8px; top: 96px; bottom: 30px; z-index: 30; margin: 0; box-shadow: var(--shadow); }
+  #app:not(.no-tool) #strip { display: flex; position: fixed; left: 8px; right: 8px; top: 48px; height: 44px; width: auto; z-index: 31; flex-direction: row; align-items: center; gap: 2px; padding: 0 4px;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border: 1px solid var(--line); border-radius: 12px; background: var(--canvas); box-shadow: var(--shadow); transition: none; }
+  #app:not(.no-tool) #strip:hover, #app:not(.no-tool) #strip:has(:focus-visible) { width: auto; backdrop-filter: none; -webkit-backdrop-filter: none; transition: none; }
+  #strip::after, #strip .lbl, #strip .k, #strip .hide-t, #strip .arr-bar { display: none; }
+  #strip .grow { flex: 1 0 8px; }
+  #strip .icon-btn { width: 40px; height: 36px; flex: none; justify-content: center; padding: 0; }
+  #strip .icon-btn.on::before { left: 10px; right: 10px; top: auto; bottom: -3px; width: auto; height: 3px; }
+  #strip .icon-btn .badge { left: 22px; }
+  #btnPanel { display: grid; flex: none; }
+  #btnKeys, #btnTheme { display: none; }
+  #top { gap: 4px; padding: 0 6px; }
+  #top .logo { padding: 0 2px; }
+  .proj-chip { flex: 1 1 auto; min-width: 0; }
+  .proj-chip b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #seBtn { flex: none; min-width: 0; width: 32px; padding: 0; justify-content: center; margin: 0; }
+  #seBtn kbd, #updPill .up-txt, #plugPill .pp-txt { display: none; }
   #editor { margin: 0 6px; }
 }
 /* sem abas abertas: o resumo ocupa a ilha inteira */
@@ -1276,7 +1309,8 @@ html:not(.desktop) .wel-top { padding-right: 8px; }
 .dp-row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--kc, var(--accent-2)); box-shadow: 0 0 10px var(--kc, var(--accent-2)); }
 .dp-row-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .dp-kind { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--kc, var(--accent-2)); white-space: nowrap; }
-.dp-dir { font: 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-dir { font: 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dp-row-top .dp-ign { margin-left: auto; flex: none; opacity: .75; } .dp-row:hover .dp-ign, .dp-ign:focus-visible { opacity: 1; }
 .dp-reason { margin-top: 4px; font-size: 12px; color: var(--fg-2); line-height: 1.45; }
 .dp-sample { display: block; margin-top: 2px; font: 11px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-cmd { margin-top: 8px; display: flex; align-items: center; gap: 8px; }

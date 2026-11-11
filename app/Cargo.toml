@@ -36,7 +36,7 @@ serde_json = "1.0.154"
 tao = "0.37.1"
 tokio = { version = "1.53.3", features = ["full"] }
 urlencoding = "2.1.3"
-windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Dwm", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Dwm", "Win32_Foundation", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell"] }
 wry = { version = "0.57.0", features = ["devtools"] }
 sha2 = "0.10"
 
@@ -50,7 +50,8 @@ winresource = "0.1.34"
 opt-level = 3
 lto = "thin"
 codegen-units = 16
-panic = "abort"
+# unwind: um erro interno (panic) numa rota responde 500 e fica no log, em vez de fechar a IDE com o que não foi salvo
+panic = "unwind"
 strip = true
 
 [profile.dev.package."*"]

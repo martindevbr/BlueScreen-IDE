@@ -113,11 +113,12 @@ fn index(path: &Path) -> std::io::Result<Arc<Mutex<Index>>> {
 
 fn spawn_build(path: &Path, ix: &Arc<Mutex<Index>>, start: u64) {
     let (ix2, p) = (ix.clone(), path.to_path_buf());
-    std::thread::spawn(move || {
-        let r = build(&p, &ix2, start);
+    let _ = std::thread::Builder::new().name("bs-bigfile".into()).spawn(move || {
+        // erro interno no meio do índice: o arquivo fica com erro (o gancho de main.rs anota no log), não "indexando" para sempre
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build(&p, &ix2, start)));
         let mut i = ix2.lock();
         i.building = false;
-        if let Err(e) = r { i.error = Some(e.to_string()); }
+        match r { Ok(Err(e)) => i.error = Some(e.to_string()), Err(_) => i.error = Some("erro interno ao indexar o arquivo".into()), Ok(Ok(_)) => {} }
     });
 }
 

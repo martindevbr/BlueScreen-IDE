@@ -1,7 +1,9 @@
 @echo off
 rem BlueScreen - instalador. Duplo clique: compila a partir deste repositorio e instala no seu usuario (sem admin).
 rem A janela e feita em WPF; o script dela fica neste mesmo arquivo, logo abaixo (o cmd para no exit /b e nunca chega la).
-start "" powershell -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$SetupFile='%~f0'; $t=[IO.File]::ReadAllText($SetupFile,[Text.Encoding]::UTF8); iex $t.Substring($t.IndexOf('#'+'##PS')+5)"
+rem o caminho vai por variavel de ambiente: um apostrofo no nome da pasta quebraria a string do PowerShell
+set "BS_SETUP_FILE=%~f0"
+start "" powershell -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$SetupFile=$env:BS_SETUP_FILE; $t=[IO.File]::ReadAllText($SetupFile,[Text.Encoding]::UTF8); iex $t.Substring($t.IndexOf('#'+'##PS')+5)"
 exit /b
 ###PS
 # ===== Instalador do BlueScreen =====
@@ -509,7 +511,10 @@ function Start-Install {
   $d = Resolve-InstallDir $ui.PathBox.Text
   if (-not $d -or -not [IO.Path]::IsPathRooted($d)) { [Windows.MessageBox]::Show('Escolha uma pasta de instalação válida.', 'Instalar BlueScreen') | Out-Null; return }
   $full = [IO.Path]::GetFullPath($d); $rootFull = [IO.Path]::GetFullPath($Root)
-  if ($full.StartsWith($rootFull, 'OrdinalIgnoreCase')) { [Windows.MessageBox]::Show('Instale fora da pasta do código-fonte (o build apaga e recria app\dist).', 'Instalar BlueScreen') | Out-Null; return }
+  # a pasta final (com o \BlueScreen acrescentado) é a que o robocopy /MIR espelha: com arquivos que não são de um
+  # BlueScreen instalado, ele os apagaria
+  if ((Test-Path -LiteralPath $full) -and (Get-ChildItem -LiteralPath $full -Force -ErrorAction SilentlyContinue | Select-Object -First 1) -and -not (Test-Path -LiteralPath (Join-Path $full 'BlueScreen.exe'))) { [Windows.MessageBox]::Show("A pasta $full já tem arquivos que não são de um BlueScreen instalado.`nEscolha uma pasta vazia ou a de uma instalação anterior.", 'Instalar BlueScreen') | Out-Null; return }
+  if (($full.TrimEnd('\') + '\').StartsWith($rootFull.TrimEnd('\') + '\', 'OrdinalIgnoreCase')) { [Windows.MessageBox]::Show('Instale fora da pasta do código-fonte (o build apaga e recria app\dist).', 'Instalar BlueScreen') | Out-Null; return }
   $ui.PathBox.Text = $full; $S.dest = $full
   $S.mode = if ($S.release -and -not $ui.OptBuild.IsChecked) { 'download' } else { 'build' }
   $S.instVersion = if ($S.mode -eq 'download') { $S.release.version } else { $Version }; Set-StepNames
@@ -608,6 +613,10 @@ timeout /t 2 >nul 2>&1
   [IO.File]::WriteAllText((Join-Path $dest 'Desinstalar.cmd'), ($un -replace "`r?`n", "`r`n"), [Text.UTF8Encoding]::new($false))
   # de onde veio: o atualizador da IDE (Procurar atualizações) faz git pull e recompila a partir desta pasta
   [IO.File]::WriteAllText((Join-Path $dest 'source.txt'), $Root, [Text.UTF8Encoding]::new($false))
+  # compilado aqui (não é a versão pronta): a IDE se atualiza pelo git e não oferece o Release por cima (update.rs)
+  $mark = Join-Path $dest 'local-build.txt'
+  if ($S.mode -eq 'build') { [IO.File]::WriteAllText($mark, "compilado do código-fonte pelo Instalar BlueScreen.cmd`r`n", [Text.UTF8Encoding]::new($false)) }
+  elseif (Test-Path -LiteralPath $mark) { Remove-Item -LiteralPath $mark -Force }
   $kb = [int]((Get-ChildItem -LiteralPath $dest -Recurse -File | Measure-Object Length -Sum).Sum / 1KB)
   New-Item $UninstKey -Force | Out-Null
   $props = @{ DisplayName = 'BlueScreen'; DisplayVersion = $S.instVersion; Publisher = 'BlueScreen'; DisplayIcon = "$exe,0"; InstallLocation = $dest
