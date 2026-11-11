@@ -23,7 +23,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Avisos do servidor para a janela do aplicativo. Prompt: a janela do cofre para digitar um segredo (vault_input.rs),
 /// com a resposta (os valores, ou None se cancelou) no canal.
-pub enum UiEvent { Activate, Prompt(serde_json::Value, std::sync::mpsc::Sender<Option<Vec<String>>>) }
+pub enum UiEvent { Activate, Quit, Notify(String, String), Prompt(serde_json::Value, std::sync::mpsc::Sender<Option<Vec<String>>>) }
 pub static UI: OnceLock<Box<dyn Fn(UiEvent) + Send + Sync>> = OnceLock::new();
 
 /// project: nome do projeto aberto na janela deste PC, anunciado na rede (share.rs)
@@ -209,6 +209,7 @@ fn core_routes() -> HashMap<String, RouteFn> {
     files::add_routes(&mut m);
     history::add_routes(&mut m);
     sdks::add_routes(&mut m);
+    crate::automation::add_routes(&mut m);
     let mut add = |name: &str, f: RouteFn| { m.insert(name.into(), f); };
     // build nativo da IDE
     for (name, f) in crate::build::routes() { add(name, f); }

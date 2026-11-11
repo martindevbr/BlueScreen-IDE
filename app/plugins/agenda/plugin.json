@@ -1,0 +1,8 @@
+{
+  "id": "agenda",
+  "name": "Agenda",
+  "version": "1.0.0",
+  "author": "BlueScreen",
+  "order": 81,
+  "description": "Calendário do mês, compromissos e lembretes que viram aviso do Windows, com repetição e a opção de rodar um fluxo do Automator na hora marcada. Funciona com o BlueScreen na bandeja."
+}

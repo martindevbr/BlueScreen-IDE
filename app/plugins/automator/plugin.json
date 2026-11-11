@@ -1,0 +1,5 @@
+{
+  "id": "automator", "name": "Automator", "version": "1.0.0", "author": "BlueScreen", "order": 80,
+  "description": "Automações em nós, no modelo dos Fluxos do HexLab: gatilho manual ou por agenda, programas, HTTP, avisos do Windows, condições e IA (Claude Code, Codex, OpenRouter, MCP), com histórico de cada execução.",
+  "vault": [{ "key": "openrouter", "label": "OpenRouter: API token", "hosts": ["openrouter.ai"], "why": "Executar os nós OpenRouter dos fluxos. O token é enviado somente pelo núcleo." }]
+}

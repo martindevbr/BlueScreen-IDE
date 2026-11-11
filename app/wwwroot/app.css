@@ -1072,6 +1072,11 @@ html:not(.desktop) .wel-top { padding-right: 8px; }
 /* ===== Visualizador de imagens, PDF, áudio, vídeo, fontes e binários (viewer.js) ===== */
 #vw { display: flex; flex-direction: column; background: var(--bg); }
 .vw-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* tela de plugin numa aba (bs.pages) */
+.vw-page > .pg-body { flex: 1; min-height: 0; min-width: 0; position: relative; }
+#editor.pg-on { grid-template-rows: 38px minmax(0, 1fr); } #editor.pg-on #crumbs { display: none; }
+.tab .pg-ic { display: inline-flex; flex: none; }
+.tab .pg-ic svg { width: 15px; height: 15px; }
 .vw-bar { height: 34px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .vw-bar .vw-name { color: var(--fg-2); font-weight: 500; } .vw-bar .vw-meta { font: 11px var(--mono); }
 .vw-bar .chip { height: 24px; font-size: 11.5px; } .vw-bar .icon-btn { width: 24px; height: 24px; font-size: 14px; }

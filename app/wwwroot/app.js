@@ -285,7 +285,7 @@ async function selectProject(p) {
   rememberProject(S.project);
   $('#projName').textContent = S.project.name;
   // abas de outro projeto saem (as não salvas ficam, para não perder trabalho)
-  S.tabs.filter(t => t.project !== p && !t.dirty).forEach(closeTab);
+  S.tabs.filter(t => t.project !== p && !t.dirty && !t.page).forEach(closeTab); // telas de plugin (bs.pages) não são do projeto
   if (S.tool === 'changes' || S.tool === 'history') S.tool = 'project';
   btnState(); renderTool(); renderDashboard();
   SE.index = null; SE.indexFor = null; seIndex(); // índice da busca primeiro: é leve e o Shift Shift depende dele
@@ -615,6 +615,7 @@ function deletePath(rel, isDir) {
   });
 }
 function tabMenu(e, t) {
+  if (t.page) return showMenu(e, [{ label: 'Fechar', icon: I.x, k: 'Ctrl+W', action: () => askClose(t) }, { label: 'Fechar outras', action: () => askClose(S.tabs.filter(x => x !== t)) }, { label: 'Fechar todas', action: () => askClose(S.tabs.slice()) }], t.title);
   showMenu(e, BS.hooks.apply('menu:tab', [
     { label: t.mode === 'diff' ? 'Abrir como editor' : 'Ver diff', icon: t.mode === 'diff' ? I.edit : I.diff, action: () => openFile(t.path, t.mode === 'diff' ? 'editor' : 'diff', undefined, undefined, t.project) },
     { label: 'Apresentar', icon: I.present, k: 'F11', action: () => { activate(t); present(true); } },
@@ -921,14 +922,22 @@ function toolKeys() {
 }
 function setTool(t) {
   const def = BS.tools.get(t); if (!def) return;
+  if (def.page) {
+    // ícone de uma tela de plugin: abre a aba. Se o painel também é dele (render), a lista fica no lugar do painel
+    // de arquivos; com a tela já na frente e o painel à mostra, o clique recolhe o painel, como nos outros
+    if (!def.render) return BS.pages.open(def.page);
+    if (BS.pages.isActive(def.page) && S.tool === t && !$('#app').classList.contains('no-tool')) { $('#app').classList.add('no-tool'); btnState(); BS.hooks.run('tool:show', t, false); return; }
+    BS.pages.open(def.page); $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true);
+    return;
+  }
   if (def.toggle) { if (!BS.dock || !BS.dock.claim(t)) def.toggle(); return; }
   if (S.tool === t && !$('#app').classList.contains('no-tool')) { $('#app').classList.add('no-tool'); btnState(); BS.hooks.run('tool:show', t, false); return; }
   $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true);
 }
-function openTool(t) { const def = BS.tools.get(t); if (!def) return; if (def.toggle) { BS.dock && BS.dock.claim(t); def.toggle(true); return; } $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true); }
+function openTool(t) { const def = BS.tools.get(t); if (!def) return; if (def.page) { BS.pages.open(def.page); if (!def.render) return; } if (def.toggle) { BS.dock && BS.dock.claim(t); def.toggle(true); return; } $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true); }
 function btnState() {
   const shown = !$('#app').classList.contains('no-tool');
-  document.querySelectorAll('#strip [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool && shown));
+  document.querySelectorAll('#strip [data-tool]').forEach(b => { const d = BS.tools.get(b.dataset.tool), pg = d && !d.render && d.page; b.classList.toggle('on', pg ? !!BS.pages && BS.pages.isActive(pg) : b.dataset.tool === S.tool && shown); });
   const p = $('#btnPanel'); if (p) { p.classList.toggle('on', shown); p.setAttribute('aria-expanded', shown); }
 }
 function renderTool() {
@@ -1326,7 +1335,7 @@ function activate(tab) {
 }
 function renderTabs() {
   $('#editor').classList.toggle('no-tabs', !S.tabs.length);
-  $('#tabs').innerHTML = S.tabs.map(t => `<div class="tab ${t === S.active ? 'on' : ''} ${t.dirty ? 'dirty' : ''} ${t.conflict || t.gone ? 'ext-c' : ''} ${t.virtual ? 'virtual' : ''}" data-k="${esc(t.key)}" title="${esc(t.virtual ? t.title + ' (só leitura)' : t.path)}" draggable="true" role="tab">${treeIcon({ name: t.path.split('/').pop() })}${t.mode === 'diff' ? `<span class="mode${t.owner ? ' ext' : ''}">${t.owner ? (t.cmpLabel || 'EXTERNO') : t.changeMode === 'working' ? 'DIFF' : t.changeMode === 'range' ? 'COMPARAR' : 'COMMIT'}</span>` : ''}<span class="nm${t.project === S.project?.path ? codeCls(t.path) : ''}">${esc(t.path.split('/').pop())}</span><button class="x" title="${t.dirty ? 'Não salvo. Fechar' : 'Fechar'}"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join('');
+  $('#tabs').innerHTML = S.tabs.map(t => `<div class="tab ${t === S.active ? 'on' : ''} ${t.dirty ? 'dirty' : ''} ${t.conflict || t.gone ? 'ext-c' : ''} ${t.virtual && !t.page ? 'virtual' : ''}" data-k="${esc(t.key)}" title="${esc(t.page ? t.title : t.virtual ? t.title + ' (só leitura)' : t.path)}" draggable="true" role="tab">${t.page ? `<span class="pg-ic">${BS.pages.icon(t.page)}</span>` : treeIcon({ name: t.path.split('/').pop() })}${t.mode === 'diff' ? `<span class="mode${t.owner ? ' ext' : ''}">${t.owner ? (t.cmpLabel || 'EXTERNO') : t.changeMode === 'working' ? 'DIFF' : t.changeMode === 'range' ? 'COMPARAR' : 'COMMIT'}</span>` : ''}<span class="nm${t.project === S.project?.path ? codeCls(t.path) : ''}">${esc(t.path.split('/').pop())}</span><button class="x" title="${t.dirty ? 'Não salvo. Fechar' : 'Fechar'}"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join('');
   $('#tabs').querySelectorAll('.tab').forEach(el => {
     const t = S.tabs.find(x => x.key === el.dataset.k);
     el.onclick = (e) => e.shiftKey ? askClose(t) : activate(t);
@@ -1345,7 +1354,7 @@ function renderTabs() {
     };
   });
   $('#tabs').querySelector('.tab.on')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  syncUnsaved();
+  syncUnsaved(); btnState();
 }
 function closeTab(t) {
   if (!S.tabs.includes(t)) return; // já fechada (ex.: o diff "EXTERNO", que sai junto com a aba dona)
@@ -1376,14 +1385,28 @@ async function closeSave(t, body) {
 }
 // fechar pelo usuário (X, Ctrl+W, menu): se alguma aba perderia alterações, pergunta antes.
 // Com o salvamento automático, fechar já salva; só pergunta quando ele não pode gravar (conflito, arquivo apagado).
-const losesWork = (t) => t.dirty && !t.owner && !(S.autoSave && !t.conflict && !t.gone);
+const losesWork = (t) => t.dirty && !t.owner && (!!t.page || !(S.autoSave && !t.conflict && !t.gone)); // tela de plugin: o salvamento automático não grava, então sempre pergunta
+window.BS_APP_QUIT = async () => {
+  // plugins com trabalho não salvo (um fluxo aberto no Automator) podem segurar a saída; o gancho pode ser assíncrono
+  for (const fn of BS.hooks.filters['app:can-quit'] || []) { try { if (await fn(true) === false) return; } catch (e) { console.error('app:can-quit', e); } }
+  const quit = () => desktop({ type: 'quit' });
+  if (!S.tabs.some(t => t.dirty && !t.owner)) return quit();
+  dialog('quitAppDlg', `<div class="dlg-hd"><div><h3>Sair do BlueScreen?</h3><p>Há arquivos com alterações não salvas.</p></div></div><div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip danger" id="quitDrop">Sair sem salvar</button><button class="chip primary" id="quitSave">Salvar e sair</button></div>`, el => {
+    el.querySelector('#quitDrop').onclick = () => { el.hidden = true; quit(); };
+    el.querySelector('#quitSave').onclick = async () => {
+      await saveAll();
+      if (S.tabs.some(t => t.dirty && !t.owner)) return toast('Salve ou resolva os conflitos antes de sair.', 'err');
+      el.hidden = true; quit();
+    };
+  });
+};
 function askClose(list) {
   list = [].concat(list).filter(t => t && S.tabs.includes(t));
   const risky = list.filter(losesWork);
   if (!risky.length) return list.forEach(t => S.tabs.includes(t) && closeTab(t));
   const one = risky.length === 1, name = one ? risky[0].path.split('/').pop() : '';
-  dialog('closeDlg', `<div class="dlg-hd"><span class="dlg-ic warn">${SAVE_ICO}</span><div><h3>${one ? `Fechar "${esc(name)}" sem salvar?` : `Fechar ${risky.length} arquivos sem salvar?`}</h3><p>${one ? esc(risky[0].path) : risky.map(t => esc(t.path.split('/').pop())).join(', ')}</p></div></div>
-    <p class="del-msg">${one ? 'O arquivo tem alterações que ainda não foram salvas.' : 'Esses arquivos têm alterações que ainda não foram salvas.'} Se fechar sem salvar, elas serão perdidas.</p>
+  dialog('closeDlg', `<div class="dlg-hd"><span class="dlg-ic warn">${SAVE_ICO}</span><div><h3>${one ? `Fechar "${esc(name)}" sem salvar?` : `Fechar ${risky.length} arquivos sem salvar?`}</h3><p>${one ? esc(risky[0].page ? (BS.pages.get(risky[0].page)?.unsaved?.() || '') : risky[0].path) : risky.map(t => esc(t.path.split('/').pop())).join(', ')}</p></div></div>
+    <p class="del-msg">${one ? (risky[0].page ? 'Há alterações que ainda não foram salvas.' : 'O arquivo tem alterações que ainda não foram salvas.') : 'Esses arquivos têm alterações que ainda não foram salvas.'} Se fechar sem salvar, elas serão perdidas.</p>
     <div class="actions"><button class="chip" data-close>Cancelar</button><span class="spacer"></span><button class="chip danger" id="clsDrop">Fechar sem salvar</button><button class="chip primary" id="clsSave">Salvar e fechar</button></div>`, (el) => {
     const go = $('#clsSave'), drop = $('#clsDrop');
     go.focus();
@@ -1405,7 +1428,9 @@ function askClose(list) {
 }
 function renderCrumbs() {
   const el = $('#crumbPath');
+  $('#editor').classList.toggle('pg-on', !!(S.active && S.active.page)); // tela de plugin: sem a trilha do arquivo, a tela fica com a altura toda
   if (!S.active) { el.innerHTML = ''; return; }
+  if (S.active.page) { el.innerHTML = ''; $('#btnView').classList.remove('on'); return; }
   // trilha clicável: cada pasta abre a árvore naquele ponto
   const segs = S.active.path.split('/'); const parts = [S.project?.name, ...segs];
   el.innerHTML = parts.map((p, i) => `<span class="cr ${i === parts.length - 1 ? 'last' : ''}" data-i="${i}">${esc(p)}</span>`).join('<span class="sep">›</span>');
@@ -2125,6 +2150,7 @@ const BS = window.BS = {
       for (const [n, fn] of o.filters || []) drop(BS.hooks.filters[n] || [], [fn]);
       for (const el of o.els || []) el.remove();
       for (const b of o.bubbles || []) if (BS.bubble) BS.bubble.unregister(b);
+      for (const pg of o.pages || []) if (BS.pages) BS.pages.unregister(pg);
       document.querySelectorAll(`style[data-plugin="${CSS.escape(id)}"]`).forEach(s => s.remove());
       BS.plugins.defs.delete(id);
       toolKeys(); renderStrip();

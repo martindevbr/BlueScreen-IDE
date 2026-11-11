@@ -13,7 +13,7 @@ use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
 /// Ipc(mensagem, endereço da página que mandou). Prompt: abrir a janela do cofre (pedido, canal da resposta);
 /// PromptMsg: o que a página dela mandou; PromptShow: mostrá-la mesmo se a página demorar.
-enum Ev { Activate, Ipc(String, String), Title(String), Show, Prompt(Value, std::sync::mpsc::Sender<Option<Vec<String>>>), PromptMsg(WindowId, String), PromptShow(WindowId) }
+enum Ev { Activate, Quit, Notify(String, String), Ipc(String, String), Title(String), Show, Prompt(Value, std::sync::mpsc::Sender<Option<Vec<String>>>), PromptMsg(WindowId, String), PromptShow(WindowId) }
 /// Uma janela do cofre aberta: a janela, a página e para quem responder.
 type PromptWin = (Window, wry::WebView, std::sync::mpsc::Sender<Option<Vec<String>>>);
 const PROMPT_W: f64 = 500.0;
@@ -85,6 +85,8 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
     let p2 = proxy.clone();
     let _ = server::UI.set(Box::new(move |e| match e {
         UiEvent::Activate => { let _ = p2.send_event(Ev::Activate); }
+        UiEvent::Quit => { let _ = p2.send_event(Ev::Quit); }
+        UiEvent::Notify(t, b) => { let _ = p2.send_event(Ev::Notify(t, b)); }
         // sem a janela (o laço já acabou), o canal cai e o cofre entende como cancelado
         UiEvent::Prompt(spec, tx) => { let _ = p2.send_event(Ev::Prompt(spec, tx)); }
     }));
@@ -92,6 +94,10 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
     let saved = read_json(&state_file());
     // a última sessão terminou sem projeto aberto: já nasce no tamanho de boas-vindas (sem piscar grande)
     let is_doc = doc.is_some();
+    let mut tray = if !is_doc { let p = proxy.clone(); crate::tray::Tray::new(move |quit| { let _ = p.send_event(if quit { Ev::Quit } else { Ev::Activate }); }) } else { None };
+    // na primeira vez que a janela vai para a bandeja, um aviso diz onde ela foi parar e como sair de verdade
+    const TRAY_HINT: (&str, &str) = ("O BlueScreen continua aberto", "Agenda e fluxos seguem rodando. Clique no ícone para voltar; botão direito para sair.");
+    let mut tray_hint = false;
     let mut welcome = !is_doc && saved["welcome"].as_bool().unwrap_or(false);
     let sd = &saved["doc"];
     let (w, h) = if welcome { WELCOME } else if is_doc { (sd["w"].as_f64().unwrap_or(1180.0).max(640.0), sd["h"].as_f64().unwrap_or(760.0).max(420.0)) }
@@ -180,6 +186,12 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
     event_loop.run(move |event, target, flow| {
         *flow = ControlFlow::Wait;
         match event {
+            Event::UserEvent(Ev::Notify(t,b)) => { if let Some(tray) = &tray { tray.notify(&t,&b); } }
+            Event::UserEvent(Ev::Quit) => {
+                // A página faz a mesma verificação de documentos não salvos do botão fechar.
+                window.set_visible(true); window.set_minimized(false); window.set_focus();
+                let _ = webview.evaluate_script("window.BS_APP_QUIT && BS_APP_QUIT()");
+            }
             // ---------- janela do cofre ----------
             Event::UserEvent(Ev::Prompt(spec, tx)) => {
                 // altura aproximada até a página medir a dela (mensagem "ready")
@@ -295,9 +307,11 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
                     }
                     Some("close") => {
                         save_state(&window, dark, &caption, welcome);
-                        if server::lan_enabled() { log("Janela fechada; servidor continua por causa da rede local."); window.set_visible(false); }
+                        if !is_doc && let Some(t) = &tray { window.set_visible(false); if !tray_hint { tray_hint = true; t.notify(TRAY_HINT.0, TRAY_HINT.1); } }
+                        else if server::lan_enabled() { log("Janela fechada; servidor continua por causa da rede local."); window.set_visible(false); }
                         else { log("Janela fechada. Encerrando."); *flow = ControlFlow::Exit; }
                     }
+                    Some("quit") if origin_of(&from).as_deref() == Some(origin.as_str()) => { save_state(&window, dark, &caption, welcome); *flow = ControlFlow::Exit; }
                     _ => {}
                 }
             }
@@ -305,10 +319,11 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
                 // documento: a página fecha (e pergunta antes, se houver alteração não salva)
                 if is_doc { let _ = webview.evaluate_script("window.BS_DOC_CLOSE ? BS_DOC_CLOSE() : window.ipc.postMessage('{\"type\":\"close\"}')"); return; }
                 save_state(&window, dark, &caption, welcome);
-                if server::lan_enabled() {
-                    // rede local ligada: o servidor continua; abrir o BlueScreen de novo mostra esta janela
-                    log("Janela fechada; servidor continua por causa da rede local.");
+                if tray.is_some() || server::lan_enabled() {
+                    // com o ícone na bandeja (ou a rede local ligada) o BlueScreen continua: agenda, fluxos e servidor seguem
+                    log("Janela fechada; o BlueScreen continua na bandeja.");
                     window.set_visible(false);
+                    if let Some(t) = &tray && !tray_hint { tray_hint = true; t.notify(TRAY_HINT.0, TRAY_HINT.1); }
                 } else {
                     log("Janela fechada. Encerrando.");
                     *flow = ControlFlow::Exit;
@@ -318,7 +333,7 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
                 // a página troca o ícone de maximizar e esconde as bordas de redimensionar
                 let _ = webview.evaluate_script(&format!("window.BS_WIN && BS_WIN.max({})", window.is_maximized()));
             }
-            Event::LoopDestroyed => std::process::exit(0),
+            Event::LoopDestroyed => { drop(tray.take()); drop(prompts.drain().collect::<Vec<_>>()); std::process::exit(0); },
             _ => {}
         }
     })

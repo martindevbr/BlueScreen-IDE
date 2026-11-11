@@ -1,0 +1,5 @@
+{
+  "id": "navegador", "name": "Navegador", "version": "1.0.0", "author": "BlueScreen", "order": 81, "requires": ["automator"],
+  "description": "Nós para o Automator que abrem um site no Edge ou no Chrome e seguem um roteiro: clicar, digitar, escolher, esperar e ler o que está na página. Precisa do Node.js 22 ou mais novo.",
+  "vault": [{ "key": "site", "label": "Senha ou token de um site", "programs": ["node"], "why": "Digitar a senha num site durante um fluxo do Automator, com {{vault:site}} no passo Digitar. O valor vai só para o programa do nó." }]
+}

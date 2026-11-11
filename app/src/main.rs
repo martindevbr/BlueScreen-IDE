@@ -7,6 +7,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod assoc;
+mod automation;
+mod tray;
 mod bigfile;
 mod deps;
 mod build;
@@ -124,6 +126,11 @@ fn main() {
         .unwrap_or_else(|| util::app_dir().parent().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default()));
 
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("bluescreen").build().expect("tokio");
+    if has("--quit") {
+        let result=rt.block_on(async {reqwest::Client::new().post(format!("http://127.0.0.1:{port}/api/quit")).header("X-BlueScreen","takeover").timeout(Duration::from_secs(3)).send().await});
+        match result {Ok(r) if r.status().is_success()=>{},Ok(r)=>log(format!("Não foi possível solicitar a saída: {}",r.status())),Err(e)=>log(format!("BlueScreen não está acessível: {e}"))}
+        return;
+    }
     let listener = rt.block_on(async {
         match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
             Ok(l) => l,
@@ -156,6 +163,7 @@ fn main() {
             Err(e) => log(format!("rede: falhou: {e}")),
         }
     }
+    rt.spawn(automation::scheduler());
     println!();
     if headless { rt.block_on(std::future::pending::<()>()); }
     if web { util::open_url(&addr); rt.block_on(std::future::pending::<()>()); }

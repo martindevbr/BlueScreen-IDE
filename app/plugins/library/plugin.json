@@ -1,0 +1,8 @@
+{
+  "id": "library",
+  "name": "Biblioteca de plugins",
+  "version": "1.0.0",
+  "author": "BlueScreen",
+  "order": 83,
+  "description": "O catálogo dos servidores de plugins com busca e favoritos. Os favoritos viram uma coleção em arquivo, para a equipe ter os mesmos plugins."
+}

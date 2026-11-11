@@ -208,7 +208,11 @@
   }
   function focus(id) {
     const w = W.get(id); if (!w || w.state !== 'open') return;
-    if (+w.el.style.zIndex !== z) w.el.style.zIndex = ++z;
+    if (+w.el.style.zIndex !== z) {
+      // a pilha não cresce sem parar: menus e diálogos (z-index 90) ficam sempre por cima das janelas
+      if (z >= 84) { z = 60; [...W.values()].filter(x => x !== w).sort((a, b) => (+a.el.style.zIndex || 0) - (+b.el.style.zIndex || 0)).forEach(x => { x.el.style.zIndex = ++z; }); }
+      w.el.style.zIndex = ++z;
+    }
     W.forEach(x => x.el.classList.toggle('front', x === w));
   }
   // as animações saem do balão e voltam para ele

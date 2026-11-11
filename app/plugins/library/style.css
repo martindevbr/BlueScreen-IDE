@@ -1,0 +1,49 @@
+/* Biblioteca: catálogo em cartões. Cores e medidas do tema da IDE. */
+.lb { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; background: var(--bg); color: var(--fg); font-size: 12.5px; container-type: inline-size; }
+.lb *, .lb *::before, .lb *::after { box-sizing: border-box; }
+.lb [hidden] { display: none !important; }
+.lb .i { width: 15px; height: 15px; }
+.lb .chip { border: 1px solid var(--line-2); background: var(--bg); }
+.lb .chip:hover { border-color: var(--accent); background: var(--hover); }
+.lb .chip.primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.lb .chip.primary:hover { background: var(--accent-2); }
+.lb .chip:disabled { pointer-events: none; opacity: .6; }
+.lb .chip.lb-done { border-color: transparent; background: none; color: var(--add); opacity: 1; padding: 0 2px; }
+.lb-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; flex: none; background: var(--panel); border-bottom: 1px solid var(--line); }
+.lb input[type=search], .lb input[type=text] { height: 30px; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 0 9px; }
+.lb input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.lb-search { flex: 1 1 160px; }
+.lb-seg { flex: none; }
+.lb-note { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.lb-note p { margin: 0; line-height: 1.45; }
+.lb-warn { color: var(--warn); overflow-wrap: anywhere; }
+.lb-miss { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.lb-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.lb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.lb-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+.lb-card:hover { border-color: var(--line-2); }
+.lb-card header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lb-card header > :first-child { flex: none; }
+.lb-nm { flex: 1; min-width: 0; display: grid; }
+.lb-nm b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-nm small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-fav { flex: none; color: var(--muted); }
+.lb .lb-fav.on { color: #E3A63A; background: none; }
+.lb .lb-fav.on .i { fill: currentColor; }
+.lb-card > p { flex: 1; margin: 0; color: var(--fg-2); line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.lb-card footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.lb-src { min-width: 0; color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-card footer .chip { flex: none; }
+.lb-empty { display: grid; justify-items: center; gap: 6px; padding: 40px 16px; text-align: center; color: var(--muted); }
+.lb-empty b { font-size: 14px; color: var(--fg); }
+.lb-empty p { margin: 0; max-width: 400px; line-height: 1.5; }
+.lb-add { display: flex; gap: 6px; margin-top: 8px; width: min(380px, 100%); }
+.lb-add input { flex: 1; font-family: var(--mono); font-size: 11.5px; }
+#lbImp .lb-dlg-p { margin: 0 0 6px; font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
+#lbImp .lb-dlg-list { margin: 0; padding: 8px 10px 8px 26px; border-radius: var(--r-sm); background: var(--bg); border: 1px solid var(--line); font: 11.5px var(--mono); color: var(--fg); overflow-wrap: anywhere; }
+@container (max-width: 520px) {
+  .lb-bar { flex-wrap: wrap; }
+  .lb-search { flex-basis: 100%; }
+  .lb-seg { margin-right: auto; }
+  .lb-cards { grid-template-columns: minmax(0, 1fr); }
+}

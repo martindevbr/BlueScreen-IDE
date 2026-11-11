@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {
+      "type": "site", "name": "Automatizar site", "category": "Navegador",
+      "desc": "Abre um site e segue os passos: clicar, digitar, ler.",
+      "inputs": ["in"], "outputs": ["out"],
+      "params": { "url": "", "steps": [], "show": "yes", "after": "close", "wait_s": 15 },
+      "fields": [
+        { "name": "url", "label": "Endereço", "kind": "text", "placeholder": "https://…" },
+        { "name": "steps", "label": "Passos", "kind": "rows", "add": "Passo",
+          "help": "Onde: um seletor CSS (#senha, .botao) ou texto=Entrar para achar pelo texto. Em Ler texto, o valor é o nome do campo na saída. Senhas: {{vault:site}}.",
+          "columns": [
+            { "name": "do", "kind": "select", "options": [
+              { "value": "click", "label": "Clicar" }, { "value": "type", "label": "Digitar" }, { "value": "select", "label": "Escolher opção" },
+              { "value": "key", "label": "Apertar tecla" }, { "value": "wait", "label": "Esperar aparecer" }, { "value": "read", "label": "Ler texto" },
+              { "value": "goto", "label": "Ir para endereço" }, { "value": "sleep", "label": "Esperar (segundos)" }, { "value": "shot", "label": "Capturar tela" } ] },
+            { "name": "on", "placeholder": "Onde: #id ou texto=Entrar", "hide": { "do": ["key", "goto", "sleep", "shot"] } },
+            { "name": "value", "placeholder": "Valor", "hide": { "do": ["click", "wait"] } }
+          ] },
+        { "name": "show", "label": "Janela do navegador", "kind": "select", "options": [{ "value": "yes", "label": "Mostrar" }, { "value": "no", "label": "Não mostrar" }] },
+        { "name": "after", "label": "No fim", "kind": "select", "show": { "show": ["yes"] }, "options": [{ "value": "close", "label": "Fechar o navegador" }, { "value": "keep", "label": "Deixar aberto" }] },
+        { "name": "wait_s", "label": "Esperar cada elemento por até (segundos)", "kind": "number", "min": 1, "max": 300 }
+      ],
+      "run": { "program": "node", "args": ["site.js"], "timeout": 600000 }
+    }
+  ]
+}

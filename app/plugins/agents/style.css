@@ -1,0 +1,42 @@
+/* Conselho de agentes: o pedido em cima, as revisões embaixo. Cores e medidas do tema da IDE. */
+.ac { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: auto; background: var(--bg); color: var(--fg); font-size: 12.5px; }
+.ac *, .ac *::before, .ac *::after { box-sizing: border-box; }
+.ac .i { width: 15px; height: 15px; }
+.ac-form { display: flex; flex-direction: column; gap: 6px; padding: 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex: none; }
+.ac-lbl { font-size: 11.5px; font-weight: 500; color: var(--fg-2); margin-top: 4px; }
+.ac-lbl:first-child { margin-top: 0; }
+.ac textarea, .ac input[type=text] { width: 100%; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 7px 9px; }
+.ac input[type=text] { height: 30px; font-family: var(--mono); font-size: 11.5px; }
+.ac textarea { resize: vertical; min-height: 84px; line-height: 1.5; display: block; }
+.ac textarea:focus, .ac input[type=text]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.ac-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.ac-picks { display: flex; gap: 4px; }
+.ac-picks label { cursor: pointer; }
+.ac-picks input { position: absolute; opacity: 0; pointer-events: none; }
+.ac-picks span { display: block; padding: 4px 11px; border-radius: 14px; border: 1px solid var(--line-2); color: var(--fg-2); white-space: nowrap; }
+.ac-picks input:checked + span { background: var(--sel); border-color: var(--accent); color: var(--fg); }
+.ac-picks input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ac-st { flex: 1; min-width: 0; text-align: right; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac .ac-go { margin-left: auto; background: var(--accent); color: var(--on-accent); }
+.ac .ac-go:hover { background: var(--accent-2); }
+.ac .ac-go:disabled { opacity: .6; pointer-events: none; }
+.ac-hint { margin: 4px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.ac-hist { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.ac-hist h4 { margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.ac-list { display: flex; flex-direction: column; gap: 8px; }
+.ac-none { margin: 0; color: var(--muted); }
+.ac-rec { display: flex; flex-direction: column; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); border-left: 3px solid var(--add); min-width: 0; }
+.ac-rec.bad { border-left-color: var(--warn); }
+.ac-rec header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ac-badge { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--add); }
+.ac-rec.bad .ac-badge { color: var(--warn); }
+.ac-rec time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ac-prop { margin: 0; color: var(--fg-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.ac-prop.open { display: block; }
+.ac-rev { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 2px 8px; padding-top: 8px; border-top: 1px solid var(--line); min-width: 0; }
+.ac-rev b { font-weight: 600; }
+.ac-v { justify-self: start; font-size: 11px; padding: 0 7px; border-radius: 9px; line-height: 17px; }
+.ac-v.ok { color: var(--add); background: color-mix(in srgb, var(--add) 15%, transparent); }
+.ac-v.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.ac-v.bad { color: var(--del); background: color-mix(in srgb, var(--del) 15%, transparent); }
+.ac-rev p { grid-column: 1 / -1; margin: 0; color: var(--fg-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }

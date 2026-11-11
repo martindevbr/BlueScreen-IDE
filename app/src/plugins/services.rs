@@ -230,13 +230,16 @@ pub fn routes() -> Vec<(&'static str, RouteFn)> {
             let b: Value = r.body_json()?;
             let mut f = Fill::new(&who);
             let mut c = command(&b, &mut f)?;
-            let input = b["stdin"].as_str().map(|s| f.apply(s)).transpose()?;
+            // Entrada literal (por exemplo prompts que documentam {{vault:...}}) não resolve segredos.
+            let input = if let Some(s) = b["stdinBase64"].as_str() {
+                Some(B64.decode(s).map_err(|_| fail("stdinBase64 inválido", 400))?)
+            } else { b["stdin"].as_str().map(|s| f.apply(s).map(String::into_bytes)).transpose()? };
             vault::check(&who, &f.vault, Target::Program(b["program"].as_str().unwrap_or("")))?;
             c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
             let mut child = c.spawn().map_err(|e| fail(format!("não deu para iniciar: {e}"), 500))?;
             #[cfg(windows)]
             if let Some(h) = child.raw_handle() { super::external::job::assign_raw(h); }
-            if let (Some(s), Some(mut w)) = (input, child.stdin.take()) { tokio::spawn(async move { let _ = w.write_all(s.as_bytes()).await; }); }
+            if let (Some(s), Some(mut w)) = (input, child.stdin.take()) { tokio::spawn(async move { let _ = w.write_all(&s).await; }); }
             let ms = b["timeout"].as_u64().unwrap_or(60_000).clamp(100, 3_600_000);
             match tokio::time::timeout(Duration::from_millis(ms), child.wait_with_output()).await {
                 Ok(Ok(o)) => ok(json!({ "ok": o.status.success(), "code": o.status.code().unwrap_or(-1), "out": f.scrub(&text(&o.stdout)), "err": f.scrub(&text(&o.stderr)), "timedOut": false })),

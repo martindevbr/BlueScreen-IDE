@@ -22,6 +22,12 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         if r.remote || !r.is_post() || r.headers.get("x-bluescreen").and_then(|v| v.to_str().ok()) != Some("takeover") { return Err(fail("só pelo PC local", 403)); }
         match UI.get() { Some(f) => { f(UiEvent::Activate); ok(json!({ "ok": true })) } None => Err(fail("sem janela", 409)) }
     }));
+    add("quit", route_fn(|r| async move {
+        r.local_only()?;
+        if !r.is_post() || r.headers.get("x-bluescreen").and_then(|v|v.to_str().ok())!=Some("takeover") {return Err(fail("use o comando --quit do BlueScreen",403));}
+        match UI.get(){Some(f)=>f(UiEvent::Quit),None=>{tokio::spawn(async{tokio::time::sleep(std::time::Duration::from_millis(150)).await;std::process::exit(0);});}}
+        ok(json!({"ok":true}))
+    }));
     add("shutdown", route_fn(|r| async move {
         if r.remote || !r.is_post() || r.headers.get("x-bluescreen").and_then(|v| v.to_str().ok()) != Some("takeover") { return Err(fail("só pelo PC local", 403)); }
         log("Outra instância do BlueScreen assumiu. Encerrando.");

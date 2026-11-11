@@ -77,6 +77,19 @@ if ($partial) {
   if (Invoke-Cargo $cargoArgs) { exit 1 }
 } elseif (Invoke-Cargo @('build', '--release', '--workspace', '--exclude', 'bluescreen-plugin-server')) { exit 1 }
 $dist = Join-Path $Out 'BlueScreen'
+$ErrorActionPreference = 'Stop'
+# Confira o destino e os arquivos em uso antes de remover qualquer parte da distribuição.
+$outFull = [IO.Path]::GetFullPath($Out).TrimEnd('\', '/')
+$distFull = [IO.Path]::GetFullPath($dist)
+if ($distFull -ne (Join-Path $outFull 'BlueScreen')) { throw "Destino de distribuição inválido: $distFull" }
+if (Test-Path -LiteralPath $distFull) {
+  foreach ($item in Get-ChildItem -LiteralPath $distFull -File -Recurse) {
+    try {
+      $probe = [IO.File]::Open($item.FullName, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+      $probe.Dispose()
+    } catch { throw "Não foi possível preparar a distribuição: '$($item.FullName)' está em uso ou sem permissão. Use Sair do BlueScreen na bandeja e tente novamente, ou escolha outra pasta com -Out." }
+  }
+}
 if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
 New-Item -ItemType Directory -Force $dist | Out-Null
 Copy-Item 'target\release\bluescreen.exe' (Join-Path $dist 'BlueScreen.exe')

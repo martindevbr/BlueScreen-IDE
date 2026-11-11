@@ -30,6 +30,7 @@ Cada pasta tem:
 | Arquivo | |
 |---|---|
 | `plugin.json` | `{ "id", "name", "description", "version", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }` |
+| `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
 | `icon.svg` ou `icon.png` (opcional) | o ícone na aba Plugins e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
 | `ui.js` (opcional) | roda na página dentro de `function (bs, plugin) { ... }` e enxerga tudo do núcleo (`S`, `api`, `$`, `esc`, `toast`, `store`, `I`, `TI`, `monaco`, `editor`, `openFile`, `openTool`...) |
 | `style.css` (opcional) | injetado junto com o `ui.js` |
@@ -260,6 +261,7 @@ O objeto `bs` (também em `window.BS`):
 | `bs.dashboard.card({ id, order, wide, html(), bind(el) })` / `bs.dashboard.action({ label, icon, go })` | card e botão no resumo do projeto |
 | `bs.ui.panel(html)` | painel na área do editor, abaixo do código. Como os outros painéis, dá para arrastar a aba dele para cima, para os lados ou para uma janela flutuante (veja [Dividir a tela](#dividir-a-tela-bslayout)). A aba usa o `.head .ttl` do painel como título; `data-dock-title`, `data-dock-icon` (SVG) e `data-dock-tool` (o id do `bs.tools.register` que abre o painel) no elemento mudam isso |
 | `bs.bubble.register({ id, title, icon, order, width, height, render(el), show(), hide() })` | **janela no balão flutuante**: o balão (canto da tela, arrastável) lista as janelas; cada uma abre na própria janela, que o usuário move, redimensiona, maximiza, minimiza no balão, fecha ou encaixa numa região da tela. `render(el)` roda uma vez, no registro, e desenha dentro de `el`. `bs.bubble.open(id)` / `minimize(id)` / `close(id)` / `toggle(id)` / `isOpen(id)` / `windowOf(id)`; `bs.bubble.badge(id, 'busy' \| 'dot' \| null)` marca o balão (anel girando, ponto) |
+| `bs.pages.register({ id, title, icon, render(el), show(), hide(), save(), discard(), unsaved() })` | **tela inteira numa aba do editor**, ao lado dos arquivos (o Automator é assim). `render(el)` roda uma vez, no registro; fechar e reabrir a aba mantém o elemento. `bs.pages.open(id)` / `close(id)` / `isOpen(id)` / `isActive(id)`. `bs.pages.dirty(id, true)` põe o ponto de não salvo na aba: daí `Ctrl+S` e **Salvar tudo** chamam `save()`, fechar pergunta e **Fechar sem salvar** chama `discard()`; `unsaved()` devolve o texto do que está por salvar. O salvamento automático não chama `save()`. Para o ícone na barra da esquerda: `bs.tools.register({ id, title, icon, order, page: '<id da tela>' })`; com `render()` nesse registro, o painel da esquerda passa a ser da tela (entra no lugar do painel de arquivos enquanto a aba está na frente e sai quando outra aba entra). Registre o painel antes da tela |
 | `bs.build.info()` / `selected()` / `run(task, cmd)` / `showLog(log)` / `current()` / `render()` | painel Build (embaixo do editor): estrutura, escolhas (Maven, JDK, repositório), rodar tarefa, mostrar um log de fora no console |
 | `bs.build.runSteps({ title, steps, jdk })` / `runFile()` | roda passos prontos no console (`{ program, args, cwd, env, java }`, ou `kind: "maven"` com os argumentos do mvn), com uma linha para a entrada do programa; `runFile()` é o "Executar arquivo" pela extensão |
 | `bs.terminal.open(pasta, shell)` / `run(comando, pasta)` / `shells()` | terminal |
@@ -307,7 +309,7 @@ Um painel que muda de lugar continua sendo o mesmo elemento: ids, eventos e esta
 ## Recarregar sem recarregar a página
 
 `BS.plugins.reload(id)` relê a lista de plugins no núcleo, desfaz o que o plugin registrou nesta página e roda o `ui.js` dele de novo, sem recarregar a IDE. O IAMaker usa isso a cada mudança. O núcleo desfaz sozinho o que passou pela API, desde que o registro tenha sido feito **no topo do `ui.js`**, não depois de um `await`:
-- painéis (`bs.tools.register`), janelas do balão e painéis de `bs.ui.panel`;
+- painéis (`bs.tools.register`), telas em aba (`bs.pages.register`, que voltam abertas se estavam), janelas do balão e painéis de `bs.ui.panel`;
 - itens de status, atalhos (`bs.keys.add`) e ações;
 - cards e botões do resumo;
 - ganchos (`bs.hooks.on`, `bs.hooks.filter`);

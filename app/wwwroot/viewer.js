@@ -186,3 +186,70 @@ function vwReload(t) {
   });
   window.addEventListener('resize', () => { const t = S.active; if (t && t.mode === 'view' && t.view.fit) vwZoom(t); });
 })();
+
+// ===== Telas de plugin em aba (bs.pages) =====
+// Um plugin registra uma tela inteira e ela abre como uma aba do editor, ao lado dos arquivos:
+//   bs.pages.register({ id, title, icon, render(el), show(), hide(), save(), discard(), unsaved() })
+//   bs.pages.open(id) / close(id) / isOpen(id) / isActive(id) / dirty(id, true|false)
+// render(el) roda uma vez, no registro; o elemento é guardado, então fechar e reabrir a aba não perde o estado.
+// dirty() põe o ponto de "não salvo" na aba: fechar pergunta, Ctrl+S e "Salvar tudo" chamam save(), e
+// "Fechar sem salvar" chama discard(). unsaved() devolve o texto do que está por salvar (o nome do fluxo, por exemplo).
+// Para o ícone na barra da esquerda: bs.tools.register({ id, title, icon, order, page: '<id da tela>' }).
+// Com render() nesse registro, o painel da esquerda é da tela: aparece no lugar do painel de arquivos enquanto a aba
+// dela está na frente e devolve o lugar ao painel anterior quando outra aba entra.
+(function pgInit() {
+  const PG = { defs: new Map(), back: new Map() };
+  const tabOf = (id) => S.tabs.find(t => t.page === id) || null;
+  // painel da esquerda que pertence a uma tela ({ page, render }): acompanha a aba
+  const toolOf = (page) => [...BS.tools.defs.values()].find(d => d.render && d.page === page) || null;
+  const toolBack = () => { const cur = BS.tools.get(S.tool); if (!cur || !cur.page || !cur.render) return; S.tool = PG.prevTool && BS.tools.get(PG.prevTool) ? PG.prevTool : 'project'; PG.prevTool = null; btnState(); renderTool(); };
+  BS.hooks.on('tab:activate', (t) => {
+    const tool = t.page && toolOf(t.page);
+    if (!tool) return toolBack();
+    if (S.tool !== tool.id) { PG.prevTool = S.tool; S.tool = tool.id; btnState(); renderTool(); }
+  });
+  BS.pages = {
+    get: (id) => PG.defs.get(id) || null,
+    register(def) {
+      if (!def || !def.id || !def.title) throw new Error('page precisa de id e title');
+      if (PG.defs.has(def.id)) BS.pages.unregister(def.id);
+      const el = document.createElement('div'); el.className = 'pg-body'; def.el = el;
+      PG.defs.set(def.id, def); own('pages', def.id);
+      VW.custom['page:' + def.id] = {
+        build(t, pane) { pane.className = 'vw-pane vw-page'; pane.appendChild(el); },
+        show() { try { def.show && def.show(); } catch (e) { console.error('page ' + def.id, e); } },
+        close() { toolBack(); el.remove(); try { def.hide && def.hide(); } catch (e) { console.error('page ' + def.id, e); } },
+        // o salvamento automático (trocar de aba, fechar) não grava a tela de um plugin: só quando o usuário pede
+        save(t, auto) { if (auto === true || !def.save) return; return def.save(); },
+        discard() { return def.discard && def.discard(); },
+      };
+      if (def.render) def.render(el);
+      // recarregado pelo BS.plugins.reload com a aba aberta: ela volta para o lugar
+      const back = PG.back.get(def.id); PG.back.delete(def.id);
+      if (back) BS.pages.open(def.id, back === 'quiet');
+      return def;
+    },
+    unregister(id) {
+      if (!PG.defs.has(id)) return;
+      const t = tabOf(id);
+      if (t) { PG.back.set(id, S.active === t ? 'front' : 'quiet'); t.dirty = false; closeTab(t); }
+      PG.defs.delete(id); delete VW.custom['page:' + id];
+    },
+    open(id, quiet) {
+      const def = PG.defs.get(id); if (!def) return;
+      if (!S.project) { toast('Abra um projeto para usar ' + def.title); return; }
+      ensureEditors();
+      let tab = tabOf(id);
+      if (!tab) {
+        tab = { key: 'page:' + id, page: id, path: def.title, title: def.title, mode: 'view', kind: 'page:' + id, project: null, virtual: true, lang: '', editable: false, size: 0, view: { fit: false, zoom: 1 } };
+        S.tabs.push(tab); BS.hooks.run('tab:open', tab);
+      }
+      if (quiet && S.active) renderTabs(); else activate(tab);
+    },
+    close(id) { const t = tabOf(id); if (t) askClose(t); },
+    isOpen: (id) => !!tabOf(id),
+    isActive: (id) => !!S.active && S.active.page === id && $('#welcome').hidden,
+    dirty(id, on) { const t = tabOf(id); if (!t || !!t.dirty === !!on) return; t.dirty = !!on; renderTabs(); },
+    icon: (id) => (PG.defs.get(id) || {}).icon || '',
+  };
+})();

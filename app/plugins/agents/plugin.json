@@ -1,0 +1,8 @@
+{
+  "id": "agents",
+  "name": "Conselho de agentes",
+  "version": "1.0.0",
+  "author": "BlueScreen",
+  "order": 82,
+  "description": "Antes de decidir, o Codex e o Claude Code revisam a proposta de forma independente e só com leitura. Só vale como aprovada quando todos aprovam. Usado também pelo IAMaker e pelo Automator."
+}

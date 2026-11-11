@@ -9,7 +9,7 @@ where cargo >nul 2>&1 || (echo Rust/cargo nao encontrado. Instale em https://rus
 rem o BlueScreen aberto trava os arquivos de app\dist: pede para fechar (sem forcar, para nao perder nada)
 tasklist /FI "IMAGENAME eq BlueScreen.exe" 2>nul | find /I "BlueScreen.exe" >nul || goto :build
 echo Fechando o BlueScreen aberto...
-taskkill /IM BlueScreen.exe >nul 2>&1
+"dist\BlueScreen\BlueScreen.exe" --quit >nul 2>&1
 for /l %%i in (1,1,15) do (
   tasklist /FI "IMAGENAME eq BlueScreen.exe" 2>nul | find /I "BlueScreen.exe" >nul || goto :build
   timeout /t 1 /nobreak >nul

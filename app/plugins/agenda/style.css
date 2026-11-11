@@ -1,0 +1,64 @@
+/* Agenda: calendário do mês à esquerda, o dia escolhido à direita. Cores e medidas do tema da IDE. */
+.ag { height: 100%; min-height: 0; overflow: hidden; background: var(--bg); color: var(--fg); font-size: 12.5px; container-type: inline-size; }
+.ag-grid2 { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr); height: 100%; min-height: 0; }
+.ag *, .ag *::before, .ag *::after { box-sizing: border-box; }
+.ag [hidden] { display: none !important; }
+.ag .i { width: 15px; height: 15px; }
+.ag .chip { border: 1px solid var(--line-2); background: var(--bg); }
+.ag .chip:hover { border-color: var(--accent); background: var(--hover); }
+.ag .chip.primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.ag .chip.primary:hover { background: var(--accent-2); }
+.ag-cal, .ag-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ag-side { background: var(--panel); border-left: 1px solid var(--line); }
+.ag-bar { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 8px 12px; flex: none; }
+.ag-bar b { font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-month::first-letter, .ag-daytitle::first-letter { text-transform: uppercase; }
+.ag-sp { flex: 1; }
+.ag-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: auto; grid-auto-rows: minmax(0, 1fr); gap: 4px; padding: 0 12px 12px; }
+.ag-wd { padding: 2px 6px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.ag-day { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; min-height: 44px; padding: 5px 6px; overflow: hidden; text-align: left; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); }
+.ag-day:hover { border-color: var(--line-2); background: var(--hover); }
+.ag-day.out { background: none; }
+.ag-day.out .ag-num { color: var(--muted); opacity: .6; }
+.ag-day.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ag-num { font-size: 12px; font-weight: 600; color: var(--fg-2); line-height: 18px; }
+.ag-day.today .ag-num { align-self: flex-start; min-width: 20px; padding: 0 5px; border-radius: 9px; text-align: center; background: var(--accent); color: var(--on-accent); }
+.ag-chip { display: block; padding: 0 5px; border-radius: 4px; font-size: 10.5px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.ag-more { font-size: 10.5px; color: var(--muted); padding: 0 5px; }
+.ag-pip { display: none; position: absolute; right: 6px; top: 10px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.ag-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; display: flex; flex-direction: column; gap: 14px; }
+.ag-daylist, .ag-latelist { display: flex; flex-direction: column; gap: 6px; }
+.ag-none { margin: 4px 0; color: var(--muted); }
+.ag-late h4 { margin: 0 0 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--warn); }
+.ag-ev { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 9px 6px 9px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg); border-left: 3px solid var(--accent); }
+.ag-ev.late { border-left-color: var(--warn); }
+.ag-ev.done { border-left-color: var(--line-2); }
+.ag-ev.done b { text-decoration: line-through; color: var(--muted); }
+.ag-ev time { font-variant-numeric: tabular-nums; color: var(--fg-2); font-weight: 600; white-space: nowrap; line-height: 18px; }
+.ag-ev-tx { min-width: 0; display: grid; gap: 2px; }
+.ag-ev-tx b { font-weight: 600; line-height: 18px; overflow-wrap: anywhere; }
+.ag-ev-tx p { margin: 0; color: var(--fg-2); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ag-ev-tx small { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted); font-size: 11px; }
+.ag-ev-tx small:empty { display: none; }
+.ag .ag-ev-tx small .i { width: 12px; height: 12px; }
+.ag-ev-tx small span { margin-right: 6px; }
+.ag-ev-acts { display: flex; gap: 0; opacity: .55; }
+.ag-ev:hover .ag-ev-acts, .ag-ev:focus-within .ag-ev-acts { opacity: 1; }
+.ag-ev-acts .icon-btn { width: 24px; height: 24px; }
+#agEdit [hidden] { display: none !important; }
+#agEdit .ag-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+#agEdit textarea, #agEdit select { width: 100%; font: inherit; font-size: 12.5px; color: var(--fg); background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 6px 8px; }
+#agEdit select { height: 32px; }
+#agEdit textarea { resize: vertical; min-height: 60px; line-height: 1.45; }
+#agEdit textarea:focus, #agEdit select:focus { outline: none; border-color: var(--accent); }
+
+/* janela estreita: o calendário encolhe (pontos no lugar dos títulos) e o dia vai para baixo */
+@container (max-width: 640px) {
+  .ag-grid2 { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ag-side { border-left: 0; border-top: 1px solid var(--line); }
+  .ag-grid { grid-auto-rows: 40px; flex: none; gap: 3px; }
+  .ag-day { min-height: 0; padding: 4px; align-items: center; }
+  .ag-chip, .ag-more { display: none; }
+  .ag-pip { display: block; position: static; margin-top: 1px; }
+  .ag-wd { text-align: center; padding: 2px 0 4px; }
+}
