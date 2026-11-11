@@ -7,6 +7,8 @@ const IC = {
 };
 const esc = bs.esc;
 const NAME = { codex: 'Codex', claude: 'Claude Code' };
+let clis = [{ id: 'codex', name: 'Codex' }, { id: 'claude', name: 'Claude Code' }];
+const GEAR = svg('<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/>');
 const VERDICT = { approve: ['aprova', 'ok'], revise: ['pede ajustes', 'warn'], reject: ['rejeita', 'bad'] };
 let root, records = [], busy = false, since = 0, clock = null;
 const guard = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { bs.toast('Agentes: ' + e.message, 'err'); } };
@@ -19,10 +21,17 @@ function paintHistory() {
   list.innerHTML = records.map(r => `<article class="ac-rec ${r.approved ? 'ok' : 'bad'}">
       <header><span class="ac-badge">${r.approved ? IC.ok + 'Aprovada' : IC.stop + 'Bloqueada'}</span><time>${esc(when(r.at))}</time></header>
       <p class="ac-prop">${esc(r.proposal)}</p>
-      ${r.reviews.map(v => { const d = v.error ? ['não respondeu', 'bad'] : VERDICT[v.result?.verdict] || ['sem parecer', 'bad']; return `<div class="ac-rev"><b>${esc(NAME[v.provider] || v.provider)}</b><span class="ac-v ${d[1]}">${d[0]}</span><p>${esc(String(v.error || v.result?.reason || ''))}</p></div>`; }).join('')}
+      ${r.reviews.map(v => { const d = v.error ? ['não respondeu', 'bad'] : VERDICT[v.result?.verdict] || ['sem parecer', 'bad']; return `<div class="ac-rev"><b>${esc(v.name || NAME[v.provider] || v.provider)}</b><span class="ac-v ${d[1]}">${d[0]}</span><p>${esc(String(v.error || v.result?.reason || ''))}</p></div>`; }).join('')}
     </article>`).join('') || '<p class="ac-none">Nenhuma revisão ainda.</p>';
   list.querySelectorAll('.ac-prop').forEach(p => { p.onclick = () => p.classList.toggle('open'); });
 }
+// os revisores: Codex e Claude Code vêm marcados; os que o usuário cadastrou em Agentes de IA entram desmarcados
+function paintPicks() {
+  const box = root?.querySelector('.ac-picks'); if (!box) return;
+  const had = box.childElementCount > 0, on = new Set([...box.querySelectorAll('input:checked')].map(c => c.dataset.p));
+  box.innerHTML = clis.map(c => `<label><input type="checkbox" data-p="${esc(c.id)}"${(had ? on.has(c.id) : c.id === 'codex' || c.id === 'claude') ? ' checked' : ''}><span>${esc(c.name)}</span></label>`).join('');
+}
+async function loadClis() { try { clis = await bs.aiClis.list(); paintPicks(); } catch {} }
 function paintBusy() {
   const b = root.querySelector('.ac-go'), st = root.querySelector('.ac-st');
   b.disabled = busy; b.querySelector('span').textContent = busy ? 'Revisando…' : 'Pedir revisão';
@@ -32,9 +41,10 @@ function paintBusy() {
 const submit = guard(async () => {
   if (busy) return;
   const text = root.querySelector('.ac-text'), proposal = text.value.trim();
-  const providers = ['codex', 'claude'].filter(p => root.querySelector(`[data-p=${p}]`).checked);
+  const providers = [...root.querySelectorAll('.ac-picks input:checked')].map(c => c.dataset.p);
   if (!proposal) { text.focus(); throw new Error('escreva a proposta que os agentes devem revisar.'); }
   if (!providers.length) throw new Error('escolha pelo menos um agente.');
+  if (providers.length > 4) throw new Error('escolha até quatro agentes.');
   busy = true; since = Date.now(); paintBusy(); clock = setInterval(paintBusy, 1000);
   try {
     const r = await bs.api('agents/reviews', {}, { method: 'POST', body: JSON.stringify({ proposal, cwd: root.querySelector('.ac-cwd').value.trim(), providers }) });
@@ -51,17 +61,20 @@ function mount(pane) {
       <textarea class="ac-text" id="acText" rows="6" placeholder="Descreva a decisão, o contexto e a solução proposta. Os agentes procuram erros e riscos antes de você decidir."></textarea>
       <label class="ac-lbl" for="acCwd">Pasta que eles podem ler</label>
       <input class="ac-cwd" id="acCwd" type="text" spellcheck="false" placeholder="vazio: sua pasta de usuário">
-      <div class="ac-row"><span class="ac-picks"><label><input type="checkbox" data-p="codex" checked><span>Codex</span></label><label><input type="checkbox" data-p="claude" checked><span>Claude Code</span></label></span>
+      <div class="ac-row"><span class="ac-picks"></span><button class="icon-btn ac-cfg" type="button" title="Agentes de IA: modelo, esforço e programas">${GEAR}</button>
         <span class="ac-st" aria-live="polite"></span><button class="chip primary ac-go" type="submit">${IC.app}<span>Pedir revisão</span></button></div>
-      <p class="ac-hint">Cada agente analisa sozinho, só com leitura, usando o programa e o login que já estão neste PC. A proposta só é aprovada quando todos aprovam.</p>
+      <p class="ac-hint">Cada agente analisa sozinho, só com leitura, usando o programa e o login que já estão neste PC. A engrenagem escolhe o modelo e o esforço de cada um, e cadastra outros programas. A proposta só é aprovada quando todos aprovam.</p>
     </form>
     <section class="ac-hist"><h4>Revisões</h4><div class="ac-list"></div></section>`;
+  pane.querySelector('.ac-cfg').onclick = () => bs.aiClis.open();
+  paintPicks();
   pane.querySelector('.ac-cwd').value = bs.S.project?.path || '';
   pane.querySelector('form').onsubmit = (e) => { e.preventDefault(); submit(); };
   pane.querySelector('.ac-text').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } };
   paintHistory();
 }
-bs.bubble.register({ id: 'agents', title: 'Conselho de agentes', icon: IC.app, order: 62, width: 620, height: 700, render: mount, show: () => { if (!busy) bs.bubble.badge('agents', null); guard(refresh)(); } });
+bs.bubble.register({ id: 'agents', title: 'Conselho de agentes', icon: IC.app, order: 62, width: 620, height: 700, render: mount, show: () => { if (!busy) bs.bubble.badge('agents', null); guard(refresh)(); loadClis(); } });
+bs.hooks.on('aiclis:change', (list) => { clis = list; paintPicks(); });
 bs.actions.add([{ label: 'Agentes: revisar uma proposta', icon: IC.app, run: () => bs.bubble.open('agents') }]);
 // a pasta acompanha o projeto aberto, enquanto o campo não foi mexido à mão
 bs.hooks.on('project:select', (p) => { const f = root?.querySelector('.ac-cwd'); if (f && document.activeElement !== f) f.value = p?.path || ''; });

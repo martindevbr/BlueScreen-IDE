@@ -162,6 +162,26 @@
 .am-link { font-size: 11px; color: var(--accent-2); padding: 0 2px; border-radius: 3px; }
 .am-link:hover { text-decoration: underline; }
 .am-ferr { color: var(--del); font-size: 11px; line-height: 1.4; }
+/* trancado: fluxo só de visualização e nós que não se mexem */
+.am-flock, .am-nlock { display: inline-flex; flex: none; color: var(--muted); }
+.am .am-flock .i, .am-side .am-flock .i, .am .am-nlock .i { width: 12px; height: 12px; }
+.am.ro .am-node, .am-node.locked { cursor: default; }
+.am.ro .am-port, .am.ro .am-plus { pointer-events: none; }
+.am.ro .am-plus, .am.ro .am-add { display: none; }
+.am .am-lockbtn.on, .am-ihd .icon-btn.on { color: var(--accent-2); background: var(--sel); }
+.am-locknote { display: flex; align-items: center; gap: 6px; margin: 0; padding: 7px 10px; font-size: 11.5px; color: var(--fg-2); background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.am-locknote > span:first-child { display: inline-flex; color: var(--accent-2); }
+.am-locknote .am-link { margin-left: auto; }
+.am-locknote .i { width: 13px; height: 13px; }
+/* endereço do Endpoint HTTP */
+.am-hook { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 8px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg); }
+.am-hook code { flex: 1; min-width: 0; font: 11px/1.4 var(--mono); color: var(--fg-2); overflow-wrap: anywhere; user-select: all; }
+.am-hook .icon-btn { flex: none; width: 24px; height: 24px; }
+/* campo de caminho com o botão de procurar */
+.am-browse-line { display: flex; gap: 4px; min-width: 0; }
+.am-browse-line input { flex: 1; }
+.am .am-browse { flex: none; width: 30px; height: 30px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--bg); }
+.am .am-browse:hover { border-color: var(--accent); }
 /* campo em linhas (os passos de um roteiro) */
 .am-steps { display: flex; flex-direction: column; gap: 6px; }
 .am-step { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 6px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel-2); }

@@ -237,7 +237,7 @@ function vwReload(t) {
     },
     open(id, quiet) {
       const def = PG.defs.get(id); if (!def) return;
-      if (!S.project) { toast('Abra um projeto para usar ' + def.title); return; }
+      if (document.body.classList.contains('welcome')) { toast('Abra um projeto ou entre em "Só os plugins" para usar ' + def.title); return; }
       ensureEditors();
       let tab = tabOf(id);
       if (!tab) {

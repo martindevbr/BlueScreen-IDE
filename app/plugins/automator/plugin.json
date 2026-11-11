@@ -1,5 +1,6 @@
 {
   "id": "automator", "name": "Automator", "version": "1.0.0", "author": "BlueScreen", "order": 80,
-  "description": "Automações em nós, no modelo dos Fluxos do HexLab: gatilho manual ou por agenda, programas, HTTP, avisos do Windows, condições e IA (Claude Code, Codex, OpenRouter, MCP), com histórico de cada execução.",
-  "vault": [{ "key": "openrouter", "label": "OpenRouter: API token", "hosts": ["openrouter.ai"], "why": "Executar os nós OpenRouter dos fluxos. O token é enviado somente pelo núcleo." }]
+  "description": "Automações em nós, no modelo dos Fluxos do HexLab: gatilhos (manual, agenda, arquivo, endpoint HTTP), arquivos, texto, programas, HTTP, segurança, auditoria de sites, Dynatrace, imagem, áudio, vídeo e agentes de IA (Claude Code, Codex, outros, OpenRouter, MCP), com histórico de cada execução.",
+  "vault": [{ "key": "dynatrace", "label": "Dynatrace: API token", "why": "Consultar problemas e métricas e registrar eventos pelos nós do Dynatrace. Libere também o endereço do seu ambiente. O token é enviado somente pelo núcleo." },
+    { "key": "openrouter", "label": "OpenRouter: API token", "hosts": ["openrouter.ai"], "why": "Executar os nós OpenRouter dos fluxos. O token é enviado somente pelo núcleo." }]
 }

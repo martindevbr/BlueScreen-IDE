@@ -24,6 +24,8 @@ const IC = {
   copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'),
   key: svg('<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>'),
   up: svg('<path d="M6 14l6-6 6 6"/>'),
+  lock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  unlock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>'),
 };
 // ícone e cor de cada categoria da paleta
 const CATS = {
@@ -34,12 +36,21 @@ const CATS = {
   'Rede': { c: 'var(--add)', i: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/>') },
   'IA': { c: '#E879B9', i: IC.spark },
   'Arquivos': { c: '#D9A441', i: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>') },
+  'Texto': { c: '#9AA7F5', i: svg('<path d="M5 6V4h14v2M12 4v16M9 20h6"/>') },
+  'Imagem': { c: '#5CC8A1', i: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 4 4 3-3 4 4"/>') },
+  'Áudio': { c: '#F0A35E', i: svg('<path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/>') },
+  'Vídeo': { c: '#E36F8E', i: svg('<rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>') },
+  'Segurança': { c: '#E0685E', i: svg('<path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6z"/><path d="M9 12l2.2 2.2L15 10.5"/>') },
+  'Auditoria': { c: '#59B8C4', i: svg('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M8.5 11l1.8 1.8L13.5 9.5"/>') },
+  'Integrações': { c: '#B58DF2', i: svg('<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>') },
   'Navegador': { c: '#4FB6E8', i: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.1M10 6.5h.1"/>') },
 };
 // categoria que um plugin inventou: cor e ícone neutros
 const PLUG_CAT = { c: 'var(--muted)', i: svg('<path d="M9 3h6v4h3a2 2 0 0 1 2 2v3h-2.5a2 2 0 1 0 0 4H20v3a2 2 0 0 1-2 2h-4v-2.5a2 2 0 1 0-4 0V21H6a2 2 0 0 1-2-2v-4h2.5a2 2 0 1 0 0-4H4V9a2 2 0 0 1 2-2h3z"/>') };
 // gatilhos que disparam sozinhos: valem com o interruptor "Ligado" do fluxo
-const AUTO = ['trigger.schedule', 'trigger.startup', 'trigger.file'];
+const AUTO = ['trigger.schedule', 'trigger.startup', 'trigger.file', 'trigger.webhook'];
+// endereço que chama um Endpoint HTTP
+const hookUrl = (name) => `${location.origin}/api/automator/hook?e=${encodeURIComponent(String(name || '').trim())}`;
 const PORT_LABEL = { in: 'entrada', out: 'saída', true: 'sim', false: 'não' };
 const STATUS = { running: 'executando', queued: 'na fila', completed: 'concluído', failed: 'falhou', cancelled: 'parado', interrupted: 'interrompido', skipped: 'pulado' };
 
@@ -90,6 +101,13 @@ const catOf = (n) => CATS[spec(n.type)?.category] || PLUG_CAT;
 const hasSchedule = (f = A.flow) => !!f?.nodes.some(n => AUTO.includes(n.type) && !n.disabled);
 const doc = () => A.flow ? JSON.stringify({ name: A.flow.name, description: A.flow.description || '', active: !!A.flow.active, nodes: A.flow.nodes, edges: A.flow.edges }) : '';
 const isDirty = () => !!A.flow && doc() !== A.saved;
+// ---------- trancar: o fluxo inteiro (só visualização) ou nós escolhidos (não movem, não editam, não saem) ----------
+const flowLocked = () => !!A.flow?.locked;
+const nodeLocked = (id) => flowLocked() || !!node(id)?.locked;
+let deniedAt = 0;
+function denied(what) {
+  if (Date.now() - deniedAt > 2500) { deniedAt = Date.now(); bs.toast(what === 'node' ? 'Este nó está trancado. Destranque para mexer nele.' : 'Fluxo trancado: só visualização. Destranque no cadeado para editar.'); }
+}
 const currentRun = () => A.runs.find(r => r.status === 'running') || A.runs.find(r => r.status === 'queued') || A.runs[0] || null;
 const isRunning = () => ['running', 'queued'].includes(currentRun()?.status);
 
@@ -124,6 +142,7 @@ function commit() {
   A.redo = [];
 }
 function travel(from, to) {
+  if (flowLocked()) return denied();
   if (!A.flow || !from.length) return;
   to.push(doc());
   Object.assign(A.flow, JSON.parse(from.pop()));
@@ -141,7 +160,7 @@ function normalize(f) {
   f.nodes.forEach((n, i) => {
     if (!Array.isArray(n.position) || n.position.length !== 2 || !n.position.every(Number.isFinite)) n.position = [60 + (i % 4) * 280, 60 + Math.floor(i / 4) * 150];
     n.params = { ...clone(spec(n.type)?.params || {}), ...(n.params && typeof n.params === 'object' ? n.params : {}) };
-    n.disabled = !!n.disabled;
+    n.disabled = !!n.disabled; n.locked = !!n.locked;
   });
   const ids = new Set(f.nodes.map(n => n.id));
   f.edges = f.edges.filter(e => ids.has(e.from) && ids.has(e.to));
@@ -173,8 +192,15 @@ async function save() {
   await refreshFlows(); changed();
   return saved;
 }
-async function removeFlow() {
-  if (!A.flow) return;
+async function removeFlow(f = A.flow) {
+  if (!f) return;
+  // outro fluxo da lista (botão direito): exclui sem mexer no que está aberto
+  if (f.id && f.id !== A.flow?.id) {
+    const r = await ask('Excluir fluxo', `"${f.name}" e o histórico de execuções dele saem da lista. Compromissos da Agenda que rodam este fluxo passam a só notificar.`, [{ label: 'Cancelar', value: null }, { label: 'Excluir', value: 'ok', cls: 'primary danger' }]);
+    if (r !== 'ok') return;
+    await post('automator/flows', { action: 'delete', id: f.id });
+    return refreshFlows();
+  }
   if (A.flow.id) {
     const r = await ask('Excluir fluxo', `"${A.flow.name}" e o histórico de execuções dele saem da lista. Compromissos da Agenda que rodam este fluxo passam a só notificar.`, [{ label: 'Cancelar', value: null }, { label: 'Excluir', value: 'ok', cls: 'primary danger' }]);
     if (r !== 'ok') return;
@@ -183,10 +209,10 @@ async function removeFlow() {
   A.flow = null; A.saved = '';
   await refreshFlows(); open(A.flows[0] || null);
 }
-function exportFlow() {
-  if (!A.flow) return;
-  const { next_run, updated_at, ...f } = A.flow;
-  const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(f, null, 2)], { type: 'application/json' })), download: (A.flow.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'fluxo') + '.json' });
+function exportFlow(flow = A.flow) {
+  if (!flow) return;
+  const { next_run, updated_at, ...f } = flow;
+  const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(f, null, 2)], { type: 'application/json' })), download: (flow.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'fluxo') + '.json' });
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 async function importFlow(file) {
@@ -214,6 +240,17 @@ const TEMPLATES = [
   { label: 'Avisar quando chegar arquivo', hint: 'vigia uma pasta', make: () => chain('Arquivo novo na pasta', 'Avisa quando um arquivo é criado ou alterado na pasta. Informe a pasta no primeiro nó e ligue o fluxo.', [T('trigger.file', { path: '' }), T('windows.notify', { title: 'Arquivo novo', message: '{{input.name}}' })]) },
   { label: 'Diário num arquivo', hint: 'data e hora, depois grava', make: () => chain('Diário num arquivo', 'Acrescenta uma linha com a data e a hora num arquivo de texto. Informe o arquivo no último nó.', [T('trigger.manual', { sample: 'anotação' }), T('data.datetime', { format: '%d/%m/%Y %H:%M' }), T('file.write', { path: '', content: '{{input}}', mode: 'append' })]) },
   { label: 'Automatizar um site', hint: 'abrir, clicar, digitar, ler', need: 'plugin.navegador.site', make: () => chain('Automatizar um site', 'Abre o site, faz os passos e mostra o que leu. Troque o endereço e os passos pelos do seu site; senhas vão como {{vault:site}}.', [T('trigger.manual', {}), T('plugin.navegador.site', { url: 'https://example.com', steps: [{ do: 'wait', on: 'h1', value: '' }, { do: 'read', on: 'h1', value: 'titulo' }], show: 'yes' }), T('util.output', {})]) },
+  { label: 'Endpoint com token', hint: 'recebe uma chamada e responde', make: () => {
+    const t = T('trigger.webhook', { name: 'meu-endpoint', method: 'POST' }), s = T('sec.token', { got: '{{input.token}}', expected: '' }), l = T('sec.rate', { max: 30, per_s: 60, key: '{{input.token}}' }), q = T('sec.require', { value: '{{input.body}}', fields: ['nome'] });
+    return chain('Endpoint com token', 'Recebe um POST com JSON, confere o token e os campos e responde. Preencha o token esperado no nó "Exigir token" (de preferência {{vault:nome}}) e ligue o fluxo.', [t, s, l, q, T('http.respond', { status: 200, type: 'json', body: '{"ok": true, "ola": "{{nodes.' + t.id + '.out.body.nome}}"}' })]);
+  } },
+  { label: 'Auditoria de um site', hint: 'no ar, certificado, cabeçalhos', make: () => {
+    const t = T('trigger.schedule', { mode: 'daily', time: '08:00', days: [1, 2, 3, 4, 5] }), up = T('audit.http', { url: 'https://example.com' }), tls = T('audit.tls', { host: 'example.com' }), few = T('logic.if', { value: '{{input.days}}', op: 'lt', equals: '21' }, 'Vence em menos de 21 dias?');
+    const hd = T('audit.headers', { url: 'https://example.com' }), down = T('windows.notify', { title: 'Site fora do ar', message: '{{input.url}}: {{input.reason}}' }), warn = T('windows.notify', { title: 'Certificado perto de vencer', message: '{{input.host}} vence em {{input.days}} dias ({{input.expires}})' }), res = T('util.output', {});
+    const E = (a, port, b) => ({ id: uid('e'), from: a.id, from_port: port, to: b.id, to_port: 'in' });
+    return { ...blank('Auditoria de um site'), description: 'Nos dias úteis, confere se o site responde, quando o certificado vence e os cabeçalhos de segurança. Troque example.com pelo seu site e ligue o fluxo.', nodes: [t, up, down, tls, few, warn, hd, res], edges: [E(t, 'out', up), E(up, 'false', down), E(up, 'true', tls), E(tls, 'out', few), E(few, 'true', warn), E(up, 'true', hd), E(hd, 'out', res)] };
+  } },
+  { label: 'Relatório de problemas do Dynatrace', hint: 'lista, tabela e aviso no chat', make: () => chain('Problemas abertos no Dynatrace', 'Todo dia útil, lista os problemas abertos e manda uma tabela para o canal. Preencha o ambiente, guarde o token no Cofre e ponha o webhook do canal.', [T('trigger.schedule', { mode: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }), T('dynatrace.problems', { env: '', secret: 'dynatrace', status: 'open' }), T('data.table', { list: '{{input.problems}}', format: 'markdown' }), T('notify.chat', { service: 'slack', url: '', text: 'Problemas abertos:\n{{input}}' })]) },
   { label: 'Resumo do Git com IA', hint: 'git log, depois Codex ou Claude', make: () => chain('Resumo do Git com IA', 'Pega os commits recentes do projeto e pede um resumo à IA.', [T('trigger.manual', {}), T('windows.command', { program: 'git', args: ['log', '--oneline', '-20'], cwd: bs.S.project?.path || '' }, 'Commits recentes'), T('agent.cli', { provider: 'claude', prompt: 'Resuma em poucos tópicos, em português, o que mudou nestes commits:\n\n{{input}}', cwd: bs.S.project?.path || '' }), T('util.output', {})]) },
 ];
 
@@ -257,6 +294,8 @@ function portPos(id, dir, name) {
   return [n.position[0] + (dir === 'in' ? 0 : NODE_W), n.position[1] + HEAD + PAD + i * ROW + ROW / 2];
 }
 const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+// nome do agente de IA (Codex, Claude Code ou um que o usuário cadastrou em Agentes de IA)
+const cliName = (id) => spec('agent.cli')?.fields.find(f => f.name === 'provider')?.options.find(o => o.value === id)?.label || id || '';
 function summary(n) {
   const p = n.params || {}, one = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
   switch (n.type) {
@@ -272,9 +311,9 @@ function summary(n) {
     case 'windows.notify': return one(p.message) || one(p.title);
     case 'http.request': return `${p.method || 'GET'} ${one(p.url)}`;
     case 'mcp.call': return one(p.tool) || one(p.url);
-    case 'agent.cli': return `${p.provider === 'claude' ? 'Claude' : 'Codex'} · ${one(p.prompt)}`;
+    case 'agent.cli': return `${cliName(p.provider)}${p.model ? ' (' + one(p.model) + ')' : ''} · ${one(p.prompt)}`;
     case 'ai.openrouter': return one(p.model) || 'escolha o modelo';
-    case 'agent.review': return (p.providers || []).map(x => x === 'claude' ? 'Claude' : 'Codex').join(' e ');
+    case 'agent.review': return (p.providers || []).map(cliName).join(', ');
     case 'util.text': return one(p.text);
     case 'trigger.file': case 'file.read': case 'file.write': case 'file.list': case 'file.exists': return one(p.path);
     case 'file.manage': return `${{ copy: 'copiar', move: 'mover', trash: 'Lixeira' }[p.op] || ''} ${one(p.from)}`;
@@ -308,7 +347,7 @@ function fillNode(e, n) {
       b && !used.has(b) && el('button.am-plus', { type: 'button', dataset: { plus: b }, style: { top }, title: 'Continuar o fluxo a partir daqui', html: IC.plus })].filter(Boolean));
   }
   e.replaceChildren(
-    el('div.am-head', el('span.am-ico', { html: cat.i }), el('span.am-title', { title: titleOf(n) }, titleOf(n)), n.disabled && el('span.am-off', 'desligado'), el('span.am-state')),
+    el('div.am-head', el('span.am-ico', { html: cat.i }), el('span.am-title', { title: titleOf(n) }, titleOf(n)), n.locked && el('span.am-nlock', { html: IC.lock, title: 'Nó trancado' }), n.disabled && el('span.am-off', 'desligado'), el('span.am-state')),
     body, el('div.am-sum', s ? summary(n) : 'Este tipo de nó não existe mais.'), el('div.am-run'));
   paintRun(n.id);
 }
@@ -370,6 +409,7 @@ function freeSpot(x, y) {
   return [x, y];
 }
 function addNode(type, at, link) {
+  if (flowLocked()) return denied();
   const s = spec(type); if (!s) return null;
   if (!A.flow) { A.flow = normalize(blank()); A.flow.nodes = []; A.saved = ''; A.cam = { x: 40, y: 40, z: 1 }; renderAll(); paintList(); }
   commit();
@@ -405,6 +445,7 @@ function connect(from, fromPort, to, toPort, record = true) {
   return null;
 }
 function removeEdge(id, record = true) {
+  if (flowLocked()) return denied();
   const e = A.flow.edges.find(x => x.id === id); if (!e) return;
   if (record) commit();
   A.flow.edges = A.flow.edges.filter(x => x.id !== id);
@@ -413,7 +454,9 @@ function removeEdge(id, record = true) {
   refreshNode(e.from); changed(true);
 }
 function removeNodes(ids) {
+  if (flowLocked()) return denied();
   ids = [...ids].filter(node); if (!ids.length) return;
+  if (ids.some(nodeLocked)) { denied('node'); ids = ids.filter(id => !nodeLocked(id)); if (!ids.length) return; }
   commit();
   const gone = new Set(ids), touched = new Set();
   for (const e of A.flow.edges) if (gone.has(e.from) || gone.has(e.to)) { edgeEls.get(e.id)?.g.remove(); edgeEls.delete(e.id); if (!gone.has(e.from)) touched.add(e.from); }
@@ -425,8 +468,18 @@ function removeNodes(ids) {
   changed(true);
 }
 function deleteSelection() { if (A.selEdge) removeEdge(A.selEdge); else removeNodes(A.sel); }
-function toggleDisabled(ids) {
+function toggleNodeLock(ids) {
+  if (flowLocked()) return denied();
   ids = [...ids].filter(node); if (!ids.length) return;
+  commit();
+  const on = ids.some(id => !node(id).locked);
+  for (const id of ids) { node(id).locked = on; refreshNode(id); }
+  changed(true);
+}
+function toggleDisabled(ids) {
+  if (flowLocked()) return denied();
+  ids = [...ids].filter(node); if (!ids.length) return;
+  if (ids.some(nodeLocked)) { denied('node'); ids = ids.filter(id => !nodeLocked(id)); if (!ids.length) return; }
   commit();
   const off = ids.some(id => !node(id).disabled);
   for (const id of ids) { node(id).disabled = off; refreshNode(id); }
@@ -434,6 +487,7 @@ function toggleDisabled(ids) {
 }
 function copySel() { const ids = new Set(A.sel); if (!ids.size) return; A.clip = { nodes: clone(A.flow.nodes.filter(n => ids.has(n.id))), edges: clone(A.flow.edges.filter(e => ids.has(e.from) && ids.has(e.to))) }; }
 function paste(offset = 36) {
+  if (flowLocked()) return denied();
   if (!A.clip?.nodes.length || !A.flow) return;
   commit();
   const map = new Map(), fresh = [];
@@ -444,7 +498,9 @@ function paste(offset = 36) {
 }
 /** Arruma em colunas, da esquerda para a direita, pela ordem das ligações. */
 function arrange(record = true) {
-  const nodes = A.flow?.nodes || []; if (!nodes.length) return;
+  if (flowLocked()) return denied();
+  // nó trancado fica onde está: os outros se arrumam em volta
+  const nodes = (A.flow?.nodes || []).filter(n => !n.locked); if (!nodes.length) return;
   if (record) commit();
   const depth = new Map(nodes.map(n => [n.id, 0]));
   for (let pass = 0; pass < nodes.length; pass++) {
@@ -469,6 +525,7 @@ function onDown(e) {
   if (!A.flow) return;
   const cap = () => { try { R.cv.setPointerCapture(e.pointerId); } catch { /* ponteiro sintético */ } };
   if (port && nodeEl) {
+    if (flowLocked()) return denied();
     e.preventDefault(); cap();
     const dir = port.dataset.dir, id = nodeEl.dataset.id;
     A.drag = { kind: 'wire', pid: e.pointerId, node: id, port: port.dataset.port, dir, anchor: portPos(id, dir, port.dataset.port) };
@@ -478,7 +535,8 @@ function onDown(e) {
     const id = nodeEl.dataset.id;
     if (e.shiftKey || e.ctrlKey) { if (A.sel.has(id)) { A.sel.delete(id); paintSel(); } else select([id], true); }
     else if (!A.sel.has(id)) select([id]);
-    const list = [...A.sel].map(node).filter(Boolean);
+    const list = [...A.sel].map(node).filter(n => n && !nodeLocked(n.id));
+    if (!list.length) return;
     A.drag = { kind: 'move', pid: e.pointerId, sx: e.clientX, sy: e.clientY, list, start: list.map(n => [...n.position]), moved: false };
     cap();
   } else if (edge) {
@@ -556,6 +614,7 @@ function onContext(e) {
     return bs.showMenu(e, [
       { label: many ? `Duplicar ${A.sel.size} nós` : 'Duplicar', icon: IC.copy, k: 'Ctrl+D', action: () => { copySel(); paste(); } },
       { label: off ? 'Ligar' : 'Desligar', action: () => toggleDisabled(A.sel) },
+      { label: [...A.sel].every(i => node(i)?.locked) ? (many ? 'Destrancar os nós' : 'Destrancar o nó') : (many ? 'Trancar os nós' : 'Trancar o nó'), icon: IC.lock, action: () => toggleNodeLock(A.sel) },
       '-', { label: many ? `Excluir ${A.sel.size} nós` : 'Excluir', icon: IC.trash, k: 'Del', action: () => removeNodes(A.sel) }]);
   }
   const at = toWorld(e.clientX, e.clientY), cx = e.clientX, cy = e.clientY;
@@ -570,6 +629,7 @@ function closePicker() { if (picker) { picker.remove(); picker = null; } }
 /** `need`: só os nós que têm bolinha desse lado ('inputs' ou 'outputs'), para o fio solto no vazio. */
 function openPicker(cx, cy, onPick, need) {
   closePicker();
+  if (flowLocked()) return denied();
   const list = A.specs.filter(s => !need || (s[need] || []).length);
   const input = el('input', { type: 'search', placeholder: 'Buscar nó', 'aria-label': 'Buscar nó', spellcheck: false });
   const body = el('div.am-pick-list');
@@ -659,6 +719,17 @@ function field(n, f) {
   } else {
     input = el('input', { type: 'text', value: cur ?? '', placeholder: f.placeholder || '', spellcheck: false }); input.oninput = () => set(input.value);
   }
+  // campo de caminho: o botão abre o seletor do Windows (arquivo, pasta, onde gravar ou um programa)
+  let control = input;
+  if (f.pick) {
+    const go = guard(async (kind) => {
+      const r = await bs.api('automator/pick', { kind, start: /\{\{/.test(input.value) ? '' : input.value, title: f.label }, { method: 'POST' });
+      if (r.path) { input.value = r.path; set(r.path); }
+    });
+    const b = el('button.icon-btn.am-browse', { type: 'button', title: 'Procurar no PC', html: CATS['Arquivos'].i });
+    b.onclick = (e) => f.pick === 'any' ? bs.showMenu(e, [{ label: 'Escolher um arquivo…', action: () => go('file') }, { label: 'Escolher uma pasta…', action: () => go('folder') }]) : go(f.pick);
+    control = el('div.am-browse-line', input, b);
+  }
   // expressões: o que chegou neste nó e a saída dos nós anteriores, sem decorar identificadores
   if (['area', 'text', 'json', 'lines'].includes(f.kind) && s.inputs.length) {
     extra = el('button.am-link', { type: 'button', title: 'Usar o que veio de outro nó' }, '+ dado');
@@ -667,10 +738,11 @@ function field(n, f) {
       ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Saída de ${titleOf(u)}${spec(u.type).outputs.length > 1 ? ' (' + (PORT_LABEL[p] || p) + ')' : ''}`, action: () => insertAt(input, `{{nodes.${u.id}.${p}}}`) }))),
     ]);
   }
+  if (f.clis) extra = el('button.am-link', { type: 'button', title: 'Modelo, esforço e programas de cada agente', onclick: () => bs.aiClis.open(typeof n.params[f.name] === 'string' ? n.params[f.name] : undefined) }, 'configurar');
   const id = 'amf-' + uid('');
   const group = f.kind === 'checks' || f.kind === 'rows';
   if (!group) input.id = id;
-  return el('div.am-field', el('div.am-flabel', el('label', group ? {} : { htmlFor: id }, f.label), extra), input, f.help && el('small.am-hint', f.help), err);
+  return el('div.am-field', el('div.am-flabel', el('label', group ? {} : { htmlFor: id }, f.label), extra), control, f.help && el('small.am-hint', f.help), err);
 }
 function runBlock(id) {
   const r = currentRun()?.nodes?.find(x => x.id === id); if (!r || r.status === 'skipped') return null;
@@ -696,6 +768,20 @@ function runsBlock() {
   return box;
 }
 function renderInspector() {
+  renderInspectorInner();
+  if (!R.insp || !A.flow) return;
+  const one = A.sel.size === 1 ? node([...A.sel][0]) : null, whole = flowLocked();
+  if (one && !whole) {
+    // cadeado do nó, ao lado do fechar
+    const x = R.insp.querySelector('.am-ihd .icon-btn');
+    if (x) x.before(el('button.icon-btn' + (one.locked ? '.on' : ''), { type: 'button', title: one.locked ? 'Destrancar o nó' : 'Trancar o nó (não move, não edita, não exclui)', html: one.locked ? IC.lock : IC.unlock, onclick: () => toggleNodeLock([one.id]) }));
+  }
+  if (!whole && !one?.locked) return;
+  R.insp.querySelectorAll('input, select, textarea, button').forEach(x => { if (!x.closest('.am-ihd')) x.disabled = true; });
+  const note = el('p.am-locknote', el('span', { html: IC.lock }), el('span', whole ? 'Fluxo trancado: só visualização.' : 'Nó trancado.'), el('button.am-link', { type: 'button', onclick: () => whole ? toggleLock() : toggleNodeLock([one.id]) }, 'Destrancar'));
+  const hd = R.insp.querySelector('.am-ihd'); if (hd) hd.after(note); else R.insp.prepend(note);
+}
+function renderInspectorInner() {
   if (!R.insp) return;
   const keep = R.insp.scrollTop, f = A.flow;
   R.insp.classList.toggle('has-node', A.sel.size > 0);
@@ -719,6 +805,7 @@ function renderInspector() {
         el('label.am-field', el('span.am-flabel', el('span', 'Nome')), title),
         (s?.fields || []).filter(visible).map(f2 => field(n, f2)),
         n.type === 'ai.openrouter' && el('button.chip.am-wide', { type: 'button', onclick: () => plugin.vault.request('openrouter') }, el('span', { html: IC.key }), 'Guardar o token no Cofre'),
+        n.type === 'trigger.webhook' && el('div.am-hook', el('code', hookUrl(n.params.name)), el('button.icon-btn', { type: 'button', title: 'Copiar o endereço', html: IC.copy, onclick: () => { bs.copyText(hookUrl(n.params.name)); bs.toast('Endereço copiado', 'ok'); } })),
         AUTO.includes(n.type) && el('p.am-hint', f.active ? `Ligado${n.type === 'trigger.schedule' && f.next_run ? ': próxima execução ' + fmtWhen(f.next_run) : ''}.` : 'Este gatilho só dispara com o interruptor "Ligado" aceso, na barra de cima.'),
         runBlock(n.id),
         el('div.am-acts', el('button.chip', { type: 'button', onclick: () => toggleDisabled([n.id]) }, n.disabled ? 'Ligar nó' : 'Desligar nó'), el('button.chip.danger', { type: 'button', onclick: () => removeNodes([n.id]) }, 'Excluir nó'))));
@@ -798,7 +885,11 @@ function paintBar() {
   if (R.name.value !== (f?.name || '') && document.activeElement !== R.name) R.name.value = f?.name || '';
   R.dirty.hidden = !dirty; bs.pages.dirty('automator', dirty);
   R.save.disabled = !f || !dirty;
-  R.undo.disabled = !A.undo.length; R.redo.disabled = !A.redo.length;
+  const locked = flowLocked();
+  R.undo.disabled = locked || !A.undo.length; R.redo.disabled = locked || !A.redo.length;
+  root.classList.toggle('ro', locked); R.name.disabled = locked;
+  R.lockbtn.innerHTML = locked ? IC.lock : IC.unlock; R.lockbtn.classList.toggle('on', locked);
+  R.lockbtn.title = locked ? 'Trancado: só visualização. Clique para destrancar' : 'Trancar o fluxo (só visualização)';
   R.sched.hidden = !hasSchedule();
   R.active.checked = !!f?.active;
   R.next.textContent = f?.active && f.next_run && !dirty ? fmtWhen(f.next_run) : '';
@@ -806,6 +897,41 @@ function paintBar() {
   R.run.innerHTML = running ? `${IC.stop}<span>Parar</span>` : `${IC.play}<span>Executar</span>`;
   R.run.title = running ? 'Parar a execução' : 'Salvar e executar agora';
   const cur = R.list?.querySelector('.am-flow.current .am-fdirty'); if (cur) cur.hidden = !dirty;
+}
+// trancar e destrancar grava na hora (não é uma edição do desenho). Trancar o fluxo aberto salva o que estiver pendente.
+const toggleLock = guard(async (f = A.flow) => {
+  if (!f) return;
+  const to = !f.locked;
+  if (f === A.flow) {
+    A.flow.locked = to;
+    if (!(await save())) { A.flow.locked = !to; paintBar(); return; }
+    for (const n of A.flow.nodes) refreshNode(n.id);
+    renderInspector();
+  } else { await post('automator/flows', { flow: { ...f, locked: to } }); await refreshFlows(); }
+  bs.toast(to ? `"${f.name}" trancado: só visualização.` : `"${f.name}" destrancado.`, 'ok');
+});
+// botão direito num fluxo da lista: o que dá para fazer sem abrir (rodar, ligar) e o que abre antes (renomear)
+function flowMenu(e, f) {
+  const cur = f.id === A.flow?.id, running = cur && isRunning();
+  bs.showMenu(e, [
+    ...(cur ? [] : [{ label: 'Abrir', action: () => pick(f) }]),
+    { label: f.locked ? 'Destrancar' : 'Trancar (só visualização)', icon: f.locked ? IC.unlock : IC.lock, action: () => toggleLock(cur ? A.flow : f) },
+    { label: running ? 'Parar' : 'Executar', icon: running ? IC.stop : IC.play, action: guard(async () => {
+      if (cur) return run();
+      await post('automator/run', { flow_id: f.id }); bs.toast(`"${f.name}" começou a rodar.`, 'ok');
+    }) },
+    ...(hasSchedule(f) ? [{ label: f.active ? 'Desligar' : 'Ligar', action: guard(async () => {
+      if (cur) { R.active.checked = !A.flow.active; return R.active.onchange(); }
+      const saved = await post('automator/flows', { flow: { ...f, active: !f.active } });
+      await refreshFlows(); bs.toast(saved.active ? `"${f.name}" ligado${saved.next_run ? ': próxima execução ' + fmtWhen(saved.next_run) : ''}.` : `"${f.name}" desligado.`, 'ok');
+    }) }] : []),
+    '-',
+    { label: 'Renomear', action: async () => { if (f.locked) return denied(); await pick(f); if (A.flow?.id === f.id) { R.name.focus(); R.name.select(); } } },
+    { label: 'Duplicar', icon: IC.copy, action: () => create(() => ({ ...clone(f), id: '', active: false, next_run: null, name: f.name + ' (cópia)' })) },
+    { label: 'Exportar', action: () => exportFlow(cur ? A.flow : f) },
+    '-',
+    { label: 'Excluir…', icon: IC.trash, action: guard(() => f.locked ? denied() : removeFlow(cur ? A.flow : f)) },
+  ], f.name);
 }
 function paintList() {
   if (!R.list) return;
@@ -815,8 +941,8 @@ function paintList() {
   R.list.replaceChildren(...[...draft, ...items].map(f => {
     const cur = f === A.flow || (f.id && f.id === A.flow?.id);
     const meta = !f.id ? 'rascunho, ainda não salvo' : f.active && f.next_run ? 'agenda · ' + fmtWhen(f.next_run) : hasSchedule(f) ? (f.active ? 'ligado' : 'desligado') : 'manual';
-    return el('button.am-flow' + (cur ? '.current' : ''), { type: 'button', onclick: () => f.id && pick(A.flows.find(x => x.id === f.id)) },
-      el('span.am-fname', el('span', f.name || 'Fluxo sem nome'), el('i.am-fdirty', { hidden: !(cur && isDirty()), title: 'Alterações não salvas' })), el('span.am-fmeta' + (f.active ? '.live' : ''), meta));
+    return el('button.am-flow' + (cur ? '.current' : ''), { type: 'button', onclick: () => f.id && pick(A.flows.find(x => x.id === f.id)), oncontextmenu: (e) => { e.preventDefault(); if (f.id) flowMenu(e, A.flows.find(x => x.id === f.id) || f); } },
+      el('span.am-fname', el('span', f.name || 'Fluxo sem nome'), f.locked && el('span.am-flock', { html: IC.lock, title: 'Trancado: só visualização' }), el('i.am-fdirty', { hidden: !(cur && isDirty()), title: 'Alterações não salvas' })), el('span.am-fmeta' + (f.active ? '.live' : ''), meta));
   }));
   if (!R.list.childElementCount) R.list.append(el('p.am-hint', q ? 'Nenhum fluxo com esse nome.' : 'Nenhum fluxo ainda.'));
 }
@@ -825,7 +951,7 @@ function paintList() {
 function generate() {
   const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>Criar fluxo com IA</h3><p>Descreva a automação. A proposta abre no quadro para você conferir antes de salvar.</p></div></div>
     <label class="fld">O que o fluxo deve fazer<textarea id="amGenReq" rows="5" placeholder="Todo dia útil às 9h, rodar git pull na pasta do projeto e me avisar se der erro."></textarea></label>
-    <label class="fld">Quem monta<select id="amGenWho"><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="openrouter">OpenRouter</option></select></label>
+    <label class="fld">Quem monta<select id="amGenWho">${(spec('agent.cli')?.fields.find(f => f.name === 'provider')?.options || []).map(o => `<option value="${esc(o.value)}"${o.value === 'claude' ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}<option value="openrouter">OpenRouter</option></select></label>
     <label class="fld" id="amGenModelBox" hidden>Modelo do OpenRouter<input id="amGenModel" placeholder="provedor/modelo" spellcheck="false"></label>
     <p class="am-gen-st" id="amGenSt" aria-live="polite"></p>
     <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amGenGo">Gerar proposta</button></div>`;
@@ -864,8 +990,8 @@ function mount(pane) {
         <input class="am-name" type="text" placeholder="Nome do fluxo" aria-label="Nome do fluxo" spellcheck="false" maxlength="120">
         <i class="am-dirty" hidden title="Alterações não salvas"></i>
         <span class="am-sp"></span>
-        <label class="am-sched" hidden title="Ligado, o fluxo roda sozinho (na hora marcada, ao abrir o BlueScreen ou quando o arquivo mudar) enquanto o BlueScreen estiver aberto, inclusive na bandeja"><input type="checkbox" class="am-active"><span class="am-switch"></span><span>Ligado</span><small class="am-next"></small></label>
-        <span class="am-group"><button class="icon-btn" data-a="undo" type="button" title="Desfazer (Ctrl+Z)">${IC.undo}</button><button class="icon-btn" data-a="redo" type="button" title="Refazer (Ctrl+Shift+Z)">${IC.redo}</button><button class="icon-btn" data-a="tidy" type="button" title="Organizar em colunas">${IC.tidy}</button><button class="icon-btn" data-a="more" type="button" title="Importar, exportar, excluir">${IC.more}</button></span>
+        <label class="am-sched" hidden title="Ligado, o fluxo roda sozinho (na hora marcada, ao abrir o BlueScreen, quando o arquivo mudar ou quando chamam o endpoint) enquanto o BlueScreen estiver aberto, inclusive na bandeja"><input type="checkbox" class="am-active"><span class="am-switch"></span><span>Ligado</span><small class="am-next"></small></label>
+        <button class="icon-btn am-lockbtn" data-a="lock" type="button"></button><span class="am-group"><button class="icon-btn" data-a="undo" type="button" title="Desfazer (Ctrl+Z)">${IC.undo}</button><button class="icon-btn" data-a="redo" type="button" title="Refazer (Ctrl+Shift+Z)">${IC.redo}</button><button class="icon-btn" data-a="tidy" type="button" title="Organizar em colunas">${IC.tidy}</button><button class="icon-btn" data-a="more" type="button" title="Importar, exportar, excluir">${IC.more}</button></span>
         <button class="chip am-save" data-a="save" type="button" title="Salvar (Ctrl+S)">Salvar</button>
         <button class="chip primary am-runbtn" data-a="run" type="button"></button>
       </div>
@@ -884,20 +1010,21 @@ function mount(pane) {
     </div><input type="file" class="am-file" accept=".json,application/json" hidden>`;
   const $ = (s) => pane.querySelector(s);
   R = { side: $('.am-side'), list: $('.am-list'), search: $('.am-search'), bar: $('.am-bar'), name: $('.am-name'), dirty: $('.am-dirty'), sched: $('.am-sched'), active: $('.am-active'), next: $('.am-next'),
-    undo: $('[data-a=undo]'), redo: $('[data-a=redo]'), save: $('.am-save'), run: $('.am-runbtn'), stage: $('.am-stage'), cv: $('.am-cv'), world: $('.am-world'), svg: $('.am-wires'), nodes: $('.am-nodes'),
+    lockbtn: $('[data-a=lock]'), undo: $('[data-a=undo]'), redo: $('[data-a=redo]'), save: $('.am-save'), run: $('.am-runbtn'), stage: $('.am-stage'), cv: $('.am-cv'), world: $('.am-world'), svg: $('.am-wires'), nodes: $('.am-nodes'),
     marquee: $('.am-marquee'), empty: $('.am-empty'), zoom: $('.am-zval'), insp: $('.am-insp'), file: $('.am-file') };
   R.ghost = document.createElementNS(SVGNS, 'path'); R.ghost.classList.add('am-wire', 'ghost'); R.svg.append(R.ghost);
 
   const acts = {
     new: () => create(() => blank()),
     tpl: (e) => bs.showMenu(e, TEMPLATES.filter(t => !t.need || spec(t.need)).map(t => ({ label: t.label, k: t.hint, action: () => create(t.make) }))),
-    ai: generate, save: guard(save), run,
+    ai: generate, save: guard(save), run, lock: () => toggleLock(),
     undo: () => travel(A.undo, A.redo), redo: () => travel(A.redo, A.undo),
     tidy: () => { arrange(); fit(); }, fit, zin: () => zoomBy(1.25), zout: () => zoomBy(0.8), z100: () => zoomBy(1 / A.cam.z),
     add: (e) => { const r = e.currentTarget.getBoundingClientRect(); openPicker(r.left, r.bottom + 6, (s) => addNode(s.type)); },
     more: (e) => bs.showMenu(e, [
       { label: 'Importar fluxo…', action: () => R.file.click() },
-      ...(A.flow ? [{ label: 'Exportar fluxo', action: exportFlow }, { label: 'Duplicar fluxo', icon: IC.copy, action: () => { const f = clone(A.flow); create(() => ({ ...f, id: '', active: false, next_run: null, name: f.name + ' (cópia)' })); } }, '-', { label: 'Excluir fluxo…', icon: IC.trash, action: guard(removeFlow) }] : [])]),
+      { label: 'Agentes de IA…', icon: IC.spark, action: () => bs.aiClis.open() },
+      ...(A.flow ? [{ label: 'Exportar fluxo', action: exportFlow }, { label: 'Duplicar fluxo', icon: IC.copy, action: () => { const f = clone(A.flow); create(() => ({ ...f, id: '', active: false, next_run: null, name: f.name + ' (cópia)' })); } }, '-', { label: 'Excluir fluxo…', icon: IC.trash, action: guard(() => flowLocked() ? denied() : removeFlow()) }] : [])]),
   };
   // a lista de fluxos mora no painel da esquerda da IDE (no lugar do painel de arquivos), fora da aba
   R.side.remove();
@@ -909,7 +1036,7 @@ function mount(pane) {
   };
   pane.addEventListener('click', onClick); R.side.addEventListener('click', onClick);
   pane.addEventListener('pointerdown', (e) => { if (picker && !picker.contains(e.target) && !e.target.closest('[data-a=add], .am-plus')) closePicker(); });
-  R.name.oninput = () => { if (!A.flow) return; A.flow.name = R.name.value; paintBar(); const cur = R.list.querySelector('.am-flow.current .am-fname span'); if (cur) cur.textContent = A.flow.name || 'Fluxo sem nome'; };
+  R.name.oninput = () => { if (!A.flow || flowLocked()) return; A.flow.name = R.name.value; paintBar(); const cur = R.list.querySelector('.am-flow.current .am-fname span'); if (cur) cur.textContent = A.flow.name || 'Fluxo sem nome'; };
   R.name.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); R.cv.focus(); } };
   R.search.oninput = paintList;
   R.active.onchange = guard(async () => { if (!A.flow) return; A.flow.active = R.active.checked; paintBar(); if (await save()) bs.toast(A.flow.active ? `Fluxo ligado${A.flow.next_run ? ': próxima execução ' + fmtWhen(A.flow.next_run) : ''}.` : 'Fluxo desligado.', 'ok'); });
@@ -961,6 +1088,8 @@ bs.pages.register({
   discard: () => { if (A.flow) open(A.flows.find(f => f.id === A.flow.id) || A.flows[0] || null); },
   unsaved: () => A.flow ? `Fluxo "${A.flow.name || 'sem nome'}"` : '',
 });
+// a lista de agentes mudou (janela Agentes de IA): os nós que escolhem um agente passam a oferecer os novos
+bs.hooks.on('aiclis:change', guard(async () => { if (!A.loaded) return; A.specs = await bs.api('automator/catalog'); A.byType = new Map(A.specs.map(s => [s.type, s])); for (const [id, e] of nodeEls) { const n = node(id), sm = e.querySelector('.am-sum'); if (n && sm) sm.textContent = summary(n); } renderInspector(); }));
 bs.actions.add([{ label: 'Automator: fluxos de automação', icon: IC.app, run: () => bs.pages.open('automator') }]);
 // execução em andamento atualiza a cada segundo; parado, de vez em quando (a agenda pode ter disparado)
 let tick = 0;

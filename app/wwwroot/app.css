@@ -1072,6 +1072,34 @@ html:not(.desktop) .wel-top { padding-right: 8px; }
 /* ===== Visualizador de imagens, PDF, áudio, vídeo, fontes e binários (viewer.js) ===== */
 #vw { display: flex; flex-direction: column; background: var(--bg); }
 .vw-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* IDE sem projeto ("Só os plugins") */
+.bare { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; overflow: auto; }
+.bare[hidden] { display: none; }
+.bare-box { width: min(560px, 100%); text-align: center; }
+.bare-box h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; color: var(--fg); }
+.bare-box p { margin: 0 auto 18px; max-width: 420px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.bare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.bare-it { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 14px; text-align: left; font-size: 13px; font-weight: 500; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+.bare-it:hover { border-color: var(--accent); background: var(--hover); }
+.bare-it > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bare-ic { display: inline-flex; flex: none; color: var(--accent-2); }
+.bare-ic svg { width: 18px; height: 18px; }
+.bare-foot { margin-top: 16px; display: flex; justify-content: center; }
+/* Agentes de IA (aiclis.js) */
+#aiClis .dlg-box { width: min(560px, calc(100vw - 32px)); }
+#aiClis [hidden] { display: none !important; }
+.aic-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.aic-tabs .chip { border: 1px solid var(--line-2); }
+.aic-tabs .chip.on { border-color: var(--accent); background: var(--sel); color: var(--fg); }
+.aic-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+#aiClis select, #aiClis textarea { width: 100%; font: inherit; font-size: 12.5px; color: var(--fg); background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 6px 8px; }
+#aiClis select { height: 32px; }
+#aiClis textarea { resize: vertical; min-height: 58px; line-height: 1.45; font-family: var(--mono); font-size: 12px; }
+#aiClis select:focus, #aiClis textarea:focus { outline: none; border-color: var(--accent); }
+.aic-help { margin: 6px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.aic-out { margin: 10px 0 0; padding: 8px 10px; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px/1.45 var(--mono); color: var(--fg-2); background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--add); border-radius: var(--r-sm); }
+.aic-out.bad { border-left-color: var(--del); }
+@media (max-width: 480px) { .aic-two { grid-template-columns: minmax(0, 1fr); } }
 /* tela de plugin numa aba (bs.pages) */
 .vw-page > .pg-body { flex: 1; min-height: 0; min-width: 0; position: relative; }
 #editor.pg-on { grid-template-rows: 38px minmax(0, 1fr); } #editor.pg-on #crumbs { display: none; }

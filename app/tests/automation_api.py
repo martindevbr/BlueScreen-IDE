@@ -80,8 +80,8 @@ def run():
                 raise AssertionError("servidor não iniciou")
 
             specs = api("automator/catalog")
-            # 13 nós de sempre, 17 de arquivos, texto, Windows e gatilhos automáticos, mais os que os plugins ligados acrescentam
-            assert len([s for s in specs if not s["type"].startswith("plugin.")]) == 30
+            # 13 nós de sempre, 17 de arquivos, texto, Windows e gatilhos automáticos, 16 de texto e mídia, 22 de endpoint, segurança, auditoria, integrações, dados e saúde do PC, mais os dos plugins ligados
+            assert len([s for s in specs if not s["type"].startswith("plugin.")]) == 68
             assert not any("ollama" in s["type"] or "llm.local" in s["type"] for s in specs)
             api("automator/run", expected=405)
             api("automator/flows", {"name": "Inválido", "nodes": []}, 400)

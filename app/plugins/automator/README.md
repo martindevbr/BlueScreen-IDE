@@ -2,7 +2,7 @@
 
 Automações montadas com nós ligados por fios, no modelo dos Fluxos do HexLab. Abra pelo ícone do Automator na barra da esquerda ou pelo Buscar em tudo ("Automator"): ele ocupa uma aba do editor, ao lado dos arquivos.
 
-Um fluxo começa por um gatilho (manual ou Agenda) e segue por programas, requisições HTTP, avisos do Windows, condições e IA (Codex, Claude Code, OpenRouter, MCP). Cada execução fica no histórico, com o que cada nó entregou.
+Um fluxo começa por um gatilho (manual, Agenda, ao abrir a IDE, quando um arquivo muda ou um endpoint HTTP) e segue por nós de texto, dados, arquivos, Windows, rede, segurança, auditoria de sites, integrações (Dynatrace, Slack, Teams, Discord), IA (agentes de linha de comando, OpenRouter, MCP), imagem, áudio e vídeo. Cada execução fica no histórico, com o que cada nó entregou.
 
 Para o OpenRouter, guarde o token no Cofre e libere o segredo `openrouter` para o Automator.
 

@@ -87,6 +87,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
     </div>
     <div id="mon"><div id="welcome">
       <div class="dash" id="dash" hidden></div>
+      <div class="bare" id="bare" hidden></div>
     </div></div>
     <section id="dock" hidden>
       <div id="dockResize" title="Arraste para ajustar a altura (duplo clique volta ao padrão)"></div>
@@ -129,6 +130,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
       <label class="wel-search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="welQ" placeholder="Digite para filtrar projetos" spellcheck="false" autocomplete="off" aria-controls="welList"></label>
       <div class="wel-seg" id="welSeg" role="tablist"></div>
       <span class="wel-grow"></span>
+      <button class="chip" id="welBare" title="Entra na IDE sem abrir uma pasta, para usar o Automator, a Agenda e os outros plugins"><svg class="i" viewBox="0 0 24 24"><path d="M9 3h6v4h3a2 2 0 0 1 2 2v3h-2.5a2 2 0 1 0 0 4H20v3a2 2 0 0 1-2 2h-4v-2.5a2 2 0 1 0-4 0V21H6a2 2 0 0 1-2-2v-4h2.5a2 2 0 1 0 0-4H4V9a2 2 0 0 1 2-2h3z"/></svg>Só os plugins</button>
       <button class="chip" id="welNew"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Novo projeto</button>
       <button class="chip" id="welOpen"><svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Abrir pasta</button>
     </div>
@@ -209,6 +211,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <script src="update.js"></script>
 <script src="plugstore.js"></script>
 <script src="vault.js"></script>
+<script src="aiclis.js"></script>
 <script src="theme.js"></script>
 </body>
 </html>

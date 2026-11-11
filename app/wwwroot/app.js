@@ -232,7 +232,7 @@ async function start() {
   else if (lastProj && S.outside.has(lastProj)) await openProject(lastProj);
   else if (S.projects.length === 1) await selectProject(S.projects[0].path);
   renderTool(); renderDashboard();
-  welcomeMode(!S.project);
+  welcomeMode(!S.project && !store.get('bare', false)); // "Só os plugins": a IDE abre sem projeto
 }
 // ===== Janela de documento (BlueScreen.exe --doc, o "Abrir com" do Windows) =====
 // Só o arquivo, na tela inteira: sem projetos, árvore, painéis nem abas. A pasta do arquivo faz o papel de projeto
@@ -276,7 +276,7 @@ async function loadProjects(waitSummaries = true) {
 // isso só acontece quando o usuário pede (Alterações, Histórico ou menu de contexto).
 async function selectProject(p) {
   if (S.project && S.project.path === p) { if (S.showProjects) { S.showProjects = false; renderTool(); } return; }
-  welcomeMode(false);
+  welcomeMode(false); store.set('bare', false);
   S.project = S.projects.find(x => x.path === p) || S.outside.get(p) || { path: p, name: p.split(/[\\/]/).pop(), vcs: (await api('summary', { project: p }).catch(() => ({}))).vcs || null };
   store.set('project', p);
   S.rev = null; S.logN = 0; S.chgFilter = ''; S.chgPick = false; S.tree = {}; S.walk = {}; S.treeSel = null; S.showProjects = false;
@@ -382,6 +382,7 @@ function closeProject() {
   const b = $('#badge-changes'); if (b) b.hidden = true;
   SE.index = null; SE.indexFor = null;
   BS.hooks.run('project:select', null);
+  store.set('bare', false);
   btnState(); renderTool(); renderDashboard(); welcomeMode(true);
 }
 // diálogo modal: fundo escurecido e desfocado; Esc, Cancelar, o X ou um clique fora fecham
@@ -636,6 +637,24 @@ function tabMenu(e, t) {
 // mais comuns; a lista embaixo filtra enquanto você digita (sem clicar na busca), fixa projetos e tira dos recentes.
 const WEL = { sel: 0, items: [], view: store.get('welView', 'recent') };
 if (window.BS_WELCOME) document.body.classList.add('welcome');
+// "Só os plugins" (tela inicial): a IDE sem pasta de trabalho. O painel da esquerda lista os projetos e a área do editor
+// mostra o que dá para usar sem projeto: as telas e janelas dos plugins.
+function enterBare() { store.set('bare', true); S.showProjects = false; welcomeMode(false); $('#projName').textContent = 'Nenhum projeto'; renderTool(); renderDashboard(); }
+function renderBare() {
+  const el = $('#bare'); if (!el) return;
+  const on = !S.project && !S.active && !document.body.classList.contains('welcome');
+  el.hidden = !on; if (!on) return;
+  const items = [
+    ...BS.tools.list().filter(t => t.page).map(t => ({ icon: t.icon, title: t.title, go: () => setTool(t.id) })),
+    ...(BS.bubble && BS.bubble.list ? BS.bubble.list().map(w => ({ icon: w.icon, title: w.title, go: () => BS.bubble.open(w.id) })) : []),
+    { icon: I.plug, title: 'Plugins', go: () => openTool('plugins') },
+  ];
+  el.innerHTML = `<div class="bare-box"><h2>Sem projeto aberto</h2><p>Os plugins funcionam sem uma pasta de trabalho. Arquivos, Git e Build aparecem quando você abrir um projeto.</p>
+    <div class="bare-grid">${items.map((it, i) => `<button class="bare-it" data-i="${i}"><span class="bare-ic">${it.icon || ''}</span><span>${esc(it.title)}</span></button>`).join('')}</div>
+    <div class="bare-foot"><button class="chip" id="bareOpen">${I.open}Abrir um projeto</button></div></div>`;
+  el.querySelectorAll('.bare-it').forEach(b => b.onclick = () => items[+b.dataset.i].go());
+  $('#bareOpen').onclick = () => { store.set('bare', false); welcomeMode(true); };
+}
 function welcomeMode(on) {
   on = !!on;
   const was = document.body.classList.contains('welcome');
@@ -741,6 +760,7 @@ $('#wel').addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#welQ').value) { e.stopPropagation(); $('#welQ').value = ''; renderHome(); $('#welList').focus(); return; }
   if (!inQ && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && !e.target.closest('input, textarea')) { $('#welQ').focus(); }
 });
+$('#welBare').onclick = () => enterBare();
 $('#welNew').onclick = () => newProjectDialog();
 $('#welOpen').onclick = () => openProjectDialog();
 $('#welTheme').onclick = () => $('#btnTheme').click();
@@ -2534,6 +2554,7 @@ function mdBind(el, scope, dir, project) {
 }
 function renderDashboard() {
   const dash = $('#dash'); if (!dash) return;
+  renderBare();
   if (!S.project || S.active) { dash.hidden = true; return; }
   dash.hidden = false;
   loadOverview();
