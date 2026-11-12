@@ -126,11 +126,16 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
         <button data-w="close" class="close" title="Fechar"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg></button></div>
     </header>
     <section class="wel-resume" id="welResume"></section>
+    <button class="wel-studio" id="welBare" title="Entra na IDE sem abrir uma pasta">
+      <span class="ws-ic"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span>
+      <span class="ws-tx"><b>Estúdio</b><span>Automações, agenda e agentes de IA, sem abrir um projeto</span></span>
+      <span class="ws-apps" id="welApps"></span>
+      <span class="ws-go">Entrar<svg class="i" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+    </button>
     <div class="wel-tools">
       <label class="wel-search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="welQ" placeholder="Digite para filtrar projetos" spellcheck="false" autocomplete="off" aria-controls="welList"></label>
       <div class="wel-seg" id="welSeg" role="tablist"></div>
       <span class="wel-grow"></span>
-      <button class="chip" id="welBare" title="Entra na IDE sem abrir uma pasta, para usar o Automator, a Agenda e os outros plugins"><svg class="i" viewBox="0 0 24 24"><path d="M9 3h6v4h3a2 2 0 0 1 2 2v3h-2.5a2 2 0 1 0 0 4H20v3a2 2 0 0 1-2 2h-4v-2.5a2 2 0 1 0-4 0V21H6a2 2 0 0 1-2-2v-4h2.5a2 2 0 1 0 0-4H4V9a2 2 0 0 1 2-2h3z"/></svg>Só os plugins</button>
       <button class="chip" id="welNew"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Novo projeto</button>
       <button class="chip" id="welOpen"><svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Abrir pasta</button>
     </div>

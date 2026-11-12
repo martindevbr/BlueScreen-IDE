@@ -87,7 +87,7 @@ fn run_doc(file: PathBuf, devtools: bool) -> ! {
     rt.spawn(async move { let _ = axum::serve(listener, server::router(false)).await; });
     let _rt = Box::leak(Box::new(rt));
     let url = format!("http://127.0.0.1:{port}/?doc={}", urlencoding::encode(&file.to_string_lossy()));
-    desktop::run(url, devtools, Some(file))
+    desktop::run(url, devtools, Some(file), false)
 }
 
 /// Erro interno (panic) em qualquer thread vai para o log com o nome da thread e o lugar; com panic = "unwind" a IDE
@@ -120,6 +120,10 @@ fn main() {
     let env_port = |k: &str, d: u16| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     let port = env_port("BLUESCREEN_PORT", 4747);
     let lan_port = env_port("BLUESCREEN_LAN_PORT", 4748);
+    // --studio: a janela do Estúdio, que usa o BlueScreen já aberto nesta porta. Sem ele, segue e abre a IDE normal.
+    if has("--studio") && std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(500)).is_ok() {
+        desktop::run(format!("http://127.0.0.1:{port}/?studio=1"), has("--devtools"), None, true)
+    }
     let headless = has("--no-open") || std::env::var("BLUESCREEN_NO_OPEN").is_ok_and(|v| !v.is_empty());
     let web = has("--web");
     let root = args.iter().find(|a| !a.starts_with("--")).map(|a| util::absolute(&PathBuf::from(a)))
@@ -169,5 +173,5 @@ fn main() {
     if web { util::open_url(&addr); rt.block_on(std::future::pending::<()>()); }
     // a janela precisa da thread principal; o servidor segue nas threads do tokio
     let _rt = Box::leak(Box::new(rt));
-    desktop::run(addr + "/", has("--devtools"), None)
+    desktop::run(addr + "/", has("--devtools"), None, false)
 }

@@ -3,6 +3,10 @@
     {
       "type": "site", "name": "Automatizar site", "category": "Navegador",
       "desc": "Abre um site e segue os passos: clicar, digitar, ler.",
+      "takes": "any", "gives": "object",
+      "expects": "Qualquer dado, para usar no endereço e nos passos com {{input}}.",
+      "returns": "Objeto com o endereço final, o título da página e o que os passos Ler texto guardaram.",
+      "sample": { "url": "https://exemplo.com/conta", "title": "Minha conta", "values": { "saldo": "R$ 120,00" } },
       "inputs": ["in"], "outputs": ["out"],
       "params": { "url": "", "steps": [], "show": "yes", "after": "close", "wait_s": 15 },
       "fields": [

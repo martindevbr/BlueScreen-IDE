@@ -253,3 +253,27 @@
   .am-insp { inset: auto 0 0 0; width: auto; max-height: 62%; border-left: 0; border-top: 1px solid var(--line-2); }
 }
 @media (prefers-reduced-motion: reduce) { .am-port, .am-switch, .am-switch::after { transition: none; } .am-edge.hot .am-wire, .am-spin, .am-dot { animation: none; } }
+
+/* o que o nó espera e o que entrega */
+.am-io { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: var(--r-sm); background: var(--bg); border: 1px solid var(--line); }
+.am-io-row { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 8px; align-items: baseline; font-size: 11.5px; line-height: 1.45; color: var(--fg-2); overflow-wrap: anywhere; }
+.am-io-k { justify-self: start; white-space: nowrap; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--panel-2); }
+.am-io-k.out { color: var(--add); background: color-mix(in srgb, var(--add) 12%, transparent); }
+.am-io-ex summary { cursor: pointer; font-size: 11px; color: var(--accent-2); user-select: none; }
+.am-io-ex .am-out { margin-top: 6px; max-height: 180px; }
+/* saída em JSON: atalhos para o nó que trata */
+.am-treat { display: flex; flex-direction: column; gap: 6px; }
+.am-treat-b { display: flex; flex-wrap: wrap; gap: 5px; }
+.am-treat-b .chip { height: 24px; padding: 0 8px; font-size: 11.5px; background: var(--bg); border: 1px solid var(--line); }
+.am-treat-b .chip:hover { border-color: #F2C55C; color: var(--fg); }
+
+/* formato do dado (Texto, JSON, Lista, Imagem…): etiqueta ao lado das bolinhas, na lista de nós e no painel */
+.am-type { display: inline-flex; align-items: center; gap: 4px; height: 16px; padding: 0 6px; border-radius: 8px; font: 600 10px/1 var(--sans, inherit); letter-spacing: .01em; white-space: nowrap;
+  color: color-mix(in srgb, var(--tc) 70%, var(--fg)); background: color-mix(in srgb, var(--tc) 16%, transparent); vertical-align: 1px; }
+.am-type::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--tc); flex: none; }
+.am-type.soft { color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); } .am-type.soft::before { display: none; }
+.am-pl { display: inline-flex; align-items: center; gap: 5px; }
+.am-tflow { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; }
+.am-tflow i { font-style: normal; color: var(--muted); font-size: 11px; }
+.am-cv.far .am-type { visibility: hidden; }
+.am-pl.out { justify-self: end; }

@@ -31,6 +31,7 @@ const IC = {
 const CATS = {
   'Gatilhos': { c: '#E3A63A', i: svg('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>') },
   'Dados': { c: 'var(--accent-2)', i: svg('<path d="M5 6h14M5 12h14M5 18h9"/>') },
+  'JSON': { c: '#F2C55C', i: svg('<path d="M8 4c-2 0-3 1-3 3v2c0 1.5-1 2.5-2 3 1 .5 2 1.5 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1.5 1 2.5 2 3-1 .5-2 1.5-2 3v2c0 2-1 3-3 3"/>') },
   'Lógica': { c: 'var(--j-enum)', i: svg('<path d="M6 3v6a6 6 0 0 0 6 6h6M6 9v12M15 12l3 3-3 3"/>') },
   'Windows': { c: 'var(--ico-web)', i: svg('<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9l3 2.5L7 14M12.5 14H16"/>') },
   'Rede': { c: 'var(--add)', i: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/>') },
@@ -45,6 +46,30 @@ const CATS = {
   'Integrações': { c: '#B58DF2', i: svg('<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>') },
   'Navegador': { c: '#4FB6E8', i: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.1M10 6.5h.1"/>') },
 };
+// formato do dado que entra e sai de cada nó: a etiqueta ao lado das bolinhas e na lista de nós
+const TYPES = {
+  text: { l: 'Texto', c: '#9AA7F5', d: 'Um texto simples' },
+  object: { l: 'JSON', c: '#F2C55C', d: 'Dados com campos (um objeto JSON), como { "nome": "Ana" }' },
+  list: { l: 'Lista', c: '#59B8C4', d: 'Vários itens em sequência' },
+  number: { l: 'Número', c: '#F0A35E', d: 'Um número' },
+  image: { l: 'Imagem', c: '#5CC8A1', d: 'Um arquivo de imagem (PNG, JPG…)' },
+  audio: { l: 'Áudio', c: '#E8A84F', d: 'Um arquivo de som (MP3, WAV…)' },
+  video: { l: 'Vídeo', c: '#E36F8E', d: 'Um arquivo de vídeo (MP4…)' },
+  file: { l: 'Arquivo', c: '#D9A441', d: 'O caminho de um arquivo no PC' },
+  any: { l: 'Qualquer', c: '', d: 'Aceita qualquer tipo de dado' },
+  same: { l: 'O mesmo', c: '', d: 'Passa adiante exatamente o que recebeu' },
+};
+const typeOf = (s, side) => TYPES[s?.[side]] ? s[side] : null;
+/** Etiqueta do formato: "Texto", "JSON", "Imagem"… com a cor do tipo. */
+function typeChip(t, side) {
+  const T = TYPES[t]; if (!T) return null;
+  return el('span.am-type' + (T.c ? '' : '.soft'), { style: T.c ? { '--tc': T.c } : {}, title: (side === 'takes' ? 'Recebe: ' : side === 'gives' ? 'Devolve: ' : '') + T.d }, T.l);
+}
+/** "Texto → JSON": o que o nó recebe e o que devolve, numa linha. */
+function typeFlow(s) {
+  const a = typeOf(s, 'takes'), b = typeOf(s, 'gives'); if (!a && !b) return null;
+  return el('span.am-tflow', a ? typeChip(a, 'takes') : el('span.am-type.soft', { title: 'Não recebe nada: é onde o fluxo começa' }, 'Começa'), el('i', '→'), b ? typeChip(b, 'gives') : el('span.am-type.soft', { title: 'Não devolve nada: o fluxo termina aqui' }, 'Fim'));
+}
 // categoria que um plugin inventou: cor e ícone neutros
 const PLUG_CAT = { c: 'var(--muted)', i: svg('<path d="M9 3h6v4h3a2 2 0 0 1 2 2v3h-2.5a2 2 0 1 0 0 4H20v3a2 2 0 0 1-2 2h-4v-2.5a2 2 0 1 0-4 0V21H6a2 2 0 0 1-2-2v-4h2.5a2 2 0 1 0 0-4H4V9a2 2 0 0 1 2-2h3z"/>') };
 // gatilhos que disparam sozinhos: valem com o interruptor "Ligado" do fluxo
@@ -332,6 +357,11 @@ function summary(n) {
     case 'data.datetime': return one(p.format);
     case 'data.set': return Object.keys(p.value || {}).join(', ');
     case 'logic.stop': return one(p.message);
+    case 'json.get': case 'json.set': return one(p.path);
+    case 'json.pick': case 'json.omit': return (p.fields || []).join(', ');
+    case 'json.pluck': case 'json.group': return one(p.field);
+    case 'json.sort': return [one(p.field), p.order === 'desc' ? 'decrescente' : 'crescente', +p.limit ? 'os ' + p.limit + ' primeiros' : ''].filter(Boolean).join(' · ');
+    case 'json.parse': case 'json.text': case 'json.entries': case 'json.count': case 'json.merge': return '';
     // nó de plugin: o primeiro texto preenchido e, se houver, quantos passos
     default: { const rows = Object.values(p).find(v => Array.isArray(v) && v.length && typeof v[0] === 'object'); return [one(Object.values(p).find(v => typeof v === 'string' && v.trim() && !/^(yes|no|close|keep)$/.test(v))), rows ? rows.length + (rows.length === 1 ? ' passo' : ' passos') : ''].filter(Boolean).join(' · '); }
   }
@@ -347,9 +377,11 @@ function fillNode(e, n) {
   for (let i = 0; i < rows; i++) {
     const a = ins[i], b = outs[i], top = PAD + i * ROW + ROW / 2 + 'px';
     // rótulo só quando o lado tem mais de uma bolinha: "entrada" e "saída" sozinhas não dizem nada
-    body.append(...[el('div.am-row', el('span.am-pl', ins.length > 1 && a ? PORT_LABEL[a] || a : ''), el('span.am-pl.out', outs.length > 1 && b ? PORT_LABEL[b] || b : '')),
-      a && el('span.am-port.in', { dataset: { port: a, dir: 'in' }, style: { top }, title: 'Entrada: arraste até uma saída' }),
-      b && el('span.am-port.out', { dataset: { port: b, dir: 'out' }, style: { top }, title: `Saída${outs.length > 1 ? ' "' + (PORT_LABEL[b] || b) + '"' : ''}: arraste até a entrada de outro nó` }),
+    // ao lado de cada bolinha, o formato do dado: o que entra (esquerda) e o que sai (direita)
+    const ta = a && typeOf(s, 'takes'), tb = b && typeOf(s, 'gives'), tint = (t) => TYPES[t]?.c ? { top, '--cat': TYPES[t].c } : { top };
+    body.append(...[el('div.am-row', el('span.am-pl', ins.length > 1 && a ? PORT_LABEL[a] || a : '', ta && typeChip(ta, 'takes')), el('span.am-pl.out', outs.length > 1 && b ? PORT_LABEL[b] || b : '', tb && typeChip(tb, 'gives'))),
+      a && el('span.am-port.in', { dataset: { port: a, dir: 'in' }, style: tint(ta), title: 'Entrada: arraste até uma saída' }),
+      b && el('span.am-port.out', { dataset: { port: b, dir: 'out' }, style: tint(tb), title: `Saída${outs.length > 1 ? ' "' + (PORT_LABEL[b] || b) + '"' : ''}: arraste até a entrada de outro nó` }),
       b && !used.has(b) && el('button.am-plus', { type: 'button', dataset: { plus: b }, style: { top }, title: 'Continuar o fluxo a partir daqui', html: IC.plus })].filter(Boolean));
   }
   e.replaceChildren(
@@ -679,7 +711,7 @@ function openPicker(cx, cy, onPick, need) {
     items.forEach((s, i) => {
       if (!q && s.category !== cat) { cat = s.category; body.append(el('div.am-pick-cat', cat)); }
       body.append(el('button.am-pick-it' + (i === cur ? '.on' : ''), { type: 'button', style: { '--cat': (CATS[s.category] || PLUG_CAT).c }, onclick: () => { closePicker(); onPick(s); }, onpointerenter: () => { cur = i; body.querySelectorAll('.am-pick-it').forEach((b, j) => b.classList.toggle('on', j === i)); } },
-        el('span.am-ico', { html: (CATS[s.category] || PLUG_CAT).i }), el('span.am-pick-tx', el('b', s.name), el('small', s.desc || ''))));
+        el('span.am-ico', { html: (CATS[s.category] || PLUG_CAT).i }), el('span.am-pick-tx', el('b', s.name), el('small', s.desc || ''), typeFlow(s))));
     });
     if (!items.length) body.append(el('p.am-hint', 'Nenhum nó com esse nome.'));
   };
@@ -704,6 +736,56 @@ function upstream(id) {
   const seen = new Set(), stack = [id];
   while (stack.length) { const x = stack.pop(); for (const e of A.flow.edges) if (e.to === x && !seen.has(e.from)) { seen.add(e.from); stack.push(e.from); } }
   return A.flow.nodes.filter(n => seen.has(n.id));
+}
+// ---------- o dado que cada nó conhece: a última execução dele, ou o exemplo do catálogo ----------
+const asJson = (v) => { if (typeof v !== 'string') return v; const t = v.trim(); if (!/^[{\[]/.test(t)) return v; try { return JSON.parse(t); } catch { return v; } };
+function knownOutput(id, port) {
+  const u = node(id); if (!u) return undefined;
+  const r = currentRun()?.nodes?.find(x => x.id === id);
+  if (r?.status === 'completed' && r.output) { const k = port && port in r.output ? port : Object.keys(r.output)[0]; if (k !== undefined) return asJson(r.output[k]); }
+  return spec(u.type)?.sample;
+}
+function incoming(n) { const e = A.flow.edges.find(x => x.to === n.id); return e ? knownOutput(e.from, e.from_port) : undefined; }
+const digPath = (v, path) => path.split('.').filter(Boolean).reduce((c, k) => { c = asJson(c); return c == null ? undefined : c[k]; }, v);
+/** O valor que uma expressão inteira ({{input}}, {{nodes.x.out}}) teria, pelo que já se conhece. */
+function resolveExpr(n, text) {
+  const m = /^\s*\{\{\s*(input(?:\.[\w.-]+)?|nodes\.[\w.-]+)\s*\}\}\s*$/.exec(String(text ?? '')); if (!m) return asJson(text);
+  if (m[1].startsWith('input')) { const base = incoming(n); return m[1] === 'input' ? base : digPath(base, m[1].slice(6)); }
+  const [id, port = 'out', ...rest] = m[1].slice(6).split('.'), base = knownOutput(id, port);
+  return rest.length ? digPath(base, rest.join('.')) : base;
+}
+/** Caminhos de um JSON (campo.sub.0.x); das listas entra o primeiro item, que representa os outros. */
+function pathsOf(v, max = 40) {
+  const out = [];
+  const walk = (x, path, depth) => {
+    if (out.length >= max || depth > 4 || x == null || typeof x !== 'object') return;
+    if (Array.isArray(x)) { if (x.length) { const p = path ? path + '.0' : '0'; out.push({ path: p, value: x[0] }); walk(x[0], p, depth + 1); } return; }
+    for (const [k, val] of Object.entries(x)) { if (out.length >= max) break; if (!/^[\w-]+$/.test(k)) continue; const p = path ? path + '.' + k : k; out.push({ path: p, value: val }); walk(val, p, depth + 1); }
+  };
+  walk(asJson(v), '', 0); return out;
+}
+const peek = (v) => { const t = v == null ? 'vazio' : Array.isArray(v) ? `lista (${v.length})` : typeof v === 'object' ? 'objeto' : String(v).replace(/\s+/g, ' '); return t.length > 26 ? t.slice(0, 26) + '…' : t; };
+const pathItems = (list, pickPath) => list.map(p => ({ label: `${p.path}  ·  ${peek(p.value)}`, action: () => pickPath(p.path) }));
+/** O que o nó espera e o que entrega, no alto do painel. */
+function ioBlock(s) {
+  if (!s || (!s.expects && !s.returns)) return null;
+  return el('section.am-io',
+    s.inputs.length > 0 && s.expects && el('div.am-io-row', el('span.am-io-k', 'Recebe'), el('span', typeChip(typeOf(s, 'takes'), 'takes'), ' ', s.expects)),
+    s.returns && el('div.am-io-row', el('span.am-io-k.out', 'Devolve'), el('span', typeChip(typeOf(s, 'gives'), 'gives'), ' ', s.returns)),
+    s.sample !== undefined && el('details.am-io-ex', el('summary', 'Exemplo da saída'), el('pre.am-out', JSON.stringify(s.sample, null, 2))));
+}
+/** Saída em JSON: atalhos para ligar o nó que trata esse dado. */
+function treatRow(id, r) {
+  const n = node(id), port = Object.keys(r.output || {})[0]; if (!n || !port || flowLocked()) return null;
+  const raw = r.output[port], v = asJson(raw);
+  const types = Array.isArray(v) ? ['data.filter', 'json.sort', 'json.pluck', 'json.group', 'data.stats', 'data.table']
+    : v && typeof v === 'object' ? ['json.get', 'json.pick', 'json.set', 'json.entries', 'json.text']
+    : typeof raw === 'string' && /[{\[][\s\S]*[}\]]/.test(raw) ? ['json.parse'] : [];
+  if (!types.length) return null;
+  const add = (type, params) => { const x = addNode(type, [n.position[0] + widthOf(n) + 60, n.position[1]], { node: id, port, dir: 'out' }); if (x && params) { Object.assign(x.params, params); refreshNode(x.id); renderInspector(); changed(); } };
+  return el('div.am-treat', el('span.am-hint', Array.isArray(v) ? 'Saiu uma lista. Tratar com:' : types[0] === 'json.parse' ? 'Parece ter JSON no texto:' : 'Saiu um JSON. Tratar com:'),
+    el('div.am-treat-b', {}, types.filter(t => spec(t)).map(t => el('button.chip', { type: 'button', title: spec(t).desc,
+      onclick: (e) => { const list = t === 'json.get' ? pathsOf(v) : []; list.length ? bs.showMenu(e, pathItems(list, (path) => add(t, { path })), 'Qual campo?') : add(t); } }, spec(t).name))));
 }
 function insertAt(input, text) {
   const a = input.selectionStart ?? input.value.length, b = input.selectionEnd ?? a;
@@ -773,10 +855,23 @@ function field(n, f) {
   // expressões: o que chegou neste nó e a saída dos nós anteriores, sem decorar identificadores
   if (['area', 'text', 'json', 'lines'].includes(f.kind) && s.inputs.length) {
     extra = el('button.am-link', { type: 'button', title: 'Usar o que veio de outro nó' }, '+ dado');
-    extra.onclick = (e) => bs.showMenu(e, [
+    extra.onclick = (e) => { const inside = pathsOf(incoming(n), 14); bs.showMenu(e, [
       { label: 'O que chegou neste nó', k: '{{input}}', action: () => insertAt(input, '{{input}}') },
       ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Saída de ${titleOf(u)}${spec(u.type).outputs.length > 1 ? ' (' + (PORT_LABEL[p] || p) + ')' : ''}`, action: () => insertAt(input, `{{nodes.${u.id}.${p}}}`) }))),
-    ]);
+      // os campos do JSON que chega aqui (da última execução, ou do exemplo do nó anterior)
+      ...(inside.length ? ['-', ...pathItems(inside, (path) => insertAt(input, `{{input.${path}}}`))] : []),
+    ]); };
+  }
+  // campo que é um caminho dentro do JSON: a lista dos campos conhecidos, para não digitar
+  if (f.paths) {
+    extra = el('button.am-link', { type: 'button', title: 'Escolher entre os campos do dado' }, 'campos');
+    extra.onclick = (e) => {
+      let src = resolveExpr(n, n.params[f.paths] ?? s.params[f.paths]);
+      if ((f.item || f.each) && Array.isArray(src)) src = src[0];
+      const list = pathsOf(src);
+      if (!list.length) return bs.toast('Ainda não conheço os campos desse dado. Execute o fluxo uma vez e eles aparecem aqui.');
+      bs.showMenu(e, pathItems(list, (path) => { input.value = f.kind === 'lines' ? (input.value.trim() ? input.value.replace(/\n*$/, '\n') : '') + path : path; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); }), 'Campos do dado');
+    };
   }
   if (f.clis) extra = el('button.am-link', { type: 'button', title: 'Modelo, esforço e programas de cada agente', onclick: () => bs.aiClis.open(typeof n.params[f.name] === 'string' ? n.params[f.name] : undefined) }, 'configurar');
   const id = 'amf-' + uid('');
@@ -788,7 +883,8 @@ function runBlock(id) {
   const r = currentRun()?.nodes?.find(x => x.id === id); if (!r || r.status === 'skipped') return null;
   const out = r.output && Object.keys(r.output).length === 1 ? Object.values(r.output)[0] : r.output;
   return el('section.am-sec', el('h4', 'Última execução', el('span.am-tag.' + r.status, STATUS[r.status] + (r.ms != null ? ' · ' + fmtMs(r.ms) : ''))),
-    r.error ? el('pre.am-out.err', r.error) : r.status === 'completed' ? el('pre.am-out', show(out) || '(vazio)') : null);
+    r.error ? el('pre.am-out.err', r.error) : r.status === 'completed' ? el('pre.am-out', show(out) || '(vazio)') : null,
+    r.status === 'completed' && !nodeLocked(id) ? treatRow(id, r) : null);
 }
 function runsBlock() {
   const box = el('div.am-runs');
@@ -842,6 +938,7 @@ function renderInspectorInner() {
     R.insp.replaceChildren(
       el('header.am-ihd', { style: { '--cat': cat.c } }, el('span.am-ico', { html: cat.i }), el('div.am-ihd-tx', el('b', s?.name || n.type), el('small', s?.desc || '')), el('button.icon-btn', { type: 'button', title: 'Fechar', html: IC.x, onclick: () => select([]) })),
       el('div.am-ibody',
+        ioBlock(s),
         el('label.am-field', el('span.am-flabel', el('span', 'Nome')), title),
         (s?.fields || []).filter(visible).map(f2 => field(n, f2)),
         n.type === 'ai.openrouter' && el('button.chip.am-wide', { type: 'button', onclick: () => plugin.vault.request('openrouter') }, el('span', { html: IC.key }), 'Guardar o token no Cofre'),

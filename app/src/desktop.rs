@@ -79,7 +79,9 @@ fn center(window: &Window, w: f64, h: f64) {
 
 /// `doc`: janela leve de um documento (main.rs, --doc): título do arquivo, tamanho próprio (window.json, "doc") e
 /// sem o modo de boas-vindas da IDE.
-pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
+/// `studio`: janela do Estúdio (main.rs, --studio): só a janela, apontada para o BlueScreen que já está aberto; este
+/// processo não tem servidor, então nada aqui pode consultar o estado dele.
+pub fn run(url: String, devtools: bool, doc: Option<PathBuf>, studio: bool) -> ! {
     let event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let p2 = proxy.clone();
@@ -93,16 +95,18 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
 
     let saved = read_json(&state_file());
     // a última sessão terminou sem projeto aberto: já nasce no tamanho de boas-vindas (sem piscar grande)
-    let is_doc = doc.is_some();
+    let is_file = doc.is_some();
+    let is_doc = is_file || studio;
+    let key = if studio { "studio" } else { "doc" };
     let mut tray = if !is_doc { let p = proxy.clone(); crate::tray::Tray::new(move |quit| { let _ = p.send_event(if quit { Ev::Quit } else { Ev::Activate }); }) } else { None };
     // na primeira vez que a janela vai para a bandeja, um aviso diz onde ela foi parar e como sair de verdade
     const TRAY_HINT: (&str, &str) = ("O BlueScreen continua aberto", "Agenda e fluxos seguem rodando. Clique no ícone para voltar; botão direito para sair.");
     let mut tray_hint = false;
     let mut welcome = !is_doc && saved["welcome"].as_bool().unwrap_or(false);
-    let sd = &saved["doc"];
-    let (w, h) = if welcome { WELCOME } else if is_doc { (sd["w"].as_f64().unwrap_or(1180.0).max(640.0), sd["h"].as_f64().unwrap_or(760.0).max(420.0)) }
+    let sd = &saved[key];
+    let (w, h) = if welcome { WELCOME } else if is_doc { (sd["w"].as_f64().unwrap_or(if studio { 1320.0 } else { 1180.0 }).max(640.0), sd["h"].as_f64().unwrap_or(if studio { 840.0 } else { 760.0 }).max(420.0)) }
         else { (saved["w"].as_f64().unwrap_or(1500.0).max(640.0), saved["h"].as_f64().unwrap_or(920.0).max(420.0)) };
-    let title = doc.as_ref().and_then(|f| f.file_name()).map(|n| format!("{} - BlueScreen", n.to_string_lossy())).unwrap_or_else(|| "BlueScreen".into());
+    let title = doc.as_ref().and_then(|f| f.file_name()).map(|n| format!("{} - BlueScreen", n.to_string_lossy())).unwrap_or_else(|| if studio { "Estúdio - BlueScreen".into() } else { "BlueScreen".into() });
     let mut wb = WindowBuilder::new().with_title(&title).with_inner_size(LogicalSize::new(w, h)).with_min_inner_size(LogicalSize::new(640.0, 420.0))
         // nasce escondida: aparece quando a página já pintou a tela de abertura (mensagem "shown"), sem o clarão
         // da janela vazia enquanto o WebView2 sobe
@@ -141,7 +145,7 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
         .with_devtools(devtools)
         .with_hotkeys_zoom(false) // Ctrl+roda é o zoom da fonte do código; o tamanho da interface fica em Aparência
         .with_background_color(if dark { (15, 26, 46, 255) } else { (217, 227, 245, 255) })
-        .with_initialization_script(format!("window.BS_DESKTOP = true; window.BS_MAX = {}; window.BS_WELCOME = {}; window.BS_DOC = {};", window.is_maximized(), welcome, is_doc))
+        .with_initialization_script(format!("window.BS_DESKTOP = true; window.BS_MAX = {}; window.BS_WELCOME = {}; window.BS_DOC = {}; window.BS_STUDIO = {};", window.is_maximized(), welcome, is_file, studio))
         .with_ipc_handler(move |req| { let _ = pi.send_event(Ev::Ipc(req.body().clone(), req.uri().to_string())); })
         .with_document_title_changed_handler(move |t| { let _ = pt.send_event(Ev::Title(t)); })
         // links para fora abrem no navegador; janelas do próprio app (páginas servidas pelo BlueScreen) abrem aqui
@@ -163,9 +167,9 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
         // janela de documento: guarda só o tamanho dela, sem mexer no da IDE
         if is_doc {
             let mut d = json!({ "max": max });
-            if max { d["w"] = j["doc"]["w"].clone(); d["h"] = j["doc"]["h"].clone(); }
+            if max { d["w"] = j[key]["w"].clone(); d["h"] = j[key]["h"].clone(); }
             else { let sz: LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor()); d["w"] = json!(sz.width); d["h"] = json!(sz.height); }
-            j["doc"] = d; j["dark"] = json!(dark); j["caption"] = json!(caption);
+            j[key] = d; j["dark"] = json!(dark); j["caption"] = json!(caption);
             let _ = write_atomic(&state_file(), &j.to_string()); return;
         }
         j["welcome"] = json!(welcome);
@@ -284,6 +288,9 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
                     }
                     Some("zoom") => { let _ = webview.zoom(m["factor"].as_f64().unwrap_or(1.0).clamp(0.6, 2.0)); }
                     Some("min") => window.set_minimized(true),
+                    // a IDE sai da frente quando o Estúdio abre; volta pela bandeja ou pelo "Abrir a IDE" de lá
+                    Some("hide") if !is_doc => window.set_visible(false),
+                    Some("focus") => { window.set_visible(true); window.set_minimized(false); window.set_always_on_top(true); window.set_always_on_top(false); window.set_focus(); }
                     Some("max") if !welcome => window.set_maximized(!window.is_maximized()),
                     Some("welcome") if !is_doc => {
                         let on = m["on"].as_bool().unwrap_or(false);
@@ -308,7 +315,7 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>) -> ! {
                     Some("close") => {
                         save_state(&window, dark, &caption, welcome);
                         if !is_doc && let Some(t) = &tray { window.set_visible(false); if !tray_hint { tray_hint = true; t.notify(TRAY_HINT.0, TRAY_HINT.1); } }
-                        else if server::lan_enabled() { log("Janela fechada; servidor continua por causa da rede local."); window.set_visible(false); }
+                        else if !studio && server::lan_enabled() { log("Janela fechada; servidor continua por causa da rede local."); window.set_visible(false); }
                         else { log("Janela fechada. Encerrando."); *flow = ControlFlow::Exit; }
                     }
                     Some("quit") if origin_of(&from).as_deref() == Some(origin.as_str()) => { save_state(&window, dark, &caption, welcome); *flow = ControlFlow::Exit; }

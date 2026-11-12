@@ -35,6 +35,7 @@ const toast = (m, kind, key) => {
 window.addEventListener('error', (e) => { try { toast('Erro na interface: ' + (e.message || e.error), 'err'); } catch {} });
 window.addEventListener('unhandledrejection', (e) => { const m = e.reason && e.reason.message; if (m && m !== 'login' && m !== 'Canceled') try { toast('Erro na interface: ' + m, 'err'); } catch {} });
 const DOC = new URLSearchParams(location.search).get('doc'); // janela de documento (docMode)
+const STUDIO = new URLSearchParams(location.search).has('studio'); // janela do Estúdio (studioMode)
 const store = { get: (k, d) => { try { return JSON.parse(localStorage.getItem('bs.' + k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem('bs.' + k, JSON.stringify(v)); } catch {} } };
 
 const S = {
@@ -59,7 +60,7 @@ function syncUnsaved() {
   document.querySelectorAll('#treeRoot .trow[data-p]').forEach(r => r.classList.toggle('unsaved', u.has(r.dataset.p)));
   const any = S.tabs.some(t => t.dirty); const act = S.active && S.active.dirty;
   $('#stDirty').hidden = !act; $('#stDirty').className = 's dirty';
-  document.title = (any ? '● ' : '') + (DOC ? DOC.split(/[\\/]/).pop() + ' - BlueScreen' : 'BlueScreen' + (S.project ? ' · ' + S.project.name : ''));
+  document.title = (any ? '● ' : '') + (STUDIO ? 'Estúdio - BlueScreen' : DOC ? DOC.split(/[\\/]/).pop() + ' - BlueScreen' : 'BlueScreen' + (S.project ? ' · ' + S.project.name : ''));
 }
 
 // cores dos tokens semânticos (vindos do servidor de linguagem, com prefixo "s-"; ver lsp.js). O que não tem regra aqui
@@ -221,6 +222,7 @@ async function start() {
   const reopen = store.get('reopenTool', null);
   if (reopen) { store.set('reopenTool', null); if (BS.tools.get(reopen) && !BS.tools.get(reopen).toggle) S.tool = reopen; }
   if (DOC) return docMode(DOC);
+  if (STUDIO) return studioMode();
   renderStrip();
   splash('Lendo os projetos…');
   // a abertura não espera o resumo Git de cada projeto: ele chega depois e atualiza a lista
@@ -232,11 +234,25 @@ async function start() {
   else if (lastProj && S.outside.has(lastProj)) await openProject(lastProj);
   else if (S.projects.length === 1) await selectProject(S.projects[0].path);
   renderTool(); renderDashboard();
-  welcomeMode(!S.project && !store.get('bare', false)); // "Só os plugins": a IDE abre sem projeto
+  welcomeMode(!S.project);
 }
 // ===== Janela de documento (BlueScreen.exe --doc, o "Abrir com" do Windows) =====
 // Só o arquivo, na tela inteira: sem projetos, árvore, painéis nem abas. A pasta do arquivo faz o papel de projeto
 // (sem Git, sem índice), e fechar o documento fecha a janela, perguntando antes se há alterações não salvas.
+// Janela do Estúdio (BlueScreen.exe --studio, ou /?studio=1 no navegador): só os plugins, sem a IDE em volta.
+// Não há projeto, busca, Git, Build nem terminal: a barra da esquerda fica com as telas dos plugins, o Cofre e Plugins.
+function studioMode() {
+  document.body.classList.add('studio-mode');
+  S.showProjects = false; S.tool = null;
+  renderStrip();
+  $('#projName').textContent = 'Estúdio'; $('#app').classList.add('no-tool');
+  welcomeMode(false); btnState(); renderTool(); renderDashboard(); syncUnsaved();
+  window.BS_DOC_CLOSE = () => S.tabs.some(losesWork) ? askClose(S.tabs.slice()) : desktop({ type: 'close' });
+  // a IDE pediu o Estúdio de novo com esta janela já aberta: ela vem para a frente
+  let seen = null;
+  setInterval(async () => { try { const r = await api('studio', {}, { quiet: true }); if (seen != null && r.focus !== seen) desktop({ type: 'focus' }); seen = r.focus; } catch { /* a IDE fechou */ } }, 2000);
+}
+const openIde = () => fetch('/api/activate', { method: 'POST', headers: { 'X-BlueScreen': 'takeover' } }).catch(() => toast('A IDE não respondeu.', 'err'));
 function docMode(file) {
   document.body.classList.add('doc-mode');
   const i = file.search(/[\\/][^\\/]*$/), name = file.slice(i + 1);
@@ -637,23 +653,47 @@ function tabMenu(e, t) {
 // mais comuns; a lista embaixo filtra enquanto você digita (sem clicar na busca), fixa projetos e tira dos recentes.
 const WEL = { sel: 0, items: [], view: store.get('welView', 'recent') };
 if (window.BS_WELCOME) document.body.classList.add('welcome');
-// "Só os plugins" (tela inicial): a IDE sem pasta de trabalho. O painel da esquerda lista os projetos e a área do editor
-// mostra o que dá para usar sem projeto: as telas e janelas dos plugins.
-function enterBare() { store.set('bare', true); S.showProjects = false; welcomeMode(false); $('#projName').textContent = 'Nenhum projeto'; renderTool(); renderDashboard(); }
+// Estúdio (tela inicial): a IDE sem pasta de trabalho, virada para os plugins. O painel da esquerda fica recolhido e a
+// área do editor vira a vitrine do que dá para usar sem projeto: as telas e as janelas dos plugins.
+const STUDIO_HUES = ['#4C8DFF', '#8B5CF6', '#1FB5A3', '#F0A030', '#E85D9A', '#34C77B', '#E0685E', '#5BC0EB'];
+function studioItems() {
+  const about = (id) => { const p = BS.plugins && BS.plugins.list.find(x => x.id === id); return p && p.enabled !== false ? (p.description || '') : ''; };
+  // a descrição do plugin é longa; o cartão fica com a primeira frase, sem o parêntese de detalhes
+  const brief = (d) => { d = String(d || '').replace(/\s*\([^)]*\)/g, '').trim(); const m = d.match(/^.*?[.:;](\s|$)/); return (m ? m[0] : d).replace(/[.:;]\s*$/, ''); };
+  return [
+    ...BS.tools.list().filter(t => t.page).map(t => ({ id: t.id, icon: t.icon, title: t.title, desc: brief(about(t.plugin || t.id)), big: true, go: () => setTool(t.id) })),
+    ...(BS.bubble && BS.bubble.list ? BS.bubble.list().map(w => ({ id: w.id, icon: w.icon, title: w.title, desc: brief(about(w.plugin || w.id)), go: () => BS.bubble.open(w.id) })) : []),
+  ].map((it, i) => ({ ...it, hue: STUDIO_HUES[i % STUDIO_HUES.length] }));
+}
+async function enterBare() {
+  // no navegador (--web) não há janela para abrir: o Estúdio vai para outra aba
+  if (!window.BS_DESKTOP) { window.open('/?studio=1', '_blank'); return; }
+  try { await api('studio', {}, { method: 'POST' }); if (document.body.classList.contains('welcome')) desktop({ type: 'hide' }); }
+  catch (e) { toast('Não deu para abrir o Estúdio: ' + e.message, 'err'); }
+}
 function renderBare() {
   const el = $('#bare'); if (!el) return;
-  const on = !S.project && !S.active && !document.body.classList.contains('welcome');
+  const on = STUDIO && !S.active;
   el.hidden = !on; if (!on) return;
-  const items = [
-    ...BS.tools.list().filter(t => t.page).map(t => ({ icon: t.icon, title: t.title, go: () => setTool(t.id) })),
-    ...(BS.bubble && BS.bubble.list ? BS.bubble.list().map(w => ({ icon: w.icon, title: w.title, go: () => BS.bubble.open(w.id) })) : []),
-    { icon: I.plug, title: 'Plugins', go: () => openTool('plugins') },
-  ];
-  el.innerHTML = `<div class="bare-box"><h2>Sem projeto aberto</h2><p>Os plugins funcionam sem uma pasta de trabalho. Arquivos, Git e Build aparecem quando você abrir um projeto.</p>
-    <div class="bare-grid">${items.map((it, i) => `<button class="bare-it" data-i="${i}"><span class="bare-ic">${it.icon || ''}</span><span>${esc(it.title)}</span></button>`).join('')}</div>
-    <div class="bare-foot"><button class="chip" id="bareOpen">${I.open}Abrir um projeto</button></div></div>`;
-  el.querySelectorAll('.bare-it').forEach(b => b.onclick = () => items[+b.dataset.i].go());
-  $('#bareOpen').onclick = () => { store.set('bare', false); welcomeMode(true); };
+  const items = studioItems(), h = new Date().getHours();
+  const hello = h < 5 ? 'Boa noite' : h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  el.innerHTML = `<div class="sd">
+    <header class="sd-hero"><div class="sd-glow" aria-hidden="true"></div>
+      <span class="sd-k">Estúdio</span>
+      <h1>${hello}. O que vamos fazer?</h1>
+      <p>Automações, agenda e agentes de IA rodam daqui, sem abrir um projeto.</p>
+      <div class="sd-act"><button class="sd-btn primary" id="bareOpen">${I.open}Abrir a IDE</button><button class="sd-btn" id="barePlugins">${I.plug}Plugins</button></div>
+    </header>
+    ${items.length ? `<div class="sd-grid">${items.map((it, i) => `<button class="sd-card${it.big ? ' big' : ''}" data-i="${i}" style="--hue:${it.hue};--d:${i * 45}ms">
+      <span class="sd-ic">${it.icon || ''}</span>
+      <span class="sd-tx"><b>${esc(it.title)}</b>${it.desc ? `<span>${esc(it.desc)}</span>` : ''}</span>
+      <svg class="sd-go" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>`).join('')}</div>`
+    : '<div class="sd-none">Nenhum plugin com tela própria está ligado. Ligue um em <a id="bareNone">Plugins</a>.</div>'}
+  </div>`;
+  el.querySelectorAll('.sd-card').forEach(b => b.onclick = () => items[+b.dataset.i].go());
+  $('#bareOpen').onclick = openIde;
+  $('#barePlugins').onclick = () => openTool('plugins');
+  if ($('#bareNone')) $('#bareNone').onclick = () => openTool('plugins');
 }
 function welcomeMode(on) {
   on = !!on;
@@ -675,6 +715,7 @@ function renderHome() {
   $('#welVer').textContent = BS.version || '';
   $('#welRootPath').textContent = S.root || 'nenhuma'; $('#welRootPath').title = S.root || '';
   $('#welNew').hidden = !!S.remote;
+  { const apps = studioItems(); $('#welApps').innerHTML = apps.slice(0, 5).map(a => `<i style="--hue:${a.hue}" title="${esc(a.title)}">${a.icon || ''}</i>`).join('') + (apps.length > 5 ? `<i class="more">+${apps.length - 5}</i>` : ''); }
   const rec = store.get('recents', []); const pins = welPinned();
   const all = [...recentProjects(), ...S.projects.filter(p => !rec.includes(p.path))];
   const last = recentProjects()[0] || null;

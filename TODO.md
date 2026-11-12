@@ -5,7 +5,7 @@
 - [x] BlueScreen na bandeja do Windows: voltar, avisos e sair com conferência do que não foi salvo.
 - [x] Agenda: calendário, compromissos, lembretes com repetição e fluxo vinculado.
 - [x] Automator: endpoint HTTP com nós de segurança (token, limite, assinatura, campos), auditoria de sites, Dynatrace, chat, dados para relatórios e saúde do PC; nós de imagem, áudio e vídeo; agentes de IA com modelo, esforço, acesso e programa personalizado.
-- [x] Tela inicial: "Só os plugins", sem abrir um projeto.
+- [x] Tela inicial: Estúdio, uma janela só dos plugins, sem a IDE em volta.
 - [x] Automator: trancar e destrancar fluxos (só visualização) e nós.
 - [x] Automator: nós de arquivos, texto, PowerShell e área de transferência; gatilhos por arquivo e ao abrir; nós de plugins (`automator.json`) e o plugin Navegador, que automatiza sites.
 - [x] Automator: tela em aba (ícone na barra da esquerda, lista de fluxos no painel da esquerda) com editor de fluxos em nós no modelo do HexLab, com agenda, condições, histórico, importar e exportar, e criação com IA.

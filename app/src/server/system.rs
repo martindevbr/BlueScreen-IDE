@@ -22,6 +22,22 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         if r.remote || !r.is_post() || r.headers.get("x-bluescreen").and_then(|v| v.to_str().ok()) != Some("takeover") { return Err(fail("só pelo PC local", 403)); }
         match UI.get() { Some(f) => { f(UiEvent::Activate); ok(json!({ "ok": true })) } None => Err(fail("sem janela", 409)) }
     }));
+    // Estúdio: os plugins numa janela só deles, sem a IDE em volta. POST abre (ou chama para a frente a que já está
+    // aberta); GET é a própria janela do Estúdio perguntando se alguém pediu para ela vir para a frente.
+    add("studio", route_fn(|r| async move {
+        r.local_only()?;
+        static WIN: Mutex<Option<std::process::Child>> = Mutex::new(None);
+        static ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        use std::sync::atomic::Ordering::Relaxed;
+        if !r.is_post() { return ok(json!({ "focus": ASKED.load(Relaxed) })); }
+        if UI.get().is_none() { return Err(fail("sem janela: abra o Estúdio pelo navegador", 409)); }
+        let mut win = WIN.lock();
+        if let Some(c) = win.as_mut() && matches!(c.try_wait(), Ok(None)) { ASKED.fetch_add(1, Relaxed); return ok(json!({ "ok": true, "already": true })); }
+        let exe = std::env::current_exe().map_err(|e| fail(format!("não achei o executável: {e}"), 500))?;
+        let child = std::process::Command::new(exe).arg("--studio").env("BLUESCREEN_PORT", app().port.to_string()).spawn().map_err(|e| fail(format!("não deu para abrir o Estúdio: {e}"), 500))?;
+        *win = Some(child);
+        ok(json!({ "ok": true }))
+    }));
     add("quit", route_fn(|r| async move {
         r.local_only()?;
         if !r.is_post() || r.headers.get("x-bluescreen").and_then(|v|v.to_str().ok())!=Some("takeover") {return Err(fail("use o comando --quit do BlueScreen",403));}

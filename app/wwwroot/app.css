@@ -1073,18 +1073,85 @@ html:not(.desktop) .wel-top { padding-right: 8px; }
 #vw { display: flex; flex-direction: column; background: var(--bg); }
 .vw-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 /* IDE sem projeto ("Só os plugins") */
-.bare { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; overflow: auto; }
+.bare { position: absolute; inset: 0; overflow: auto; container-type: inline-size; }
 .bare[hidden] { display: none; }
-.bare-box { width: min(560px, 100%); text-align: center; }
-.bare-box h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; color: var(--fg); }
-.bare-box p { margin: 0 auto 18px; max-width: 420px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
-.bare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-.bare-it { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 14px; text-align: left; font-size: 13px; font-weight: 500; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
-.bare-it:hover { border-color: var(--accent); background: var(--hover); }
-.bare-it > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bare-ic { display: inline-flex; flex: none; color: var(--accent-2); }
-.bare-ic svg { width: 18px; height: 18px; }
-.bare-foot { margin-top: 16px; display: flex; justify-content: center; }
+/* janela do Estúdio: da IDE ficam só a barra de cima (nome e botões da janela), a barra dos plugins e a área das telas */
+body.studio-mode #app { grid-template-rows: 44px auto minmax(0, 1fr) 0; }
+body.studio-mode #status, body.studio-mode #seBtn, body.studio-mode #saveGrp, body.studio-mode #btnNet, body.studio-mode #btnKeys, body.studio-mode #projBranch, body.studio-mode #btnPanel, body.studio-mode #wel,
+body.studio-mode #plugPill, body.studio-mode #updPill, body.studio-mode #projChip > svg { display: none !important; }
+body.studio-mode #projChip { pointer-events: none; }
+body.studio-mode #strip :is([data-tool="project"], [data-tool="changes"], [data-tool="history"], [data-tool="problems"], [data-tool="build"], [data-tool="debug"], [data-tool="terminal"], [data-tool="qa"]) { display: none; }
+body.studio-mode #crumbs { display: none; }
+/* Estúdio: a vitrine dos plugins quando não há projeto aberto */
+.sd { max-width: 1080px; margin: 0 auto; padding: 28px 28px 40px; display: flex; flex-direction: column; gap: 22px; }
+.sd-hero { position: relative; isolation: isolate; overflow: hidden; padding: 34px 36px 30px; border-radius: 18px; color: #fff;
+  background: linear-gradient(125deg, #0B2A6B 0%, #0A5FD8 46%, #6D3BD6 100%); box-shadow: 0 18px 50px -22px rgba(10, 95, 216, .75); }
+.sd-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; opacity: .55; pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, .22) 1px, transparent 1.4px); background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(100deg, transparent 30%, #000 100%); mask-image: linear-gradient(100deg, transparent 30%, #000 100%); }
+.sd-glow { position: absolute; z-index: -1; right: -90px; top: -130px; width: 420px; height: 420px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, rgba(120, 220, 255, .55), transparent 62%); filter: blur(8px); animation: sd-float 9s ease-in-out infinite alternate; }
+@keyframes sd-float { to { transform: translate(-70px, 50px) scale(1.12); } }
+.sd-k { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .22); }
+.sd-hero h1 { margin: 14px 0 0; font-size: clamp(22px, 3.4cqi, 34px); line-height: 1.15; font-weight: 600; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.sd-hero p { margin: 8px 0 0; max-width: 56ch; font-size: 14px; line-height: 1.5; color: rgba(255, 255, 255, .84); }
+.sd-act { margin-top: 20px; display: flex; gap: 8px; flex-wrap: wrap; }
+.sd-btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 9px; font-size: 13px; font-weight: 500; color: #fff;
+  background: rgba(255, 255, 255, .14); border: 1px solid rgba(255, 255, 255, .24); transition: background-color .15s, transform .15s; }
+.sd-btn:hover { background: rgba(255, 255, 255, .24); }
+.sd-btn.primary { background: #fff; color: #0A3F9E; border-color: #fff; font-weight: 600; }
+.sd-btn.primary:hover { background: #EAF1FF; }
+.sd-btn:active { transform: translateY(1px); }
+.sd-btn svg { width: 15px; height: 15px; flex: none; }
+.sd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.sd-card { position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; min-width: 0; min-height: 148px; padding: 18px; text-align: left; color: var(--fg);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--hue) 9%, var(--panel)), var(--panel) 60%); border: 1px solid var(--line); border-radius: 14px;
+  transition: transform .2s cubic-bezier(.22, 1, .36, 1), border-color .2s, box-shadow .2s; animation: sd-in .45s cubic-bezier(.22, 1, .36, 1) var(--d, 0ms) both; }
+@keyframes sd-in { from { opacity: 0; transform: translateY(10px); } }
+.sd-card::after { content: ""; position: absolute; right: -50px; top: -50px; width: 150px; height: 150px; border-radius: 50%; pointer-events: none; opacity: 0; transition: opacity .25s;
+  background: radial-gradient(circle, color-mix(in srgb, var(--hue) 45%, transparent), transparent 68%); }
+.sd-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--hue) 60%, var(--line)); box-shadow: 0 14px 32px -18px var(--hue); }
+.sd-card:hover::after { opacity: 1; }
+.sd-card:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
+.sd-ic { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; color: #fff;
+  background: linear-gradient(140deg, var(--hue), color-mix(in srgb, var(--hue) 62%, #000)); box-shadow: 0 8px 18px -10px var(--hue); }
+.sd-ic svg { width: 22px; height: 22px; }
+.sd-tx { display: flex; flex-direction: column; gap: 5px; min-width: 0; max-width: 100%; }
+.sd-tx b { font-size: 15px; font-weight: 600; letter-spacing: -.005em; overflow-wrap: anywhere; }
+.sd-tx span { font-size: 12.5px; line-height: 1.45; color: var(--muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+.sd-go { position: absolute; right: 16px; top: 18px; width: 18px; height: 18px; fill: none; stroke: var(--hue); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transform: translateX(-6px); transition: opacity .2s, transform .2s; }
+.sd-card:hover .sd-go, .sd-card:focus-visible .sd-go { opacity: 1; transform: none; }
+/* o plugin que tem tela inteira (como o Automator) ganha o cartão largo */
+.sd-card.big { grid-column: span 2; flex-direction: row; align-items: center; gap: 18px; padding: 22px; }
+.sd-card.big .sd-ic { width: 60px; height: 60px; border-radius: 16px; } .sd-card.big .sd-ic svg { width: 30px; height: 30px; }
+.sd-card.big .sd-tx b { font-size: 18px; } .sd-card.big .sd-tx span { font-size: 13px; }
+.sd-none { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line-2); border-radius: 14px; }
+.sd-none a { color: var(--accent-2); cursor: pointer; }
+@container (max-width: 620px) {
+  .sd { padding: 16px 16px 28px; gap: 16px; } .sd-hero { padding: 24px 22px 22px; border-radius: 14px; }
+  .sd-card.big { grid-column: auto; flex-direction: column; align-items: flex-start; gap: 14px; padding: 18px; }
+  .sd-card.big .sd-ic { width: 44px; height: 44px; border-radius: 12px; } .sd-card.big .sd-ic svg { width: 22px; height: 22px; } .sd-card.big .sd-tx b { font-size: 15px; }
+}
+@media (prefers-reduced-motion: reduce) { .sd-glow, .sd-card { animation: none; } .sd-card:hover { transform: none; } }
+/* a entrada do Estúdio na tela inicial */
+.wel-studio { flex: none; position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; gap: 14px; min-width: 0; margin: 12px 20px 0; padding: 12px 16px; text-align: left; color: var(--fg);
+  border-radius: 12px; border: 1px solid color-mix(in srgb, #8B5CF6 45%, var(--line)); background: linear-gradient(100deg, color-mix(in srgb, #8B5CF6 16%, var(--panel)), color-mix(in srgb, #0A5FD8 12%, var(--panel)) 70%);
+  transition: border-color .2s, box-shadow .2s, transform .2s cubic-bezier(.22, 1, .36, 1); }
+.wel-studio:hover { border-color: #8B5CF6; box-shadow: 0 10px 28px -16px #8B5CF6; transform: translateY(-1px); }
+.ws-ic { flex: none; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #fff; background: linear-gradient(140deg, #8B5CF6, #0A5FD8); box-shadow: 0 8px 18px -10px #8B5CF6; }
+.ws-ic .i { width: 20px; height: 20px; }
+.ws-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ws-tx b { font-size: 14.5px; font-weight: 600; }
+.ws-tx span { font-size: 12.5px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-apps { flex: none; display: flex; }
+.ws-apps i { width: 28px; height: 28px; margin-left: -7px; display: grid; place-items: center; border-radius: 50%; color: #fff; font: 600 10.5px var(--sans, inherit); background: var(--hue, var(--panel-2)); box-shadow: 0 0 0 2px var(--panel); }
+.ws-apps i.more { background: var(--panel-2); color: var(--fg-2); }
+.ws-apps svg { width: 14px; height: 14px; }
+.ws-go { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 600; color: #fff; background: linear-gradient(140deg, #8B5CF6, #0A5FD8); }
+.ws-go .i { width: 14px; height: 14px; transition: transform .2s; } .wel-studio:hover .ws-go .i { transform: translateX(3px); }
+@media (max-width: 720px) { .ws-apps { display: none; } }
+@media (max-width: 480px) { .ws-go { padding: 0 9px; font-size: 0; gap: 0; } }
 /* Agentes de IA (aiclis.js) */
 #aiClis .dlg-box { width: min(560px, calc(100vw - 32px)); }
 #aiClis [hidden] { display: none !important; }
@@ -1457,3 +1524,4 @@ html:not(.desktop) .wel-top { padding-right: 8px; }
 @keyframes up-pill { from { transform: scale(.6); opacity: 0; } }
 @keyframes up-ping { to { transform: scale(2.6); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { #upd *, #upd, #updPill, #updPill * { animation: none !important; transition: none !important; } }
+body.studio-mode #btnAppearance { margin-left: auto; }

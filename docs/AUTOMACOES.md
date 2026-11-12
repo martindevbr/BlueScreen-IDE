@@ -52,6 +52,20 @@ Para proteger só uma parte, tranque nós: botão direito no nó › **Trancar o
 
 A paleta (**Adicionar nó**) agrupa os nós por categoria. Nos campos de caminho, o botão da pasta abre o seletor do Windows para escolher o arquivo, a pasta ou o programa, sem digitar.
 
+Cada nó diz o que recebe e o que devolve. Na paleta aparece uma linha como `Texto → JSON`; no quadro, a etiqueta fica ao lado de cada bolinha (a da esquerda é o que entra, a da direita é o que sai) e a bolinha ganha a cor do formato. No painel do nó, **Recebe** e **Devolve** explicam em uma frase, e **Exemplo da saída** mostra o JSON que vem quando o formato é conhecido.
+
+| Etiqueta | O que é |
+|---|---|
+| Texto | Um texto simples. |
+| JSON | Dados com campos, como `{ "nome": "Ana" }`. |
+| Lista | Vários itens em sequência. |
+| Número | Um número. |
+| Imagem, Áudio, Vídeo | O caminho de um arquivo desse tipo. |
+| Arquivo | O caminho de um arquivo qualquer. |
+| Qualquer | Aceita qualquer formato. |
+| O mesmo | Passa adiante exatamente o que recebeu. |
+| Começa, Fim | O nó não recebe nada (gatilho) ou não devolve nada. |
+
 **Gatilhos**
 
 | Nó | O que faz |
@@ -95,6 +109,27 @@ A paleta (**Adicionar nó**) agrupa os nós por categoria. Nos campos de caminho
 | Resumir números | Entrega `count`, `sum`, `avg`, `min` e `max` de uma lista. |
 | Montar tabela | Transforma uma lista numa tabela em Markdown, CSV ou HTML, para um relatório. |
 
+**JSON**
+
+Para tratar o que sai de uma requisição, de um script ou de outro nó. O caminho de um campo são os nomes separados por ponto, e número é a posição na lista, a partir de 0: `disks.0.free_gb`. Texto em JSON é aceito como JSON.
+
+| Nó | O que faz |
+|---|---|
+| Pegar campo | Tira um valor de dentro do JSON pelo caminho. Se o campo não existir, para com erro, segue com vazio ou usa um valor padrão. |
+| Escolher campos | Monta um objeto só com os campos que interessam, um por linha (`caminho` ou `novo_nome = caminho`). Numa lista, vale para cada item. |
+| Remover campos | Devolve o mesmo JSON sem os campos indicados. |
+| Definir campo | Cria ou troca o valor de um campo; cria os objetos do caminho que faltarem. Reconhece número, `true`/`false` e JSON, ou guarda sempre como texto. |
+| Juntar objetos | Junta dois objetos num só; em campo repetido vale o segundo. |
+| Ler JSON | Transforma um texto em JSON. Acha o JSON no meio do texto (respostas de IA, saídas de programas) ou exige que o texto inteiro seja JSON. |
+| JSON para texto | Escreve o JSON como texto, indentado ou numa linha. |
+| Listar campos | Transforma um objeto numa lista de `key` e `value`. |
+| Extrair de cada item | Fica só com um campo de cada item da lista. |
+| Ordenar lista | Ordena pelo campo, crescente ou decrescente, e fica com os primeiros se você der um limite. |
+| Agrupar lista | Agrupa pelo valor de um campo: entrega `key`, `count` e `items` de cada grupo, do maior para o menor. |
+| Contar itens | Conta os itens da lista, os campos do objeto ou as letras do texto. |
+
+Quando a saída de um nó é JSON, o painel dele mostra atalhos em **Última execução**: **Pegar campo** abre a lista dos campos que vieram e já cria o nó ligado e preenchido; para uma lista aparecem Filtrar, Ordenar, Extrair, Agrupar, Resumir e Montar tabela. Nos campos de caminho, **campos** lista os caminhos do dado que chega; em **+ dado**, os campos do JSON que chega aparecem prontos como `{{input.campo}}`. Antes da primeira execução, a lista vem do exemplo do nó anterior.
+
 **Arquivos**
 
 | Nó | O que faz |
@@ -114,7 +149,7 @@ A paleta (**Adicionar nó**) agrupa os nós por categoria. Nos campos de caminho
 | Abrir | Abre um arquivo, uma pasta ou um site no programa padrão. |
 | Área de transferência | Lê o texto copiado, ou copia um texto. |
 | Notificação | Mostra um aviso do Windows. |
-| Alarme | Abre um alerta no canto da tela, por cima de tudo e sem tirar o foco de onde você está, com um som da biblioteca do Windows (o botão ao lado toca o escolhido) ou um `.wav` seu. Dá para escolher o tipo e a cor, tocar uma vez ou sem parar, fechar sozinho depois de um tempo, um ou dois botões, o canto da tela, a largura, o fundo, a opacidade e a borda piscando. Com **Espera o alarme fechar**, o nó entrega `closed`: o botão clicado, ou `timeout`. |
+| Alarme | Abre um alerta no canto da tela, por cima de tudo e sem tirar o foco de onde você está, com um som da biblioteca do Windows (o botão ao lado toca o escolhido) ou um `.wav` seu. Dá para escolher o tipo e a cor, tocar uma vez ou sem parar, fechar sozinho depois de um tempo, um ou dois botões, o canto da tela, a largura, o fundo, a opacidade e a borda piscando. Com **Espera o alarme fechar**, o nó entrega `closed`: o botão clicado, ou `timeout`. Alarmes abertos ao mesmo tempo no mesmo canto se empilham em vez de se cobrir: o novo entra por cima, a pilha desliza quando um fecha e abre outra coluna se não couber na altura da tela. |
 | Saúde do PC | Entrega o uso de CPU e de memória, o espaço nos discos e há quantas horas o PC está ligado. |
 | Programa está rodando? | Segue por **sim** ou por **não**. |
 
@@ -331,6 +366,8 @@ Qualquer plugin do BlueScreen acrescenta nós ao Automator com um arquivo `autom
     "type": "maiusculas", "name": "Maiúsculas", "category": "Texto", "desc": "Passa o texto para maiúsculas.",
     "params": { "text": "{{input}}" },
     "fields": [{ "name": "text", "label": "Texto", "kind": "area" }],
+    "takes": "text", "gives": "text",
+    "expects": "Um texto.", "returns": "O texto em maiúsculas.",
     "run": { "program": "node", "args": ["maiusculas.js"], "timeout": 30000 }
   }]
 }
@@ -343,6 +380,8 @@ let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
   process.stdout.write(JSON.stringify(String(params.text).toUpperCase()));
 });
 ```
+
+`takes` e `gives` são o formato do que o nó recebe e devolve (`text`, `object`, `list`, `number`, `image`, `audio`, `video`, `file`, `any`, `same`, `none`); `expects` e `returns` são a frase que o painel mostra; `sample`, opcional, é um exemplo da saída em JSON, usado para sugerir os campos antes da primeira execução.
 
 - O nó aparece na paleta como `plugin.<id do plugin>.<type>`, enquanto o plugin estiver ligado. `category` pode ser uma das que existem ou um nome novo.
 - **Campos** (`kind`): `text`, `area`, `number` (`min`, `max`), `select` (`options`), `checks`, `time`, `json`, `lines` (um item por linha) e `rows` (uma lista de linhas, com `columns`). Num campo `text`, `"pick": "file"`, `"folder"`, `"save"`, `"program"` ou `"any"` põe o botão que abre o seletor do Windows. `show: { "campo": ["valor"] }` mostra o campo só quando outro tem um desses valores.
@@ -389,9 +428,11 @@ Na hora marcada chega um aviso do Windows. Em cada compromisso dá para concluir
 
 Os horários são conferidos a cada cinco segundos. Se o BlueScreen estava fechado na hora, o aviso chega uma vez ao abrir; um compromisso que repete pula para a próxima ocorrência.
 
-## Só os plugins, sem projeto
+## Estúdio: os plugins sem a IDE
 
-Na tela inicial, **Só os plugins** entra na IDE sem abrir uma pasta. O Automator, a Agenda, os Agentes, a Biblioteca e o IAMaker funcionam assim; arquivos, Git e Build aparecem quando você abrir um projeto. A área do editor mostra os atalhos para cada um, e o painel da esquerda continua listando os projetos. A escolha vale para as próximas vezes, até você abrir ou fechar um projeto.
+Na tela inicial, o cartão **Estúdio** abre uma janela só dos plugins: Automator, Agenda, Agentes, Biblioteca e IAMaker, sem projeto, busca, Git, Build nem terminal. A janela da IDE sai da frente e continua na bandeja; **Abrir a IDE**, no Estúdio, traz ela de volta. A tela de entrada tem um cartão para cada plugin (o Automator, que tem tela inteira, ganha o cartão largo). Fechar o Estúdio não para a agenda nem os fluxos: quem roda é o BlueScreen, na bandeja. Clicar em **Estúdio** de novo com a janela já aberta só traz ela para a frente.
+
+`BlueScreen.exe --studio` abre o Estúdio direto quando o BlueScreen já está aberto; sem ele, abre a IDE normal. No navegador (`--web`), o Estúdio abre em outra aba, em `/?studio=1`.
 
 ## Bandeja do Windows
 

@@ -475,10 +475,10 @@ fn ops_catalog() -> Value {
          "fields":[{"name":"text","label":"Texto","kind":"area"},{"name":"sep","label":"Separador","kind":"select","options":[{"value":"auto","label":"Descobrir"},{"value":",","label":"Vírgula"},{"value":";","label":"Ponto e vírgula"},{"value":"\t","label":"Tabulação"}]}]},
         {"type":"data.filter","name":"Filtrar lista","category":"Dados","desc":"Fica com os itens que passam na comparação.","inputs":["in"],"outputs":["out"],
          "params":{"list":"{{input}}","field":"","op":"eq","equals":""},
-         "fields":[list.clone(),{"name":"field","label":"Campo do item","kind":"text","placeholder":"vazio: o item inteiro"},{"name":"op","label":"Comparação","kind":"select","options":compare},{"name":"equals","label":"Comparar com","kind":"text","show":needs}]},
+         "fields":[list.clone(),{"name":"field","label":"Campo do item","kind":"text","placeholder":"vazio: o item inteiro","paths":"list","item":true},{"name":"op","label":"Comparação","kind":"select","options":compare},{"name":"equals","label":"Comparar com","kind":"text","show":needs}]},
         {"type":"data.stats","name":"Resumir números","category":"Dados","desc":"Conta, soma e tira média, mínimo e máximo de uma lista.","inputs":["in"],"outputs":["out"],
          "params":{"list":"{{input}}","field":""},
-         "fields":[list.clone(),{"name":"field","label":"Campo com o número","kind":"text","placeholder":"vazio: o item é o número","help":"Entrega count, sum, avg, min e max."}]},
+         "fields":[list.clone(),{"name":"field","label":"Campo com o número","kind":"text","placeholder":"vazio: o item é o número","paths":"list","item":true,"help":"Entrega count, sum, avg, min e max."}]},
         {"type":"data.table","name":"Montar tabela","category":"Dados","desc":"Transforma uma lista numa tabela para relatório.","inputs":["in"],"outputs":["out"],
          "params":{"list":"{{input}}","format":"markdown"},
          "fields":[list,{"name":"format","label":"Formato","kind":"select","options":[{"value":"markdown","label":"Markdown"},{"value":"csv","label":"CSV"},{"value":"html","label":"HTML"}]}]},
@@ -558,15 +558,54 @@ foreach ($name in @($c.button, $c.button2)) {
 }
 $H = $(if ($bottom) { $bottom + 14 } else { $y + 12 }) + 4
 $f.Size = New-Object System.Drawing.Size $W, $H
-$wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea; $gap = 16
-$px = $(if ($c.position -in 'bl', 'tl') { $wa.Left + $gap } elseif ($c.position -eq 'center') { $wa.Left + ($wa.Width - $W) / 2 } else { $wa.Right - $W - $gap })
-$py = $(if ($c.position -in 'tr', 'tl') { $wa.Top + $gap } elseif ($c.position -eq 'center') { $wa.Top + ($wa.Height - $H) / 2 } else { $wa.Bottom - $H - $gap })
-$f.Location = New-Object System.Drawing.Point ([int]$px), ([int]$py)
+$gap = 16
+# pilha: cada alarme aberto deixa um arquivo com canto, tamanho e hora; todos calculam a mesma fila,
+# então um alarme novo entra por cima dos que já estão no canto e a pilha se ajeita quando um fecha
+$slots = Join-Path ([IO.Path]::GetTempPath()) 'bluescreen-alarmes'; [void][IO.Directory]::CreateDirectory($slots)
+$me = Join-Path $slots ($PID.ToString() + '.txt')
+[IO.File]::WriteAllText($me, ($c.position, $W, $H, [DateTime]::UtcNow.Ticks -join '|'))
+$place = {
+  $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $all = @()
+  foreach ($file in [IO.Directory]::GetFiles($slots, '*.txt')) {
+    try {
+      $id = [int][IO.Path]::GetFileNameWithoutExtension($file)
+      if ($id -ne $PID) {
+        # alarme que morreu sem se despedir: o lugar dele volta para a fila
+        $alive = $false; try { $alive = [Diagnostics.Process]::GetProcessById($id).ProcessName -match '^(powershell|pwsh)' } catch { }
+        if (-not $alive) { [IO.File]::Delete($file); continue }
+      }
+      $s = [IO.File]::ReadAllText($file).Split('|'); if ($s.Count -lt 4 -or $s[0] -ne $c.position) { continue }
+      $all += [pscustomobject]@{ id = $id; w = [int]$s[1]; h = [int]$s[2]; t = [long]$s[3]; col = 0; x = 0; y = 0 }
+    } catch { }
+  }
+  # a fila enche uma coluna; quando não cabe mais na altura da tela, abre outra ao lado
+  $room = $wa.Height - $gap * 2; $col = 0; $ox = 0; $oy = 0; $cw = 0; $tall = @{}; $mine = $null
+  foreach ($a in ($all | Sort-Object t, id)) {
+    if ($oy -gt 0 -and $oy + $a.h -gt $room) { $col++; $ox += $cw + $gap; $oy = 0; $cw = 0 }
+    $a.col = $col; $a.x = $ox; $a.y = $oy; $tall[$col] = $oy + $a.h
+    $oy += $a.h + $gap; if ($a.w -gt $cw) { $cw = $a.w }
+    if ($a.id -eq $PID) { $mine = $a }
+  }
+  if (-not $mine) { $mine = [pscustomobject]@{ col = 0; x = 0; y = 0 }; $tall[0] = $H }
+  $px = $(if ($c.position -in 'bl', 'tl') { $wa.Left + $gap + $mine.x } elseif ($c.position -eq 'center') { $wa.Left + ($wa.Width - $W) / 2 + $mine.x } else { $wa.Right - $W - $gap - $mine.x })
+  $py = $(if ($c.position -in 'tr', 'tl') { $wa.Top + $gap + $mine.y } elseif ($c.position -eq 'center') { $wa.Top + ($wa.Height - $tall[$mine.col]) / 2 + $mine.y } else { $wa.Bottom - $H - $gap - $mine.y })
+  # nunca para fora da tela, mesmo com alarmes demais
+  $px = [Math]::Max($wa.Left, [Math]::Min($wa.Right - $W, $px)); $py = [Math]::Max($wa.Top, [Math]::Min($wa.Bottom - $H, $py))
+  New-Object System.Drawing.Point ([int]$px), ([int]$py)
+}
+$script:goal = & $place
+$f.Location = $script:goal
+$look = New-Object System.Windows.Forms.Timer; $look.Interval = 250; $look.Add_Tick({ try { $script:goal = & $place } catch { } }); $look.Start()
+# desliza até o lugar novo em vez de pular
+$ease = { param($from, $to) $d = $to - $from; if ([Math]::Abs($d) -le 2) { $to } else { $from + [int][Math]::Round($d * 0.3) } }
+$slide = New-Object System.Windows.Forms.Timer; $slide.Interval = 15; $slide.Add_Tick({ try { $at = $f.Location; if ($at -ne $script:goal) { $f.Location = New-Object System.Drawing.Point (& $ease $at.X $script:goal.X), (& $ease $at.Y $script:goal.Y) } } catch { } }); $slide.Start()
 $player = $null
 if ($c.sound_path) { try { $player = New-Object System.Media.SoundPlayer $c.sound_path; if ($c.repeat -eq 'loop') { $player.PlayLooping() } else { $player.Play() } } catch { $player = $null } }
 if ([int]$c.seconds -gt 0) { $end = New-Object System.Windows.Forms.Timer; $end.Interval = [int]$c.seconds * 1000; $end.Add_Tick({ $end.Stop(); $f.Close() }); $end.Start() }
 if ($c.blink -eq 'yes') { $script:on = $true; $bl = New-Object System.Windows.Forms.Timer; $bl.Interval = 550; $bl.Add_Tick({ $script:on = -not $script:on; $f.BackColor = $(if ($script:on) { $accent } else { $bg }) }); $bl.Start() }
 [System.Windows.Forms.Application]::Run($f)
+try { [IO.File]::Delete($me) } catch { }
 if ($player) { $player.Stop() }
 Write-Output (@{ closed = $script:closed } | ConvertTo-Json -Compress)
 "#;
@@ -609,6 +648,310 @@ async fn alarm_node(p: &Value, input: &Value) -> ApiResult<Value> {
     service("automator", "plugin/proc", json!({"action":"start","program":"powershell","args":["-NoProfile","-ExecutionPolicy","Bypass","-File",file.to_string_lossy()],"env":env,"label":"Alarme"})).await?;
     Ok(input.clone())
 }
+/// Nós que tratam JSON: o que sai de uma requisição, de um script ou de outro nó, sem escrever código.
+fn json_catalog() -> Value {
+    let value = json!({"name":"value","label":"Dado","kind":"text","help":"Objeto ou lista. Texto em JSON também vale."});
+    let list = json!({"name":"list","label":"Lista","kind":"text"});
+    json!([
+        {"type":"json.get","name":"Pegar campo","category":"JSON","desc":"Tira um valor de dentro do JSON pelo caminho dele.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}","path":"","missing":"error","default":""},
+         "fields":[value.clone(),{"name":"path","label":"Caminho do campo","kind":"text","placeholder":"disks.0.free_gb","paths":"value","help":"Nomes separados por ponto; número é a posição na lista (começa em 0)."},
+            {"name":"missing","label":"Se o campo não existir","kind":"select","options":[{"value":"error","label":"Parar com erro"},{"value":"null","label":"Seguir com vazio"},{"value":"default","label":"Usar um valor padrão"}]},
+            {"name":"default","label":"Valor padrão","kind":"text","show":{"missing":["default"]}}]},
+        {"type":"json.pick","name":"Escolher campos","category":"JSON","desc":"Monta um objeto só com os campos que interessam.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}","fields":[]},
+         "fields":[value.clone(),{"name":"fields","label":"Campos (um por linha)","kind":"lines","paths":"value","each":true,"help":"O caminho do campo, ou novo_nome = caminho. Numa lista, vale para cada item."}]},
+        {"type":"json.omit","name":"Remover campos","category":"JSON","desc":"Devolve o mesmo JSON sem os campos indicados.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}","fields":[]},
+         "fields":[value.clone(),{"name":"fields","label":"Campos (um por linha)","kind":"lines","paths":"value","each":true,"help":"Numa lista, vale para cada item."}]},
+        {"type":"json.set","name":"Definir campo","category":"JSON","desc":"Cria ou troca o valor de um campo do JSON.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}","path":"","new":"","as":"auto"},
+         "fields":[value.clone(),{"name":"path","label":"Caminho do campo","kind":"text","placeholder":"status ou dono.nome","paths":"value"},{"name":"new","label":"Novo valor","kind":"text"},
+            {"name":"as","label":"Guardar como","kind":"select","options":[{"value":"auto","label":"Descobrir (número, sim/não, JSON ou texto)"},{"value":"text","label":"Sempre texto"}]}]},
+        {"type":"json.merge","name":"Juntar objetos","category":"JSON","desc":"Junta dois objetos num só; em campo repetido vale o segundo.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}","other":"","deep":"no"},
+         "fields":[{"name":"value","label":"Primeiro objeto","kind":"text"},{"name":"other","label":"Segundo objeto","kind":"area","placeholder":"{{nodes.…}} ou { \"campo\": \"valor\" }"},
+            {"name":"deep","label":"Objetos dentro de objetos","kind":"select","options":[{"value":"no","label":"O segundo substitui"},{"value":"yes","label":"Juntar também"}]}]},
+        {"type":"json.parse","name":"Ler JSON","category":"JSON","desc":"Transforma um texto em JSON para os próximos nós usarem os campos.","inputs":["in"],"outputs":["out"],
+         "params":{"text":"{{input}}","mode":"find"},
+         "fields":[{"name":"text","label":"Texto","kind":"area"},{"name":"mode","label":"Como ler","kind":"select","options":[{"value":"find","label":"Achar o JSON no meio do texto"},{"value":"strict","label":"O texto inteiro tem que ser JSON"}],"help":"Achar no meio serve para respostas de IA e saídas de programas."}]},
+        {"type":"json.text","name":"JSON para texto","category":"JSON","desc":"Escreve o JSON como texto, para gravar em arquivo ou enviar.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}","format":"pretty"},
+         "fields":[value.clone(),{"name":"format","label":"Formato","kind":"select","options":[{"value":"pretty","label":"Indentado, fácil de ler"},{"value":"compact","label":"Numa linha só"}]}]},
+        {"type":"json.entries","name":"Listar campos","category":"JSON","desc":"Transforma um objeto numa lista de campo e valor.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}"},"fields":[value.clone()]},
+        {"type":"json.pluck","name":"Extrair de cada item","category":"JSON","desc":"Fica só com um campo de cada item da lista.","inputs":["in"],"outputs":["out"],
+         "params":{"list":"{{input}}","field":""},
+         "fields":[list.clone(),{"name":"field","label":"Campo do item","kind":"text","placeholder":"drive","paths":"list","item":true}]},
+        {"type":"json.sort","name":"Ordenar lista","category":"JSON","desc":"Ordena a lista e, se quiser, fica só com os primeiros.","inputs":["in"],"outputs":["out"],
+         "params":{"list":"{{input}}","field":"","order":"asc","limit":0},
+         "fields":[list.clone(),{"name":"field","label":"Ordenar pelo campo","kind":"text","placeholder":"vazio: o item inteiro","paths":"list","item":true},
+            {"name":"order","label":"Ordem","kind":"select","options":[{"value":"asc","label":"Crescente (A a Z, menor primeiro)"},{"value":"desc","label":"Decrescente (Z a A, maior primeiro)"}]},
+            {"name":"limit","label":"Ficar com quantos","kind":"number","min":0,"max":100000,"help":"Zero: todos."}]},
+        {"type":"json.group","name":"Agrupar lista","category":"JSON","desc":"Agrupa os itens pelo valor de um campo e conta cada grupo.","inputs":["in"],"outputs":["out"],
+         "params":{"list":"{{input}}","field":""},
+         "fields":[list.clone(),{"name":"field","label":"Agrupar pelo campo","kind":"text","placeholder":"status","paths":"list","item":true}]},
+        {"type":"json.count","name":"Contar itens","category":"JSON","desc":"Conta os itens da lista ou os campos do objeto.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"{{input}}"},"fields":[value]}
+    ])
+}
+/// O que cada nó espera receber e o que entrega, com um exemplo da saída quando ela é JSON.
+/// A tela mostra isso no painel do nó e usa o exemplo para sugerir campos antes da primeira execução.
+fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
+    const SAME: &str = "A mesma entrada, sem mudar.";
+    const FILE: &str = "O caminho do arquivo gerado (texto).";
+    let n = Value::Null;
+    Some(match kind {
+        "trigger.manual" => ("Nada: é o começo do fluxo.", "O texto do campo Entrada de exemplo (vazio se não preencher).", n),
+        "trigger.schedule" | "trigger.startup" => ("Nada: é o começo do fluxo.", "Objeto com a hora do disparo, em milissegundos.", json!({"at": 1794485263000u64})),
+        "trigger.file" => ("Nada: é o começo do fluxo.", "Objeto com o caminho vigiado.", json!({"path": "C:\\pasta\\arquivo.txt"})),
+        "trigger.webhook" => ("Nada: começa quando chamam o endereço.", "Objeto com a chamada: método, parâmetros da URL, cabeçalhos, corpo (já como JSON quando for) e o token enviado.",
+            json!({"method": "POST", "query": {"id": "42"}, "headers": {"content-type": "application/json"}, "body": {"campo": "valor"}, "raw": "{\"campo\":\"valor\"}", "token": ""})),
+        "logic.if" => ("Qualquer dado. O que se compara é o campo Valor.", "A mesma entrada, pela saída sim ou pela saída não.", n),
+        "util.delay" | "windows.notify" | "windows.open" | "notify.chat" => ("Qualquer dado.", SAME, n),
+        "logic.stop" => ("Qualquer dado.", "Nada: o fluxo para com a mensagem de erro.", n),
+        "logic.assert" | "sec.token" | "sec.rate" | "sec.hmac" | "sec.require" => ("O dado a conferir (em geral, a chamada do Endpoint HTTP).", "A mesma entrada quando passa; se não passar, o fluxo para com erro.", n),
+        "util.text" => ("Qualquer dado, para usar dentro do texto com {{input}}.", "O texto montado.", n),
+        "util.output" => ("Qualquer dado.", "A mesma entrada: serve para mostrar o resultado no fim.", n),
+        "text.replace" | "text.case" => ("Um texto.", "O texto alterado.", n),
+        "text.extract" => ("Um texto.", "O trecho achado (texto), ou a lista de todos os trechos.", n),
+        "text.split" => ("Um texto.", "Lista de textos.", json!(["primeiro", "segundo"])),
+        "text.join" => ("Uma lista.", "Um texto com os itens juntos.", n),
+        "text.count" => ("Um texto.", "Objeto com as contagens.", json!({"chars": 120, "words": 21, "lines": 3})),
+        "data.set" => ("Qualquer dado, para usar nos valores com {{input}}.", "O objeto montado com os campos definidos.", n),
+        "data.datetime" => ("Nada em especial.", "A data e hora como texto, no formato escolhido.", n),
+        "data.csv" => ("Texto CSV, com os nomes dos campos na primeira linha.", "Lista de objetos, um por linha do CSV.", json!([{"nome": "Ana", "idade": "31"}])),
+        "data.filter" => ("Uma lista (de objetos ou de valores).", "Lista só com os itens que passaram.", n),
+        "data.stats" => ("Uma lista de números, ou de objetos com um campo numérico.", "Objeto com o resumo.", json!({"count": 4, "sum": 100.0, "avg": 25.0, "min": 10.0, "max": 40.0})),
+        "data.table" => ("Uma lista de objetos.", "A tabela como texto (Markdown, CSV ou HTML).", n),
+        "file.read" => ("Nada em especial: o caminho vem do campo.", "O conteúdo do arquivo (texto).", n),
+        "file.write" => ("O conteúdo a gravar (texto).", "O caminho do arquivo gravado (texto).", n),
+        "file.list" => ("Nada em especial: a pasta vem do campo.", "Lista com o caminho de cada arquivo.", json!(["C:\\pasta\\a.txt", "C:\\pasta\\b.txt"])),
+        "file.exists" => ("Qualquer dado.", "A mesma entrada, pela saída sim ou pela saída não.", n),
+        "file.manage" => ("Nada em especial: os caminhos vêm dos campos.", "O caminho final do arquivo (texto).", n),
+        "windows.command" => ("Qualquer dado, para usar nos argumentos.", "O que o programa escreveu na tela (texto). Se for JSON, ligue um Ler JSON.", n),
+        "windows.powershell" => ("Qualquer dado: chega no script em $env:BS_INPUT.", "O que o script escreveu (texto). Se for JSON, ligue um Ler JSON.", n),
+        "windows.clipboard" => ("O texto a copiar, quando for para gravar.", "Ao ler: o texto copiado. Ao gravar: a mesma entrada.", n),
+        "windows.alarm" => ("Qualquer dado, para usar no título e na mensagem.", "A mesma entrada. Com Espera o alarme fechar: objeto com o botão clicado (ou timeout).", json!({"closed": "OK", "title": "Alarme"})),
+        "sys.info" => ("Nada.", "Objeto com CPU, memória, discos e horas ligado.",
+            json!({"cpu_percent": 12, "disks": [{"drive": "C:", "free_gb": 15.2, "total_gb": 222.5, "used_percent": 93}], "memory_free_gb": 18.6, "memory_percent": 41, "memory_total_gb": 31.4, "uptime_hours": 24})),
+        "sys.process" => ("Nada em especial.", "Objeto com o programa, pela saída sim ou pela saída não.", json!({"name": "chrome", "running": true, "count": 12})),
+        "http.request" => ("Qualquer dado, para usar no endereço, nos cabeçalhos e no corpo.", "A resposta do servidor: já como JSON quando for JSON, senão texto.", n),
+        "http.download" => ("Nada em especial: o endereço vem do campo.", "O caminho do arquivo baixado (texto).", n),
+        "http.respond" => ("O dado a devolver para quem chamou o endpoint.", "Objeto com o que foi respondido.", json!({"status": 200, "type": "json", "body": {"ok": true}})),
+        "mcp.call" => ("Qualquer dado, para usar nos argumentos.", "A resposta da ferramenta MCP.", n),
+        "agent.cli" | "ai.openrouter" => ("Qualquer dado, para usar no pedido com {{input}}.", "A resposta da IA (texto). Se pediu JSON, ligue um Ler JSON.", n),
+        "agent.review" => ("A proposta a revisar.", "Objeto com o veredito; se for reprovada, o fluxo para com erro.", json!({"approved": true})),
+        "audit.http" => ("Nada em especial: o endereço vem do campo.", "Objeto com a resposta do site, pela saída sim (no ar) ou não.", json!({"status": 200, "ms": 180, "size": 51234, "final_url": "https://exemplo.com/", "reason": ""})),
+        "audit.headers" => ("Nada em especial: o endereço vem do campo.", "Objeto com a nota e os cabeçalhos que faltam.",
+            json!({"url": "https://exemplo.com/", "https": true, "score": "5/7", "points": 5, "present": ["strict-transport-security"], "missing": [{"header": "content-security-policy", "why": "…"}]})),
+        "audit.tls" => ("Nada em especial: o endereço vem do campo.", "Objeto com o certificado e quantos dias faltam.", json!({"host": "exemplo.com", "expires": "2027-03-01", "days": 108, "issuer": "CN=…", "subject": "CN=exemplo.com", "protocol": "Tls13"})),
+        "audit.port" => ("Nada em especial.", "Objeto com o teste, pela saída sim (aberta) ou não.", json!({"host": "exemplo.com", "port": 443, "open": true, "ms": 22})),
+        "audit.links" => ("Nada em especial: o endereço vem do campo.", "Objeto com quantos links foram testados e a lista dos quebrados.", json!({"url": "https://exemplo.com/", "checked": 40, "broken": [{"url": "https://exemplo.com/x", "reason": "404"}], "ok": false})),
+        "dynatrace.problems" => ("Nada em especial.", "Objeto com o total e a lista de problemas.", json!({"total": 1, "problems": [{"id": "P-2611", "title": "Response time degradation", "severity": "PERFORMANCE", "impact": "SERVICES", "status": "OPEN", "start": "2026-11-12T09:00:00+00:00"}]})),
+        "dynatrace.metric" => ("Nada em especial.", "Objeto com as séries da métrica.", json!({"metric": "builtin:service.response.time", "series": [{"dimensions": ["SERVICE-1"], "last": 120.5, "avg": 98.2, "max": 310.0, "points": 60}]})),
+        "dynatrace.event" => ("Qualquer dado, para usar no título e nas propriedades.", "A resposta do Dynatrace ao registrar o evento.", n),
+        "image.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com o tamanho da imagem.", json!({"width": 1920, "height": 1080})),
+        "media.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com duração, tamanho e formatos.", json!({"seconds": 93.4, "duration": "00:01:33", "size": 10485760, "format": "mov,mp4", "width": 1920, "height": 1080, "video": "h264", "audio": "aac"})),
+        k if k.starts_with("image.") || k.starts_with("audio.") || k.starts_with("video.") => ("Nada em especial: o arquivo vem do campo (pode ser a saída de outro nó).", FILE, n),
+        "json.get" => ("Um objeto ou uma lista (texto em JSON também vale).", "O valor do campo: texto, número, objeto ou lista.", n),
+        "json.pick" => ("Um objeto, ou uma lista de objetos.", "Objeto só com os campos escolhidos (ou a lista deles).", n),
+        "json.omit" => ("Um objeto, ou uma lista de objetos.", "O mesmo JSON sem os campos removidos.", n),
+        "json.set" => ("Um objeto (vazio: começa um novo).", "O objeto com o campo criado ou trocado.", n),
+        "json.merge" => ("Dois objetos.", "Um objeto com os campos dos dois.", n),
+        "json.parse" => ("Um texto com JSON dentro.", "O JSON lido: objeto ou lista, pronto para os outros nós.", n),
+        "json.text" => ("Um objeto ou uma lista.", "O JSON escrito como texto.", n),
+        "json.entries" => ("Um objeto (ou uma lista).", "Lista de objetos com key e value.", json!([{"key": "cpu_percent", "value": 12}])),
+        "json.pluck" => ("Uma lista de objetos.", "Lista só com o valor daquele campo.", json!(["C:", "D:"])),
+        "json.sort" => ("Uma lista.", "A lista ordenada (e cortada, se pediu um limite).", n),
+        "json.group" => ("Uma lista de objetos.", "Lista de grupos, do maior para o menor.", json!([{"key": "OPEN", "count": 3, "items": []}])),
+        "json.count" => ("Uma lista, um objeto ou um texto.", "Um número: itens da lista, campos do objeto ou letras do texto.", n),
+        _ => return None,
+    })
+}
+/// O formato do que o nó recebe e do que devolve, para a etiqueta nas bolinhas: text, object (JSON), list, number,
+/// image, audio, video, file, any (qualquer dado), same (devolve o que recebeu) e none (não recebe ou não devolve).
+fn io_kind(kind: &str) -> Option<(&'static str, &'static str)> {
+    Some(match kind {
+        "trigger.manual" => ("none", "text"),
+        k if k.starts_with("trigger.") => ("none", "object"),
+        "logic.stop" => ("any", "none"),
+        "logic.if" | "logic.assert" | "util.delay" | "util.output" | "windows.notify" | "windows.open" | "windows.alarm" | "notify.chat" | "file.exists" => ("any", "same"),
+        k if k.starts_with("sec.") => ("object", "same"),
+        "util.text" | "data.datetime" | "file.read" | "windows.command" | "windows.powershell" | "windows.clipboard" | "agent.cli" | "ai.openrouter" => ("any", "text"),
+        "text.replace" | "text.case" | "text.extract" => ("text", "text"),
+        "text.split" | "data.csv" => ("text", "list"),
+        "text.join" | "data.table" => ("list", "text"),
+        "text.count" | "json.parse" | "agent.review" => ("text", "object"),
+        "data.set" | "sys.info" | "sys.process" | "http.request" | "http.respond" | "mcp.call" => ("any", "object"),
+        k if k.starts_with("audit.") || k.starts_with("dynatrace.") => ("any", "object"),
+        "data.filter" | "json.pluck" | "json.sort" | "json.group" => ("list", "list"),
+        "data.stats" => ("list", "object"),
+        "file.write" => ("text", "file"),
+        "file.list" => ("any", "list"),
+        "file.manage" | "http.download" => ("any", "file"),
+        "image.info" => ("image", "object"),
+        "media.info" => ("file", "object"),
+        "video.audio" => ("video", "audio"),
+        "video.frame" => ("video", "image"),
+        k if k.starts_with("image.") => ("image", "image"),
+        k if k.starts_with("audio.") => ("audio", "audio"),
+        k if k.starts_with("video.") => ("video", "video"),
+        "json.get" => ("object", "any"),
+        "json.pick" | "json.omit" | "json.set" | "json.merge" => ("object", "object"),
+        "json.text" => ("object", "text"),
+        "json.entries" => ("object", "list"),
+        "json.count" => ("any", "number"),
+        _ => return None,
+    })
+}
+/// Texto que é JSON (objeto ou lista) vira o valor; o resto fica como está.
+fn json_in(v: &Value) -> Value {
+    match v {
+        Value::String(s) if s.trim_start().starts_with(['{', '[']) => serde_json::from_str(s.trim()).unwrap_or_else(|_| v.clone()),
+        _ => v.clone(),
+    }
+}
+/// Valor digitado num campo de texto: número, true/false e JSON são reconhecidos; o resto é texto.
+fn auto_value(v: &Value) -> Value {
+    match v { Value::String(s) if !s.trim().is_empty() => serde_json::from_str(s.trim()).unwrap_or_else(|_| v.clone()), _ => v.clone() }
+}
+fn set_path(root: &mut Value, path: &str, new: Value) -> ApiResult<()> {
+    let keys: Vec<&str> = path.split('.').filter(|k| !k.is_empty()).collect();
+    let Some((last, head)) = keys.split_last() else { return Err(fail("informe o caminho do campo", 400)) };
+    let spot = |a: &[Value], k: &str| k.parse::<usize>().ok().filter(|i| *i < a.len()).ok_or_else(|| fail(format!("a lista não tem a posição {k}"), 400));
+    let mut cur = root;
+    for k in head {
+        cur = match cur {
+            Value::Array(a) => { let i = spot(a, k)?; &mut a[i] }
+            other => { if !other.is_object() { *other = json!({}); } other.as_object_mut().unwrap().entry(k.to_string()).or_insert_with(|| json!({})) }
+        };
+    }
+    match cur {
+        Value::Array(a) => { if last.parse::<usize>().ok() == Some(a.len()) { a.push(new); } else { let i = spot(a, last)?; a[i] = new; } }
+        other => { if !other.is_object() { *other = json!({}); } other.as_object_mut().unwrap().insert(last.to_string(), new); }
+    }
+    Ok(())
+}
+fn remove_path(root: &mut Value, path: &str) {
+    let keys: Vec<&str> = path.split('.').filter(|k| !k.is_empty()).collect();
+    let Some((last, head)) = keys.split_last() else { return };
+    let mut cur = root;
+    for k in head {
+        cur = match cur {
+            Value::Array(a) => match k.parse::<usize>().ok().and_then(|i| a.get_mut(i)) { Some(x) => x, None => return },
+            Value::Object(o) => match o.get_mut(*k) { Some(x) => x, None => return },
+            _ => return,
+        };
+    }
+    match cur {
+        Value::Object(o) => { o.remove(*last); }
+        Value::Array(a) => { if let Some(i) = last.parse::<usize>().ok().filter(|i| *i < a.len()) { a.remove(i); } }
+        _ => {}
+    }
+}
+fn merge_into(a: &mut Value, b: &Value, deep: bool) {
+    let (Value::Object(x), Value::Object(y)) = (a, b) else { return };
+    for (k, v) in y {
+        if deep && v.is_object() && x.get(k).is_some_and(Value::is_object) { merge_into(x.get_mut(k).unwrap(), v, true); } else { x.insert(k.clone(), v.clone()); }
+    }
+}
+/// Ordem entre dois valores: números pelo valor ("10" depois de "9"), o resto pelo texto, sem diferenciar maiúsculas.
+fn order_of(a: &Value, b: &Value) -> std::cmp::Ordering {
+    match (number_of(a), number_of(b)) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        _ => stringify(a).to_lowercase().cmp(&stringify(b).to_lowercase()),
+    }
+}
+fn json_node(kind: &str, p: &Value) -> ApiResult<Value> {
+    let field = |k: &str| text_of(p, k).trim().to_string();
+    let lines = |k: &str| -> Vec<String> { let all: Vec<String> = match &p[k] { Value::Array(a) => a.iter().map(stringify).collect(), v => stringify(v).lines().map(String::from).collect() }; all.into_iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect() };
+    let at = |v: &Value, path: &str| if path.is_empty() { v.clone() } else { dig(v, path).unwrap_or(Value::Null) };
+    let structured = |v: Value, what: &str| if v.is_object() || v.is_array() { Ok(v) } else { Err(fail(format!("{what}: o que chegou não é um JSON (objeto ou lista). Se for texto, ligue um Ler JSON antes."), 400)) };
+    Ok(match kind {
+        "json.get" => {
+            let (v, path) = (json_in(&p["value"]), field("path"));
+            match if path.is_empty() { Some(v.clone()) } else { dig(&v, &path) } {
+                Some(x) => x,
+                None => match p["missing"].as_str().unwrap_or("error") {
+                    "null" => Value::Null,
+                    "default" => auto_value(&p["default"]),
+                    _ => return Err(fail(format!("o campo {path} não existe no dado que chegou"), 400)),
+                },
+            }
+        }
+        "json.pick" => {
+            let picks: Vec<(String, String)> = lines("fields").into_iter().map(|l| match l.split_once('=') {
+                Some((name, path)) => (name.trim().to_string(), path.trim().to_string()),
+                None => (l.rsplit('.').next().unwrap_or(&l).to_string(), l.clone()),
+            }).collect();
+            if picks.is_empty() { return Err(fail("informe ao menos um campo", 400)); }
+            let one = |v: &Value| Value::Object(picks.iter().map(|(name, path)| (name.clone(), dig(v, path).unwrap_or(Value::Null))).collect());
+            match structured(json_in(&p["value"]), "Escolher campos")? { Value::Array(a) => Value::Array(a.iter().map(one).collect()), v => one(&v) }
+        }
+        "json.omit" => {
+            let drop = lines("fields");
+            let one = |mut v: Value| { for d in &drop { remove_path(&mut v, d); } v };
+            match structured(json_in(&p["value"]), "Remover campos")? { Value::Array(a) => Value::Array(a.into_iter().map(one).collect()), v => one(v) }
+        }
+        "json.set" => {
+            let mut v = json_in(&p["value"]);
+            if v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty()) { v = json!({}); }
+            let mut v = structured(v, "Definir campo")?;
+            set_path(&mut v, &field("path"), if p["as"] == "text" { json!(stringify(&p["new"])) } else { auto_value(&p["new"]) })?;
+            v
+        }
+        "json.merge" => {
+            let (mut a, b) = (json_in(&p["value"]), json_in(&p["other"]));
+            if !a.is_object() || !b.is_object() { return Err(fail("Juntar objetos: os dois lados precisam ser objetos ({ \"campo\": valor })", 400)); }
+            merge_into(&mut a, &b, p["deep"] == "yes");
+            a
+        }
+        "json.parse" => {
+            if p["text"].is_object() || p["text"].is_array() { return Ok(p["text"].clone()); }
+            let text = stringify(&p["text"]);
+            if p["mode"] == "strict" { return serde_json::from_str(text.trim()).map_err(|e| fail(format!("o texto não é um JSON válido: {e}"), 400)); }
+            text.char_indices().filter(|(_, c)| matches!(c, '{' | '[')).find_map(|(i, _)| serde_json::Deserializer::from_str(&text[i..]).into_iter::<Value>().next().and_then(Result::ok))
+                .ok_or_else(|| fail("não achei um JSON no texto", 400))?
+        }
+        "json.text" => {
+            let v = json_in(&p["value"]);
+            json!(if p["format"] == "compact" { v.to_string() } else { serde_json::to_string_pretty(&v)? })
+        }
+        "json.entries" => match structured(json_in(&p["value"]), "Listar campos")? {
+            Value::Object(o) => Value::Array(o.into_iter().map(|(k, v)| json!({"key": k, "value": v})).collect()),
+            Value::Array(a) => Value::Array(a.into_iter().enumerate().map(|(i, v)| json!({"key": i, "value": v})).collect()),
+            _ => unreachable!(),
+        },
+        "json.pluck" => {
+            let f = field("field");
+            if f.is_empty() { return Err(fail("informe o campo do item", 400)); }
+            Value::Array(list_of(&p["list"]).iter().map(|i| at(i, &f)).collect())
+        }
+        "json.sort" => {
+            let f = field("field");
+            let mut list = list_of(&p["list"]);
+            list.sort_by(|a, b| order_of(&at(a, &f), &at(b, &f)));
+            if p["order"] == "desc" { list.reverse(); }
+            let limit = p["limit"].as_u64().unwrap_or(0) as usize;
+            if limit > 0 { list.truncate(limit); }
+            Value::Array(list)
+        }
+        "json.group" => {
+            let f = field("field");
+            if f.is_empty() { return Err(fail("informe o campo para agrupar", 400)); }
+            let mut groups: Vec<(Value, Vec<Value>)> = vec![];
+            for item in list_of(&p["list"]) {
+                let key = at(&item, &f);
+                match groups.iter_mut().find(|g| g.0 == key) { Some(g) => g.1.push(item), None => groups.push((key, vec![item])) }
+            }
+            groups.sort_by_key(|g| std::cmp::Reverse(g.1.len()));
+            Value::Array(groups.into_iter().map(|(key, items)| json!({"key": key, "count": items.len(), "items": items})).collect())
+        }
+        "json.count" => json!(match json_in(&p["value"]) { Value::Array(a) => a.len(), Value::Object(o) => o.len(), Value::String(s) => s.chars().count(), Value::Null => 0, _ => 1 }),
+        _ => return Err(fail(format!("tipo de nó desconhecido: {kind}"), 400)),
+    })
+}
 /// Nós que os plugins ligados acrescentam. O plugin põe um `automator.json` na pasta dele:
 /// `{ "nodes": [{ "type", "name", "category", "desc", "inputs", "outputs", "params", "fields", "run": { "program", "args", "timeout" } }] }`.
 /// O tipo vira `plugin.<id do plugin>.<type>` e quem roda é o programa do plugin (ver `run_plugin_node`).
@@ -628,7 +971,10 @@ fn plugin_nodes() -> Vec<Value> {
                 "inputs": list("inputs", json!(["in"])), "outputs": list("outputs", json!(["out"])),
                 "params": if n["params"].is_object() { n["params"].clone() } else { json!({}) }, "fields": list("fields", json!([])),
                 "plugin": p.id, "plugin_name": p.name, "dir": p.path, "data": p.data_dir, "run": n["run"],
+                "expects": n["expects"].as_str().unwrap_or(""), "returns": n["returns"].as_str().unwrap_or(""),
+                "takes": n["takes"].as_str().unwrap_or("any"), "gives": n["gives"].as_str().unwrap_or("any"),
             }));
+            if !n["sample"].is_null() && let Some(last) = out.last_mut() { last["sample"] = n["sample"].clone(); }
         }
     }
     out
@@ -639,9 +985,22 @@ pub fn catalog() -> Value {
     all.extend(media().as_array().cloned().unwrap_or_default());
     all.extend(ops_catalog().as_array().cloned().unwrap_or_default());
     all.extend(alarm_catalog().as_array().cloned().unwrap_or_default());
+    all.extend(json_catalog().as_array().cloned().unwrap_or_default());
     all.extend(plugin_nodes());
+    // o que cada nó espera e entrega (o plugin pode trazer o dele no automator.json)
+    for s in &mut all {
+        let Some((expects, returns, sample)) = io_doc(s["type"].as_str().unwrap_or("")) else { continue };
+        if s["expects"].as_str().is_none_or(str::is_empty) { s["expects"] = json!(expects); }
+        if s["returns"].as_str().is_none_or(str::is_empty) { s["returns"] = json!(returns); }
+        if s.get("sample").is_none() && !sample.is_null() { s["sample"] = sample; }
+    }
+    for s in &mut all {
+        let Some((takes, gives)) = io_kind(s["type"].as_str().unwrap_or("")) else { continue };
+        if s["takes"].as_str().is_none_or(str::is_empty) { s["takes"] = json!(takes); }
+        if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
+    }
     // a paleta mostra um grupo por categoria, nesta ordem; as categorias dos plugins vêm depois, na ordem em que chegam
-    const ORDER: [&str; 14] = ["Gatilhos", "Lógica", "Texto", "Dados", "Arquivos", "Windows", "Rede", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
+    const ORDER: [&str; 15] = ["Gatilhos", "Lógica", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Rede", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
     let mut extra: Vec<String> = vec![];
     for s in &all { let c = s["category"].as_str().unwrap_or(""); if !ORDER.contains(&c) && !extra.iter().any(|e| e == c) { extra.push(c.to_string()); } }
     all.sort_by_key(|s| { let c = s["category"].as_str().unwrap_or(""); ORDER.iter().position(|o| *o == c).unwrap_or_else(|| ORDER.len() + extra.iter().position(|e| e == c).unwrap_or(0)) });
@@ -1682,6 +2041,7 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
         "trigger.file" => json!({"path":p["path"]}),
         "util.text" => p["text"].clone(),
         "util.output" => input,
+        k if k.starts_with("json.") => json_node(k, &p)?,
         "logic.if" => {
             let pass = condition(&p)?;
             return Ok(if pass {
@@ -2531,7 +2891,7 @@ mod tests {
         let kinds: Vec<&str> = all.as_array().unwrap().iter().filter_map(|s| s["type"].as_str()).collect();
         let unique: HashSet<&str> = kinds.iter().copied().collect();
         assert_eq!(kinds.len(), unique.len());
-        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm"] { assert!(unique.contains(k), "{k}"); }
+        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm", "json.get", "json.group"] { assert!(unique.contains(k), "{k}"); }
         // RFC 4231, caso 2
         assert_eq!(hmac_sha256_hex(b"Jefe", b"what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
         assert!(same_secret("abc", "abc") && !same_secret("abc", "abd") && !same_secret("abc", "abcd"));
