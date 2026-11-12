@@ -326,35 +326,45 @@ A janela **Agentes de IA** guarda o programa, o modelo e o esforço de cada agen
 
 Os agentes cadastrados aparecem no nó **Agente de IA**, no **Revisar decisão**, no **Criar com IA** e no Conselho de agentes. O esforço vai de mínimo a máximo; cada programa aceita os níveis dele e recusa os outros com a própria mensagem.
 
-### Automatize um site
+### Teste e automatize um site
 
-O plugin **Navegador** acrescenta o nó **Automatizar site**: ele abre o Edge (ou o Chrome) num perfil próprio, entra no endereço e segue os passos, de cima para baixo.
+O plugin **Navegador** traz dois nós que abrem o Edge (ou o Chrome) num perfil próprio e seguem um roteiro: **Testar site** (categoria QA) e **Automatizar site**. Precisam do Node.js 22 ou mais novo.
+
+**Grave em vez de escrever.** No painel do nó, **Gravar no navegador** abre o site de verdade. Use ele normalmente: cada clique, texto digitado e opção escolhida vira um passo no roteiro, na hora. Uma barra no topo da página mostra que está gravando e tem:
+
+- **Ler campo:** o próximo clique escolhe um texto da tela para o teste devolver. Você dá um nome (`saldo`) e ele sai em `values.saldo`.
+- **Conferir:** o próximo clique vira uma conferência de que aquele texto continua lá.
+- **Pausar:** usar o site sem gravar. **⇅** leva a barra para o outro lado, se ela estiver em cima do que você quer clicar.
+- **Concluir:** fecha o navegador e deixa os passos no nó.
+
+O gravador escolhe o jeito mais firme de achar cada elemento (id, atributos de teste como `data-testid`, nome do campo, texto do botão) e nunca grava senha: no lugar dela fica `{{vault:senha}}`, para você guardar o valor no Cofre. Sem endereço no nó, o primeiro site que você abrir vira o endereço. Os passos também podem ser escritos ou ajustados à mão; a cor da borda diz o tipo (azul: ação, verde: conferência, amarelo: leitura, cinza: espera).
 
 | Passo | O que faz |
 |---|---|
-| Clicar | Clica no elemento. |
-| Digitar | Limpa o campo e digita o valor. |
-| Escolher opção | Escolhe, numa lista, a opção com esse texto ou valor. |
-| Apertar tecla | Enter, Tab, Escape, Espaço, setas. |
-| Esperar aparecer | Só continua quando o elemento aparece. |
-| Ler texto | Guarda o texto do elemento. O valor do passo é o nome do campo na saída. |
-| Ir para endereço | Abre outro endereço na mesma janela. |
-| Esperar (segundos) | Pausa. |
-| Capturar tela | Grava um PNG da página no arquivo informado. |
+| Clicar, Digitar, Escolher opção, Apertar tecla, Passar o mouse, Ir para endereço | As ações. **Onde** é um seletor CSS (`#senha`) ou `texto=Entrar`. |
+| Conferir texto | O elemento tem que conter o texto. A falha diz o que estava lá. |
+| Conferir que aparece / que sumiu | O elemento tem que estar, ou deixar de estar, na tela. |
+| Conferir endereço / título | O endereço ou o título da página tem que conter o trecho. |
+| Conferir quantidade | Quantos elementos casam com o seletor (linhas de uma tabela, itens de uma lista). |
+| Comparar com a referência (visual) | Compara a tela com uma imagem guardada. A primeira execução grava a referência; as seguintes falham se mudar mais que a **Diferença visual aceita**, e gravam uma imagem com as diferenças em vermelho. |
+| Checar acessibilidade (básico) | Idioma e título da página, imagens sem texto alternativo, botões e links sem nome, campos sem rótulo, falta de título principal. |
+| Ler campo (devolver) | Guarda o texto do elemento em `values`, com o nome que você der. |
+| Capturar tela, Esperar aparecer, Esperar (segundos) | Imagem num arquivo e esperas. |
 
-Em **Onde**, use um seletor CSS (`#senha`, `.botao`, `input[name=email]`) ou `texto=Entrar`, que acha o botão, o link ou o campo pelo texto visível (ou pelo texto de exemplo do campo). Cada passo espera o elemento aparecer, até o limite do nó.
+**Testar site** sai por **sim** (passou) ou **não** (falhou) e entrega cada passo com o tempo e o erro, os campos lidos, os erros de JavaScript e os pedidos que falharam na página, e o caminho de um relatório em HTML com a tela da hora da falha. No painel, o resultado aparece como placar, com **Ver a tela na hora da falha** e **Abrir o relatório**; no quadro, o nó mostra quantos passaram. Dá para escolher a tela (computador, tablet, celular), seguir depois de uma falha para anotar todas, e reprovar por erro de JavaScript. Quando falha com a janela à vista, ela fica aberta onde parou.
 
-O nó entrega `url`, `title` e `values`, com o que os passos **Ler texto** guardaram: `{{input.values.saldo}}`.
+**Automatizar site** é o mesmo motor sem o placar: para na primeira falha e entrega `{ url, title, values }`. Serve para rotinas, como trocar a senha de um usuário.
 
-Para trocar uma senha num site, por exemplo:
+### Mais ferramentas de QA
 
-1. Guarde a senha no Cofre (`Alt+8`) com o nome `site` e libere para o plugin **Navegador** e o programa `node`.
-2. No nó, ponha o endereço da página de login e os passos: **Digitar** em `#usuario`, **Digitar** em `#senha` com `{{vault:site}}`, **Clicar** em `texto=Entrar`, e assim por diante até **Clicar** em `texto=Salvar`.
-3. Termine com **Ler texto** na mensagem de confirmação, para o fluxo saber que deu certo.
+| Nó | O que faz |
+|---|---|
+| Testar API | Chama um endereço e confere status, tempo, texto da resposta, campos do JSON (`itens.0.nome`) e cabeçalhos. Sai por sim ou não, com cada conferência e o que veio no lugar do esperado. |
+| Dados de teste | Gera pessoas de mentira para preencher formulários: nome, e-mail, CPF e CNPJ com dígitos válidos, celular, nascimento, CEP, endereço, empresa, senha forte, UUID e frase. Um objeto, ou uma lista. |
+| Teste de carga leve | Até 500 chamadas GET, até 20 ao mesmo tempo. Entrega média, mediana, 95%, máximo, chamadas por segundo e os status. Reprova pelo tempo ou pela taxa de erro. Use só em sistemas seus ou com autorização. |
+| Relatório de testes | Junta resultados de Testar site e Testar API numa página HTML, num JUnit XML (Jenkins, GitLab, Azure) ou em Markdown. |
 
-A senha não fica no fluxo nem aparece no histórico: o núcleo entrega o valor só ao programa do nó e o tira do que volta. O perfil do navegador é só desse nó e guarda os logins entre as execuções. Se um passo falha, a execução diz qual; com a janela à mostra, ela fica aberta para você ver onde parou.
-
-Esse nó precisa do Node.js 22 ou mais novo. Sites com CAPTCHA ou confirmação em dois passos param no passo em que a página pede isso.
+Um roteiro comum: **Dados de teste** → **Testar site** (os passos usam `{{input.nome}}`, `{{input.cpf}}`) → na saída **não**, **Relatório de testes** e **Mensagem no Slack, Teams ou Discord**.
 
 ### Crie nós com um plugin
 
@@ -388,6 +398,7 @@ let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
 - **Entrada do programa:** `{ node, params, input, data, secrets }`. As expressões já chegam resolvidas em `params`; `data` é a pasta de dados do plugin.
 - **Saída:** o que o programa escreve na saída padrão, lido como JSON (ou como texto). Código de saída diferente de zero falha o nó com o que ele escreveu na saída de erro. Com mais de uma saída em `outputs`, responda `{ "port": "nome", "value": ... }`.
 - **Segredos:** `{{vault:nome}}` num parâmetro não vai no JSON. O valor chega numa variável de ambiente, e `secrets` diz qual (`{ "{{vault:nome}}": "BS_SECRET_0" }`). O Cofre só entrega se o segredo estiver liberado para o plugin e para o programa.
+- **Gravador:** `"record": { "args": ["arquivo.js", "--record"] }` no nó e `"recorder": true` num campo `rows` põem o botão **Gravar** no painel. O programa recebe `{ params, data }` na primeira linha da entrada e escreve um passo por linha (`{ "do", "on", "value" }`); quando a entrada fecha, ele encerra. Numa opção de `select`, `"tone": "act" | "check" | "read" | "wait"` dá a cor do passo.
 - O programa roda na pasta do plugin, com o Node.js, o Python ou o que estiver no PC. O plugin **Navegador** (`app/plugins/navegador`) é um exemplo completo.
 
 Dá para pedir um nó desses ao **IAMaker** sem sair do Automator: no fim da paleta, **Criar um nó novo com IA** (ou **Criar o nó "…" com IA**, quando a busca não acha nada) abre o IAMaker num plugin novo com o pedido já começado. O guia do IAMaker ensina a IA a escrever o `automator.json`, o programa e a parte de Recebe/Devolve. Quando o plugin fica pronto, o nó aparece na paleta na próxima vez que ela abrir.

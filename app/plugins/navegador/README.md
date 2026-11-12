@@ -1,9 +1,9 @@
 # Navegador
 
-Acrescenta ao Automator o nó **Automatizar site**: abre o Edge (ou o Chrome) num perfil próprio, entra num endereço e segue os passos que você montar: clicar, digitar, escolher, apertar tecla, esperar, ler texto e capturar a tela.
+Nós para o Automator que abrem um site no Edge (ou no Chrome) e seguem um roteiro, sem dependências: o `site.js` fala com o navegador pelo protocolo de depuração (CDP). Precisa do Node.js 22 ou mais novo.
 
-Senhas vão como `{{vault:site}}` no passo **Digitar**: guarde no Cofre (`Alt+8`) e libere para este plugin e para o programa `node`.
+- **Testar site** (categoria QA): roteiro com conferências, placar de passou/falhou, tela da hora da falha, comparação visual, checagem básica de acessibilidade e relatório em HTML.
+- **Automatizar site**: o mesmo motor para rotinas; para na primeira falha e entrega `{ url, title, values }`.
+- **Gravar no navegador**: `node site.js --record` abre o site com uma barra de gravação; cada ação vira um passo. Senhas nunca são gravadas: fica `{{vault:senha}}`.
 
-Precisa do Node.js 22 ou mais novo. O plugin é só o `automator.json` (o nó e os campos) e o `site.js` (quem controla o navegador): serve de exemplo para criar outros nós.
-
-Veja [Automatize um site](../../../docs/AUTOMACOES.md#automatize-um-site).
+O perfil do navegador, as evidências e os relatórios ficam na pasta de dados do plugin. O guia completo está em `docs/AUTOMACOES.md`, em "Teste e automatize um site".

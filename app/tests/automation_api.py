@@ -81,7 +81,7 @@ def run():
 
             specs = api("automator/catalog")
             # 13 nós de sempre, 17 de arquivos, texto, Windows e gatilhos automáticos, 16 de texto e mídia, 22 de endpoint, segurança, auditoria, integrações, dados e saúde do PC, mais os dos plugins ligados
-            assert len([s for s in specs if not s["type"].startswith("plugin.")]) == 81
+            assert len([s for s in specs if not s["type"].startswith("plugin.")]) == 85
             assert not any("ollama" in s["type"] or "llm.local" in s["type"] for s in specs)
             api("automator/run", expected=405)
             api("automator/flows", {"name": "Inválido", "nodes": []}, 400)

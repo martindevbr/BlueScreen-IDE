@@ -756,6 +756,12 @@ fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
         "image.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com o tamanho da imagem.", json!({"width": 1920, "height": 1080})),
         "media.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com duração, tamanho e formatos.", json!({"seconds": 93.4, "duration": "00:01:33", "size": 10485760, "format": "mov,mp4", "width": 1920, "height": 1080, "video": "h264", "audio": "aac"})),
         k if k.starts_with("image.") || k.starts_with("audio.") || k.starts_with("video.") => ("Nada em especial: o arquivo vem do campo (pode ser a saída de outro nó).", FILE, n),
+        "qa.api" => ("Qualquer dado, para usar no endereço, nos cabeçalhos e no corpo.", "O resultado do teste, pela saída sim (passou) ou não (falhou): cada conferência, o status, o tempo e a resposta.",
+            json!({"ok": true, "name": "GET https://exemplo.com/api", "passed": 2, "failed": 0, "total": 2, "status": 200, "ms": 180, "checks": [{"name": "Status", "ok": true, "got": 200, "expected": "200"}], "body": {"itens": []}})),
+        "qa.data" => ("Nada.", "Um objeto com os dados gerados (ou uma lista, quando pede mais de um).", json!({"nome": "Ana Souza", "email": "ana.souza482@exemplo.com", "cpf": "529.982.247-25", "telefone": "(11) 98765-4321"})),
+        "qa.load" => ("Nada em especial: o endereço vem do campo.", "As medidas da carga, pela saída sim (dentro dos limites) ou não.",
+            json!({"ok": true, "name": "Carga em https://exemplo.com/", "requests": 50, "succeeded": 50, "failed": 0, "error_percent": 0.0, "avg_ms": 120, "p50_ms": 110, "p95_ms": 240, "max_ms": 310, "seconds": 1.4, "per_second": 35.7, "statuses": {"200": 50}, "error": ""})),
+        "qa.report" => ("O resultado de Testar site ou Testar API, ou uma lista deles.", "Objeto com o caminho do arquivo gravado e os totais.", json!({"path": "C:\\Temp\\relatorio-testes.html", "ok": true, "passed": 5, "failed": 0, "skipped": 0, "total": 5})),
         "json.get" => ("Um objeto ou uma lista (texto em JSON também vale).", "O valor do campo: texto, número, objeto ou lista.", n),
         "json.pick" => ("Um objeto, ou uma lista de objetos.", "Objeto só com os campos escolhidos (ou a lista deles).", n),
         "json.omit" => ("Um objeto, ou uma lista de objetos.", "O mesmo JSON sem os campos removidos.", n),
@@ -799,6 +805,9 @@ fn io_kind(kind: &str) -> Option<(&'static str, &'static str)> {
         k if k.starts_with("image.") => ("image", "image"),
         k if k.starts_with("audio.") => ("audio", "audio"),
         k if k.starts_with("video.") => ("video", "video"),
+        "qa.api" | "qa.load" => ("any", "object"),
+        "qa.data" => ("none", "object"),
+        "qa.report" => ("object", "object"),
         "json.get" => ("object", "any"),
         "json.pick" | "json.omit" | "json.set" | "json.merge" => ("object", "object"),
         "json.text" => ("object", "text"),
@@ -1057,6 +1066,274 @@ fn flow_issues(f: &Flow) -> Vec<String> {
     out.truncate(20);
     out
 }
+/// Ferramentas de QA que não precisam de navegador: teste de API, dados de teste, carga leve e relatório.
+fn qa_catalog() -> Value {
+    json!([
+        {"type":"qa.api","name":"Testar API","category":"QA","desc":"Chama um endereço e confere a resposta: status, tempo, texto e campos do JSON.","inputs":["in"],"outputs":["true","false"],
+         "params":{"name":"","method":"GET","url":"","headers":{},"body":"","checks":[{"what":"status","path":"","op":"eq","value":"200"}],"timeout_s":30},
+         "fields":[{"name":"name","label":"Nome do teste","kind":"text","placeholder":"Lista de clientes responde"},
+            {"name":"method","label":"Método","kind":"select","options":["GET","POST","PUT","PATCH","DELETE","HEAD"]},
+            {"name":"url","label":"Endereço","kind":"text","placeholder":"https://…"},
+            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Token: {\"Authorization\": \"Bearer {{vault:nome}}\"}."},
+            {"name":"body","label":"Corpo","kind":"area","show":{"method":["POST","PUT","PATCH","DELETE"]}},
+            {"name":"checks","label":"Conferências","kind":"rows","add":"Conferência","help":"Campo do JSON: o caminho, como itens.0.nome. Cabeçalho: o nome dele. O teste passa quando todas valem.",
+             "columns":[
+                {"name":"what","kind":"select","options":[{"value":"status","label":"Status","tone":"check"},{"value":"time","label":"Tempo (ms)","tone":"check"},{"value":"body","label":"Texto da resposta","tone":"check"},{"value":"field","label":"Campo do JSON","tone":"read"},{"value":"header","label":"Cabeçalho","tone":"read"}]},
+                {"name":"path","placeholder":"itens.0.nome ou content-type","hide":{"what":["status","time","body"]}},
+                {"name":"op","kind":"select","options":[{"value":"eq","label":"é igual a"},{"value":"ne","label":"é diferente de"},{"value":"contains","label":"contém"},{"value":"not_contains","label":"não contém"},{"value":"gt","label":"é maior que"},{"value":"lt","label":"é menor que"},{"value":"not_empty","label":"existe"},{"value":"empty","label":"está vazio"}]},
+                {"name":"value","placeholder":"Valor esperado","hide":{"op":["not_empty","empty"]}}]},
+            {"name":"timeout_s","label":"Tempo limite (segundos)","kind":"number","min":1,"max":300}]},
+        {"type":"qa.data","name":"Dados de teste","category":"QA","desc":"Gera pessoas de mentira para preencher formulários: nome, e-mail, CPF válido, telefone, endereço.","inputs":["in"],"outputs":["out"],
+         "params":{"fields":["nome","email","cpf","telefone"],"count":1},
+         "fields":[{"name":"fields","label":"O que gerar","kind":"checks","options":[
+                {"value":"nome","label":"Nome"},{"value":"email","label":"E-mail"},{"value":"cpf","label":"CPF válido"},{"value":"cnpj","label":"CNPJ válido"},{"value":"telefone","label":"Celular"},
+                {"value":"nascimento","label":"Data de nascimento"},{"value":"cep","label":"CEP"},{"value":"endereco","label":"Endereço"},{"value":"empresa","label":"Empresa"},{"value":"senha","label":"Senha forte"},{"value":"uuid","label":"Identificador (UUID)"},{"value":"texto","label":"Frase"}]},
+            {"name":"count","label":"Quantos","kind":"number","min":1,"max":500,"help":"Um: entrega um objeto, para usar como {{input.nome}}. Mais de um: entrega uma lista."}]},
+        {"type":"qa.load","name":"Teste de carga leve","category":"QA","desc":"Faz várias chamadas ao mesmo tempo e mede tempo e erros. Use só em sistemas seus.","inputs":["in"],"outputs":["true","false"],
+         "params":{"url":"","total":50,"concurrency":5,"max_p95_ms":0,"max_error_percent":0,"timeout_s":15},
+         "fields":[{"name":"url","label":"Endereço","kind":"text","placeholder":"https://…","help":"Só GET. Use em sistemas seus, ou com autorização de quem cuida do sistema."},
+            {"name":"total","label":"Chamadas","kind":"number","min":1,"max":500},
+            {"name":"concurrency","label":"Ao mesmo tempo","kind":"number","min":1,"max":20},
+            {"name":"max_p95_ms","label":"Reprova se 95% passarem de (ms)","kind":"number","min":0,"max":600000,"help":"Zero: não confere o tempo."},
+            {"name":"max_error_percent","label":"Erros aceitos (%)","kind":"number","min":0,"max":100},
+            {"name":"timeout_s","label":"Tempo limite de cada chamada (segundos)","kind":"number","min":1,"max":120}]},
+        {"type":"qa.report","name":"Relatório de testes","category":"QA","desc":"Junta resultados de teste num arquivo: página HTML, JUnit (para CI) ou Markdown.","inputs":["in"],"outputs":["out"],
+         "params":{"results":"{{input}}","title":"Relatório de testes","format":"html","path":""},
+         "fields":[{"name":"results","label":"Resultados","kind":"text","help":"O resultado de Testar site ou Testar API, ou uma lista deles."},
+            {"name":"title","label":"Título","kind":"text"},
+            {"name":"format","label":"Formato","kind":"select","options":[{"value":"html","label":"Página HTML"},{"value":"junit","label":"JUnit XML (Jenkins, GitLab, Azure)"},{"value":"markdown","label":"Markdown"}]},
+            {"name":"path","label":"Gravar em","kind":"text","pick":"save","placeholder":"vazio: pasta temporária"}]}
+    ])
+}
+/// CPF ou CNPJ com os dígitos verificadores certos (para formulário aceitar; não é de ninguém de propósito).
+fn fake_doc(n: usize) -> String {
+    let rnd = |m: u32| rand::random::<u32>() % m;
+    let mut d: Vec<u32> = (0..n).map(|_| rnd(10)).collect();
+    if n == 12 { d[8] = 0; d[9] = 0; d[10] = 0; d[11] = 1; } // CNPJ: matriz 0001
+    for _ in 0..2 {
+        let len = d.len();
+        let sum: u32 = if n == 9 { d.iter().enumerate().map(|(i, x)| x * (len as u32 + 1 - i as u32)).sum() } else { d.iter().rev().enumerate().map(|(i, x)| x * (2 + (i as u32 % 8))).sum() };
+        let r = sum % 11;
+        d.push(if r < 2 { 0 } else { 11 - r });
+    }
+    let t: String = d.iter().map(|x| char::from_digit(*x, 10).unwrap()).collect();
+    if n == 9 { format!("{}.{}.{}-{}", &t[0..3], &t[3..6], &t[6..9], &t[9..11]) } else { format!("{}.{}.{}/{}-{}", &t[0..2], &t[2..5], &t[5..8], &t[8..12], &t[12..14]) }
+}
+fn fake_person(fields: &[String]) -> Value {
+    const FIRST: [&str; 24] = ["Ana", "Bruno", "Carla", "Diego", "Eduarda", "Felipe", "Gabriela", "Henrique", "Isabela", "João", "Karina", "Lucas", "Mariana", "Nicolas", "Olívia", "Pedro", "Rafaela", "Samuel", "Tatiana", "Vinícius", "Yasmin", "Caio", "Lívia", "Thiago"];
+    const LAST: [&str; 20] = ["Silva", "Santos", "Oliveira", "Souza", "Pereira", "Costa", "Rodrigues", "Almeida", "Nascimento", "Lima", "Araújo", "Fernandes", "Carvalho", "Gomes", "Martins", "Rocha", "Ribeiro", "Alves", "Monteiro", "Barbosa"];
+    const STREET: [&str; 10] = ["Rua das Flores", "Avenida Brasil", "Rua Sete de Setembro", "Rua XV de Novembro", "Avenida Paulista", "Rua da Praia", "Rua São João", "Avenida Independência", "Rua Bela Vista", "Travessa do Sol"];
+    const CITY: [(&str, &str); 8] = [("São Paulo", "SP"), ("Rio de Janeiro", "RJ"), ("Belo Horizonte", "MG"), ("Porto Alegre", "RS"), ("Curitiba", "PR"), ("Salvador", "BA"), ("Recife", "PE"), ("Fortaleza", "CE")];
+    const COMPANY: [&str; 8] = ["Aurora Tecnologia", "Mercado Bom Preço", "Clínica Vida", "Transportes Rota Sul", "Padaria Pão Quente", "Estúdio Prisma", "Construtora Horizonte", "Escola Saber"];
+    const WORDS: [&str; 16] = ["teste", "pedido", "cliente", "entrega", "urgente", "confirmar", "cadastro", "novo", "sistema", "ajuste", "verificar", "pagamento", "contato", "amanhã", "relatório", "suporte"];
+    let rnd = |m: usize| rand::random::<u32>() as usize % m;
+    let (first, last) = (FIRST[rnd(FIRST.len())], LAST[rnd(LAST.len())]);
+    let plain = |t: &str| t.to_lowercase().chars().map(|c| match c { 'á' | 'ã' | 'â' => 'a', 'é' | 'ê' => 'e', 'í' => 'i', 'ó' | 'õ' | 'ô' => 'o', 'ú' => 'u', 'ç' => 'c', c => c }).collect::<String>();
+    let mut o = serde_json::Map::new();
+    for f in fields {
+        let v = match f.as_str() {
+            "nome" => format!("{first} {last}"),
+            "email" => format!("{}.{}{}@exemplo.com", plain(first), plain(last), rnd(900) + 100),
+            "cpf" => fake_doc(9),
+            "cnpj" => fake_doc(12),
+            "telefone" => format!("({}) 9{:04}-{:04}", [11, 21, 31, 41, 51, 61, 71, 81][rnd(8)], rnd(10000), rnd(10000)),
+            "nascimento" => format!("{:02}/{:02}/{}", rnd(28) + 1, rnd(12) + 1, 1960 + rnd(45)),
+            "cep" => format!("{:05}-{:03}", rnd(89999) + 10000, rnd(1000)),
+            "endereco" => { let c = CITY[rnd(CITY.len())]; format!("{}, {} - {}/{}", STREET[rnd(STREET.len())], rnd(1900) + 10, c.0, c.1) }
+            "empresa" => COMPANY[rnd(COMPANY.len())].to_string(),
+            "senha" => { const A: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; let mut t: String = (0..10).map(|_| A[rnd(A.len())] as char).collect(); t.push_str(["!7", "@4", "#9", "$2"][rnd(4)]); t }
+            "uuid" => { let (a, b) = (rand::random::<u64>(), rand::random::<u64>()); format!("{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}", a >> 32, (a >> 16) & 0xffff, a & 0xfff, 0x8000 | (b >> 48) & 0x3fff, b & 0xffff_ffff_ffff) }
+            "texto" => { let n = 5 + rnd(5); let mut t = (0..n).map(|_| WORDS[rnd(WORDS.len())]).collect::<Vec<_>>().join(" "); if let Some(c) = t.get_mut(0..1) { c.make_ascii_uppercase(); } t.push('.'); t }
+            _ => continue,
+        };
+        o.insert(f.clone(), json!(v));
+    }
+    Value::Object(o)
+}
+/// Casos de teste a partir de um resultado (ou de uma lista): os passos de Testar site, as conferências de Testar
+/// API, ou o resultado sozinho. Cada caso: (grupo, nome, passou, ms, erro).
+fn qa_cases(v: &Value) -> Vec<(String, String, Option<bool>, u64, String)> {
+    let mut out = vec![];
+    for r in list_of(&json_in(v)) {
+        let r = json_in(&r);
+        let suite = r["name"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or("Teste").to_string();
+        let rows = r["steps"].as_array().or_else(|| r["checks"].as_array());
+        match rows {
+            Some(rows) if !rows.is_empty() => for x in rows {
+                let name = [x["n"].as_u64().filter(|n| *n > 0).map(|n| format!("{n}.")).unwrap_or_default(), stringify(&x["name"]), x["on"].as_str().unwrap_or("").to_string()].into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
+                out.push((suite.clone(), name, if x["skipped"] == true { None } else { Some(x["ok"] == true) }, x["ms"].as_u64().unwrap_or(0), x["error"].as_str().unwrap_or("").to_string()));
+            },
+            _ => out.push((suite.clone(), suite, Some(r["ok"] == true || r["failed"].as_u64() == Some(0)), r["ms"].as_u64().unwrap_or(0), r["error"].as_str().unwrap_or("").to_string())),
+        }
+    }
+    out
+}
+async fn qa_node(kind: &str, p: &Value) -> ApiResult<Value> {
+    let branch = |ok: bool, v: Value| if ok { json!({"true": v}) } else { json!({"false": v}) };
+    match kind {
+        "qa.api" => {
+            let url = text_of(p, "url");
+            if url.trim().is_empty() { return Err(fail("informe o endereço da API", 400)); }
+            let method = p["method"].as_str().unwrap_or("GET").to_uppercase();
+            let mut req = json!({"url": url.trim(), "method": method, "headers": p["headers"], "timeout": p["timeout_s"].as_u64().unwrap_or(30).clamp(1, 300) * 1000});
+            let body = text_of(p, "body");
+            if !matches!(method.as_str(), "GET" | "HEAD") && !body.is_empty() { req["body"] = json!(body); }
+            let began = std::time::Instant::now();
+            let v = service("automator", "plugin/fetch", req).await?;
+            let ms = began.elapsed().as_millis() as u64;
+            let text = v["body"].as_str().unwrap_or("");
+            let parsed = serde_json::from_str::<Value>(text).ok();
+            let mut checks = vec![];
+            for c in p["checks"].as_array().into_iter().flatten() {
+                let (what, path, op) = (c["what"].as_str().unwrap_or("status"), text_of(c, "path"), c["op"].as_str().unwrap_or("eq"));
+                let path = path.trim();
+                let (label, got) = match what {
+                    "time" => ("Tempo (ms)".to_string(), json!(ms)),
+                    "body" => ("Texto da resposta".to_string(), json!(text)),
+                    "field" => (format!("Campo {path}"), parsed.as_ref().and_then(|j| dig(j, path)).unwrap_or(Value::Null)),
+                    "header" => (format!("Cabeçalho {path}"), v["headers"].as_object().and_then(|h| h.iter().find(|(k, _)| k.eq_ignore_ascii_case(path)).map(|(_, x)| x.clone())).unwrap_or(Value::Null)),
+                    _ => ("Status".to_string(), v["status"].clone()),
+                };
+                let ok = condition(&json!({"value": got, "op": op, "equals": c["value"]})).unwrap_or(false);
+                let shown = stringify(&got).chars().take(160).collect::<String>();
+                let rule = match op { "ne" => "ser diferente de", "contains" => "conter", "not_contains" => "não conter", "gt" => "ser maior que", "lt" => "ser menor que", "not_empty" => "existir", "empty" => "estar vazio", _ => "ser igual a" };
+                let mut row = json!({"name": label, "ok": ok, "got": got, "expected": c["value"]});
+                if what == "body" { row["got"] = json!(shown); }
+                if !ok { row["error"] = json!(if matches!(op, "not_empty" | "empty") { format!("devia {rule}, mas veio \"{shown}\"") } else { format!("devia {rule} \"{}\", mas veio \"{shown}\"", stringify(&c["value"])) }); }
+                checks.push(row);
+            }
+            let failed = checks.iter().filter(|c| c["ok"] != true).count();
+            let name = text_of(p, "name");
+            Ok(branch(failed == 0, json!({"ok": failed == 0, "name": if name.trim().is_empty() { format!("{method} {}", url.trim()) } else { name }, "passed": checks.len() - failed, "failed": failed, "total": checks.len(),
+                "status": v["status"], "ms": ms, "checks": checks,
+                // resposta grande não vai inteira para o histórico: fica o começo dela
+                "body": match parsed { Some(j) if text.len() <= 8_000 => j, _ => json!(text.chars().take(2000).collect::<String>()) }})))
+        }
+        "qa.data" => {
+            let fields: Vec<String> = p["fields"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+            if fields.is_empty() { return Err(fail("escolha pelo menos um dado para gerar", 400)); }
+            let count = p["count"].as_u64().unwrap_or(1).clamp(1, 500);
+            Ok(json!({"out": if count == 1 { fake_person(&fields) } else { Value::Array((0..count).map(|_| fake_person(&fields)).collect()) }}))
+        }
+        "qa.load" => {
+            use futures_util::StreamExt;
+            let url = reqwest::Url::parse(text_of(p, "url").trim()).ok().filter(|u| matches!(u.scheme(), "http" | "https")).ok_or_else(|| fail("informe o endereço completo, com http:// ou https://", 400))?;
+            let total = p["total"].as_u64().unwrap_or(50).clamp(1, 500) as usize;
+            let conc = p["concurrency"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
+            let limit = Duration::from_secs(p["timeout_s"].as_u64().unwrap_or(15).clamp(1, 120));
+            let began = std::time::Instant::now();
+            let hits: Vec<(u16, u64)> = futures_util::stream::iter(0..total).map(|_| { let u = url.clone(); async move {
+                let t = std::time::Instant::now();
+                let status = match tokio::time::timeout(limit, async { let r = AUDIT.get(u).send().await?; let s = r.status().as_u16(); let _ = r.bytes().await; Ok::<u16, reqwest::Error>(s) }).await { Ok(Ok(s)) => s, _ => 0 };
+                (status, t.elapsed().as_millis() as u64)
+            } }).buffer_unordered(conc).collect().await;
+            let secs = began.elapsed().as_secs_f64().max(0.001);
+            let mut times: Vec<u64> = hits.iter().map(|h| h.1).collect();
+            times.sort_unstable();
+            let at = |q: f64| times[((times.len() as f64 * q).ceil() as usize).clamp(1, times.len()) - 1];
+            let failed = hits.iter().filter(|h| h.0 == 0 || h.0 >= 400).count();
+            let mut statuses = serde_json::Map::new();
+            for h in &hits { let k = if h.0 == 0 { "sem resposta".to_string() } else { h.0.to_string() }; let n = statuses.get(&k).and_then(Value::as_u64).unwrap_or(0); statuses.insert(k, json!(n + 1)); }
+            let err_pct = failed as f64 * 100.0 / total as f64;
+            let (max_p95, max_err) = (p["max_p95_ms"].as_u64().unwrap_or(0), p["max_error_percent"].as_f64().unwrap_or(0.0));
+            let mut why = vec![];
+            if err_pct > max_err { why.push(format!("{err_pct:.1}% das chamadas falharam (o aceito é {max_err}%)")); }
+            if max_p95 > 0 && at(0.95) > max_p95 { why.push(format!("95% das chamadas levaram até {} ms (o limite é {max_p95} ms)", at(0.95))); }
+            Ok(branch(why.is_empty(), json!({"ok": why.is_empty(), "name": format!("Carga em {url}"), "requests": total, "succeeded": total - failed, "failed": failed, "error_percent": (err_pct * 10.0).round() / 10.0,
+                "avg_ms": times.iter().sum::<u64>() / total as u64, "p50_ms": at(0.5), "p95_ms": at(0.95), "max_ms": times[times.len() - 1], "seconds": (secs * 10.0).round() / 10.0, "per_second": (total as f64 / secs * 10.0).round() / 10.0,
+                "statuses": statuses, "error": why.join("; ")})))
+        }
+        "qa.report" => {
+            let cases = qa_cases(&p["results"]);
+            if cases.is_empty() { return Err(fail("não chegou nenhum resultado de teste", 400)); }
+            let title = text_of(p, "title");
+            let title = if title.trim().is_empty() { "Relatório de testes".to_string() } else { title };
+            let (pass, bad, skip) = (cases.iter().filter(|c| c.2 == Some(true)).count(), cases.iter().filter(|c| c.2 == Some(false)).count(), cases.iter().filter(|c| c.2.is_none()).count());
+            let e = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+            let secs = |ms: u64| format!("{:.1}", ms as f64 / 1000.0);
+            let fmt = p["format"].as_str().unwrap_or("html");
+            let (ext, body) = match fmt {
+                "junit" => ("xml", {
+                    let mut suites: Vec<String> = vec![];
+                    let mut names: Vec<&String> = vec![];
+                    for c in &cases { if !names.contains(&&c.0) { names.push(&c.0); } }
+                    for s in names {
+                        let mine: Vec<_> = cases.iter().filter(|c| &c.0 == s).collect();
+                        suites.push(format!("  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\">\n{}\n  </testsuite>", e(s), mine.len(), mine.iter().filter(|c| c.2 == Some(false)).count(), mine.iter().filter(|c| c.2.is_none()).count(), secs(mine.iter().map(|c| c.3).sum()),
+                            mine.iter().map(|c| format!("    <testcase classname=\"{}\" name=\"{}\" time=\"{}\">{}</testcase>", e(s), e(&c.1), secs(c.3), match c.2 { Some(true) => String::new(), None => "<skipped/>".into(), Some(false) => format!("<failure message=\"{}\"/>", e(&c.4)) })).collect::<Vec<_>>().join("\n")));
+                    }
+                    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"{}\" tests=\"{}\" failures=\"{bad}\">\n{}\n</testsuites>\n", e(&title), cases.len(), suites.join("\n"))
+                }),
+                "markdown" => ("md", format!("# {title}\n\n**{}** · {pass} passaram · {bad} falharam{}\n\n| | Teste | Passo | Tempo | Erro |\n|---|---|---|---|---|\n{}\n", if bad == 0 { "Passou" } else { "Falhou" }, if skip > 0 { format!(" · {skip} não rodaram") } else { String::new() },
+                    cases.iter().map(|c| format!("| {} | {} | {} | {} s | {} |", match c.2 { Some(true) => "✓", Some(false) => "✕", None => "–" }, c.0.replace('|', "\\|"), c.1.replace('|', "\\|"), secs(c.3).replace('.', ","), c.4.replace('|', "\\|").replace('\n', " "))).collect::<Vec<_>>().join("\n"))),
+                _ => ("html", format!("<!doctype html><html lang=\"pt-BR\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{t}</title><style>:root{{color-scheme:light dark;--bg:#f6f7fb;--card:#fff;--fg:#1c1f26;--mu:#6b7385;--ln:#e3e7ef;--ok:#1f9d61;--bad:#d6453d}}@media(prefers-color-scheme:dark){{:root{{--bg:#14161c;--card:#1e2129;--fg:#e6e8ee;--mu:#8a92a3;--ln:#2c313d}}}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 \"Segoe UI\",system-ui,sans-serif}}main{{max-width:920px;margin:0 auto;padding:28px 16px 48px}}h1{{margin:0 0 4px;font-size:22px;overflow-wrap:anywhere}}.sub{{color:var(--mu);font-size:13px}}.kp{{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}}.k{{flex:1 1 120px;background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:12px 14px}}.k b{{display:block;font-size:22px}}.k span{{color:var(--mu);font-size:12px}}.res b{{color:var(--{rc})}}table{{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--ln);border-radius:12px;overflow:hidden}}td{{padding:9px 10px;border-top:1px solid var(--ln);vertical-align:top;overflow-wrap:anywhere}}tr:first-child td{{border-top:0}}.st{{width:28px;font-weight:700;text-align:center}}.ok .st{{color:var(--ok)}}.bad .st{{color:var(--bad)}}.mu{{color:var(--mu);white-space:nowrap}}.err{{color:var(--bad);margin-top:3px}}.skip{{opacity:.55}}</style><main><h1>{t}</h1><div class=\"sub\">{when}</div><div class=\"kp\"><div class=\"k res\"><b>{res}</b><span>resultado</span></div><div class=\"k\"><b>{pass}</b><span>passaram</span></div><div class=\"k\"><b>{bad}</b><span>falharam</span></div><div class=\"k\"><b>{n}</b><span>conferências</span></div></div><table>{rows}</table></main></html>",
+                    t = e(&title), rc = if bad == 0 { "ok" } else { "bad" }, res = if bad == 0 { "Passou" } else { "Falhou" }, n = cases.len(), when = chrono::Local::now().format("%d/%m/%Y %H:%M"),
+                    rows = cases.iter().map(|c| format!("<tr class=\"{}\"><td class=\"st\">{}</td><td class=\"mu\">{}</td><td><b>{}</b>{}</td><td class=\"mu\">{} s</td></tr>", match c.2 { Some(true) => "ok", Some(false) => "bad", None => "skip" }, match c.2 { Some(true) => "✓", Some(false) => "✕", None => "–" }, e(&c.0), e(&c.1), if c.4.is_empty() { String::new() } else { format!("<div class=\"err\">{}</div>", e(&c.4)) }, secs(c.3).replace('.', ","))).collect::<String>())),
+            };
+            let path = if text_of(p, "path").trim().is_empty() { std::env::temp_dir().join(format!("relatorio-testes-{}.{ext}", chrono::Local::now().format("%Y%m%d-%H%M%S"))) } else { path_of(p, "path")? };
+            if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) { std::fs::create_dir_all(d)?; }
+            std::fs::write(&path, body)?;
+            Ok(json!({"out": {"path": path.to_string_lossy(), "ok": bad == 0, "passed": pass, "failed": bad, "skipped": skip, "total": cases.len()}}))
+        }
+        _ => Err(fail(format!("tipo de nó desconhecido: {kind}"), 400)),
+    }
+}
+/// Gravador de um nó de plugin (`"record": { "args": [...] }` no automator.json): o programa fica rodando e cada linha
+/// JSON que ele escreve é um passo. A tela busca as linhas novas com "poll" e encerra com "stop" (a entrada do
+/// programa fecha; se ele não sair sozinho em alguns segundos, é finalizado).
+struct Rec { id: String, lines: Arc<Mutex<Vec<Value>>>, done: Arc<std::sync::atomic::AtomicBool>, err: Arc<Mutex<String>>, stdin: Option<tokio::process::ChildStdin>, child: tokio::process::Child }
+static REC: LazyLock<Mutex<Option<Rec>>> = LazyLock::new(Default::default);
+fn rec_stop() {
+    if let Some(mut r) = REC.lock().take() {
+        drop(r.stdin.take());
+        tokio::spawn(async move { tokio::time::sleep(Duration::from_secs(4)).await; let _ = r.child.start_kill(); });
+    }
+}
+async fn record(b: &Value) -> ApiResult<Value> {
+    use std::sync::atomic::Ordering::Relaxed;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+    let action = b["action"].as_str().unwrap_or("");
+    if action == "start" {
+        let s = spec(b["type"].as_str().unwrap_or("")).ok_or_else(|| fail("o plugin deste nó está desligado ou foi removido", 409))?;
+        let args: Vec<String> = s["record"]["args"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        if args.is_empty() { return Err(fail("este nó não tem gravador", 400)); }
+        rec_stop();
+        let program = s["run"]["program"].as_str().unwrap_or("node").to_string();
+        let mut cmd = tokio::process::Command::new(&program);
+        cmd.args(&args).current_dir(s["dir"].as_str().unwrap_or(".")).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000); // sem janela de console
+        let mut child = cmd.spawn().map_err(|e| fail(format!("não deu para abrir o gravador ({program}): {e}"), 500))?;
+        let mut stdin = child.stdin.take();
+        if let Some(i) = stdin.as_mut() { i.write_all(format!("{}\n", json!({"params": b["params"], "data": s["data"]})).as_bytes()).await?; i.flush().await?; }
+        let rec = Rec { id: id(), lines: Default::default(), done: Default::default(), err: Default::default(), stdin, child };
+        let (lines, done, err) = (rec.lines.clone(), rec.done.clone(), rec.err.clone());
+        let mut rec = rec;
+        if let Some(out) = rec.child.stdout.take() {
+            tokio::spawn(async move {
+                let mut r = tokio::io::BufReader::new(out).lines();
+                while let Ok(Some(l)) = r.next_line().await { if let Ok(v) = serde_json::from_str::<Value>(l.trim()) { let mut g = lines.lock(); if g.len() < 2000 { g.push(v); } } }
+                done.store(true, Relaxed);
+            });
+        }
+        if let Some(mut e) = rec.child.stderr.take() {
+            tokio::spawn(async move { let mut t = String::new(); let _ = e.read_to_string(&mut t).await; *err.lock() = t.trim().chars().take(600).collect(); });
+        }
+        let rid = rec.id.clone();
+        *REC.lock() = Some(rec);
+        return Ok(json!({"id": rid}));
+    }
+    let from = b["from"].as_u64().unwrap_or(0) as usize;
+    let (lines, done, err) = {
+        let g = REC.lock();
+        match g.as_ref().filter(|r| b["id"] == r.id.as_str()) {
+            Some(r) => (r.lines.lock().iter().skip(from).cloned().collect::<Vec<_>>(), r.done.load(Relaxed), r.err.lock().clone()),
+            None => (vec![], true, String::new()),
+        }
+    };
+    if action == "stop" { rec_stop(); }
+    Ok(json!({"lines": lines, "done": done, "error": err}))
+}
 /// Nós que os plugins ligados acrescentam. O plugin põe um `automator.json` na pasta dele:
 /// `{ "nodes": [{ "type", "name", "category", "desc", "inputs", "outputs", "params", "fields", "run": { "program", "args", "timeout" } }] }`.
 /// O tipo vira `plugin.<id do plugin>.<type>` e quem roda é o programa do plugin (ver `run_plugin_node`).
@@ -1077,7 +1354,7 @@ fn plugin_nodes() -> Vec<Value> {
                 "params": if n["params"].is_object() { n["params"].clone() } else { json!({}) }, "fields": list("fields", json!([])),
                 "plugin": p.id, "plugin_name": p.name, "dir": p.path, "data": p.data_dir, "run": n["run"],
                 "expects": n["expects"].as_str().unwrap_or(""), "returns": n["returns"].as_str().unwrap_or(""),
-                "takes": n["takes"].as_str().unwrap_or("any"), "gives": n["gives"].as_str().unwrap_or("any"),
+                "takes": n["takes"].as_str().unwrap_or("any"), "gives": n["gives"].as_str().unwrap_or("any"), "record": n["record"],
             }));
             if !n["sample"].is_null() && let Some(last) = out.last_mut() { last["sample"] = n["sample"].clone(); }
         }
@@ -1091,6 +1368,7 @@ pub fn catalog() -> Value {
     all.extend(ops_catalog().as_array().cloned().unwrap_or_default());
     all.extend(alarm_catalog().as_array().cloned().unwrap_or_default());
     all.extend(json_catalog().as_array().cloned().unwrap_or_default());
+    all.extend(qa_catalog().as_array().cloned().unwrap_or_default());
     all.extend(plugin_nodes());
     // o que cada nó espera e entrega (o plugin pode trazer o dele no automator.json)
     for s in &mut all {
@@ -1105,7 +1383,7 @@ pub fn catalog() -> Value {
         if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
     }
     // a paleta mostra um grupo por categoria, nesta ordem; as categorias dos plugins vêm depois, na ordem em que chegam
-    const ORDER: [&str; 15] = ["Gatilhos", "Lógica", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Rede", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
+    const ORDER: [&str; 16] = ["Gatilhos", "Lógica", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Rede", "QA", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
     let mut extra: Vec<String> = vec![];
     for s in &all { let c = s["category"].as_str().unwrap_or(""); if !ORDER.contains(&c) && !extra.iter().any(|e| e == c) { extra.push(c.to_string()); } }
     all.sort_by_key(|s| { let c = s["category"].as_str().unwrap_or(""); ORDER.iter().position(|o| *o == c).unwrap_or_else(|| ORDER.len() + extra.iter().position(|e| e == c).unwrap_or(0)) });
@@ -2153,6 +2431,7 @@ async fn ops_node(n: &Node, p: &Value, input: &Value) -> Option<ApiResult<Value>
 }
 
 async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
+    if n.kind.starts_with("qa.") { return qa_node(&n.kind, &p).await; }
     if let Some(r) = ops_node(n, &p, &input).await { return r; }
     let out = match n.kind.as_str() {
         "trigger.manual" => p.get("sample").cloned().unwrap_or(Value::Null),
@@ -2570,6 +2849,23 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
         let mut out = serde_json::to_value(&flow)?;
         out["warnings"] = json!(warnings);
         ok(out)
+    }));
+    // abre no programa padrão um arquivo que um nó gerou (relatório, evidência); só arquivos que existem, desses tipos
+    m.insert("automator/open".into(), route_fn(|r| async move {
+        r.local_only()?; require_enabled("automator")?;
+        if !r.is_post() { return Err(fail("use POST", 405)); }
+        let b: Value = r.body_json()?;
+        let path = std::path::PathBuf::from(b["path"].as_str().unwrap_or(""));
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if !path.is_absolute() || !path.is_file() || !["html", "htm", "png", "jpg", "jpeg", "xml", "md", "txt", "csv", "pdf"].contains(&ext.as_str()) { return Err(fail("arquivo não encontrado, ou de um tipo que não abro por aqui", 404)); }
+        open_url(&path.to_string_lossy());
+        ok(json!({"ok": true}))
+    }));
+    m.insert("automator/record".into(), route_fn(|r| async move {
+        r.local_only()?; require_enabled("automator")?;
+        if !r.is_post() { return Err(fail("use POST", 405)); }
+        let b: Value = r.body_json()?;
+        ok(record(&b).await?)
     }));
     m.insert(
         "automator/catalog".into(),
@@ -3022,7 +3318,7 @@ mod tests {
         let kinds: Vec<&str> = all.as_array().unwrap().iter().filter_map(|s| s["type"].as_str()).collect();
         let unique: HashSet<&str> = kinds.iter().copied().collect();
         assert_eq!(kinds.len(), unique.len());
-        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm", "json.get", "json.group"] { assert!(unique.contains(k), "{k}"); }
+        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm", "json.get", "json.group", "qa.api", "qa.data", "qa.load", "qa.report"] { assert!(unique.contains(k), "{k}"); }
         // RFC 4231, caso 2
         assert_eq!(hmac_sha256_hex(b"Jefe", b"what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
         assert!(same_secret("abc", "abc") && !same_secret("abc", "abd") && !same_secret("abc", "abcd"));

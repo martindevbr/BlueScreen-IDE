@@ -31,6 +31,7 @@ const IC = {
 const CATS = {
   'Gatilhos': { c: '#E3A63A', i: svg('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>') },
   'Dados': { c: 'var(--accent-2)', i: svg('<path d="M5 6h14M5 12h14M5 18h9"/>') },
+  'QA': { c: '#3FC98A', i: svg('<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M8 15h8"/>') },
   'JSON': { c: '#F2C55C', i: svg('<path d="M8 4c-2 0-3 1-3 3v2c0 1.5-1 2.5-2 3 1 .5 2 1.5 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1.5 1 2.5 2 3-1 .5-2 1.5-2 3v2c0 2-1 3-3 3"/>') },
   'Lógica': { c: 'var(--j-enum)', i: svg('<path d="M6 3v6a6 6 0 0 0 6 6h6M6 9v12M15 12l3 3-3 3"/>') },
   'Windows': { c: 'var(--ico-web)', i: svg('<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9l3 2.5L7 14M12.5 14H16"/>') },
@@ -357,6 +358,11 @@ function summary(n) {
     case 'data.datetime': return one(p.format);
     case 'data.set': return Object.keys(p.value || {}).join(', ');
     case 'logic.stop': return one(p.message);
+    case 'plugin.navegador.test': case 'plugin.navegador.site': { const k = (p.steps || []).length; return [one(p.name) || one(p.url), k ? k + (k === 1 ? ' passo' : ' passos') : 'sem passos ainda'].filter(Boolean).join(' · '); }
+    case 'qa.api': return [one(p.name), `${p.method || 'GET'} ${one(p.url)}`].filter(Boolean).join(' · ');
+    case 'qa.data': return (p.fields || []).join(', ') + (p.count > 1 ? ` × ${p.count}` : '');
+    case 'qa.load': return `${p.total} chamadas, ${p.concurrency} por vez · ${one(p.url)}`;
+    case 'qa.report': return { html: 'página HTML', junit: 'JUnit XML', markdown: 'Markdown' }[p.format] || '';
     case 'json.get': case 'json.set': return one(p.path);
     case 'json.pick': case 'json.omit': return (p.fields || []).join(', ');
     case 'json.pluck': case 'json.group': return one(p.field);
@@ -808,7 +814,7 @@ function field(n, f) {
   // um passo no desfazer por campo editado (não um por tecla)
   const set = (v) => { if (!started) { commit(); started = true; } n.params[f.name] = v; const e = nodeEls.get(n.id); if (e) { e.querySelector('.am-sum').textContent = summary(n); } changed(); };
   const err = el('small.am-ferr', { hidden: true });
-  let input, extra = null;
+  let input, extra = null, above = null;
   if (f.kind === 'select') {
     input = el('select', {}, f.options.map(o => el('option', { value: String(o.value ?? o), selected: String(o.value ?? o) === String(cur) }, o.label ?? o)));
     input.onchange = () => { set(input.value); renderInspector(); };
@@ -836,17 +842,58 @@ function field(n, f) {
         if (c.kind === 'select') { const sel = el('select', {}, c.options.map(o => el('option', { value: String(o.value), selected: o.value === r[c.name] }, o.label))); sel.onchange = () => { r[c.name] = sel.value; push(); draw(); }; return sel; }
         const t = el('input', { type: 'text', value: r[c.name] ?? '', placeholder: c.placeholder || '', spellcheck: false }); t.oninput = () => { r[c.name] = t.value; push(); }; return t;
       });
-      return el('div.am-step', el('span.am-step-n', String(i + 1)), el('div.am-step-cells', {}, cells),
+      const tone = (f.columns[0].options || []).find(o => o.value === r[f.columns[0].name])?.tone;
+      return el('div.am-step' + (tone ? '.t-' + tone : ''), el('span.am-step-n', String(i + 1)), el('div.am-step-cells', {}, cells),
         el('div.am-step-acts', i > 0 && el('button.icon-btn', { type: 'button', title: 'Subir', html: IC.up, onclick: () => { rows.splice(i - 1, 0, rows.splice(i, 1)[0]); push(); draw(); } }),
           el('button.icon-btn', { type: 'button', title: 'Remover', html: IC.x, onclick: () => { rows.splice(i, 1); push(); draw(); } })));
     }), el('button.chip.am-step-add', { type: 'button', onclick: () => { rows.push(Object.fromEntries(f.columns.map(c => [c.name, c.kind === 'select' ? c.options[0].value : '']))); push(); draw(); } }, el('span', { html: IC.plus }), el('span', f.add || 'Linha')));
     input = el('div.am-steps'); draw();
+    // gravador: o site abre de verdade e cada ação da pessoa chega aqui como um passo
+    if (f.recorder && spec(n.type)?.record) {
+      const btn = el('button.chip.am-rec', { type: 'button' }, el('i.am-rec-dot'), el('span', 'Gravar no navegador'));
+      const note = el('small.am-hint', { hidden: true });
+      let rec = null;
+      const take = (res) => {
+        let added = 0;
+        for (const l of res.lines || []) {
+          rec.from++;
+          if (l.url && !String(n.params.url || '').trim()) { n.params.url = l.url; rec.url = true; }
+          if (l.warn) bs.toast('Gravador: ' + l.warn, 'err');
+          if (l.do) { rows.push({ do: l.do, on: l.on || '', value: l.value || '' }); added++; rec.count++; }
+        }
+        if (added || rec.url) { push(); draw(); input.lastElementChild?.scrollIntoView({ block: 'nearest' }); }
+        note.textContent = `Gravando: ${rec.count} ${rec.count === 1 ? 'passo' : 'passos'}. Use o site; ao terminar, clique em Concluir lá ou em Parar aqui.`;
+        return res;
+      };
+      const stop = async () => {
+        if (!rec) return; const r = rec; clearInterval(r.timer);
+        try { take(await post('automator/record', { action: 'stop', id: r.id, from: r.from })); } catch { /* o gravador já saiu */ }
+        rec = null; A.recStop = null;
+        btn.classList.remove('on'); btn.lastChild.textContent = 'Gravar no navegador';
+        note.textContent = r.count ? `${r.count} ${r.count === 1 ? 'passo gravado' : 'passos gravados'}. Confira o roteiro e clique em Executar.` : 'Nada foi gravado.';
+        if (r.url) renderInspector();
+      };
+      btn.onclick = guard(async () => {
+        if (rec) return stop();
+        if (nodeLocked(n.id)) return denied(flowLocked() ? '' : 'node');
+        A.recStop?.();
+        const r = await post('automator/record', { action: 'start', type: n.type, params: n.params });
+        rec = { id: r.id, from: 0, count: 0 }; A.recStop = stop;
+        btn.classList.add('on'); btn.lastChild.textContent = 'Parar a gravação'; note.hidden = false;
+        note.textContent = 'Abrindo o navegador…';
+        rec.timer = setInterval(async () => {
+          if (!rec) return;
+          try { const res = take(await post('automator/record', { action: 'poll', id: rec.id, from: rec.from })); if (res.done) { if (res.error && !rec.count) bs.toast('Gravador: ' + res.error, 'err'); stop(); } } catch { /* tenta de novo */ }
+        }, 700);
+      });
+      above = el('div.am-rec-line', btn, note);
+    }
   } else if (f.kind === 'area') {
     input = el('textarea', { rows: 4, value: cur ?? '', placeholder: f.placeholder || '' }); input.oninput = () => set(input.value);
   } else {
     input = el('input', { type: 'text', value: cur ?? '', placeholder: f.placeholder || '', spellcheck: false }); input.oninput = () => set(input.value);
   }
-  let control = input;
+  let control = above ? el('div.am-rec-wrap', above, input) : input;
   // biblioteca de sons: o botão toca o escolhido
   if (f.preview === 'sound') {
     const b = el('button.icon-btn.am-browse', { type: 'button', title: 'Ouvir', html: IC.play });
@@ -890,11 +937,29 @@ function field(n, f) {
   if (!group) input.id = id;
   return el('div.am-field', el('div.am-flabel', el('label', group ? {} : { htmlFor: id }, f.label), extra), control, f.help && el('small.am-hint', f.help), err);
 }
+// ---------- resultado de teste (Testar site, Testar API): passou ou falhou, passo a passo ----------
+const isQa = (o) => !!o && typeof o === 'object' && typeof o.passed === 'number' && typeof o.failed === 'number' && (Array.isArray(o.steps) || Array.isArray(o.checks));
+const openFile = guard(async (path) => { await post('automator/open', { path }); });
+function qaView(o) {
+  const rows = o.steps || o.checks, ok = o.failed === 0, vals = Object.entries(o.values || {}).filter(([, v]) => typeof v !== 'object' || v === null);
+  return el('div.am-qa' + (ok ? '.ok' : '.bad'),
+    el('div.am-qa-top', el('span.am-qa-res', { html: ok ? IC.ok : IC.err }), el('b', ok ? 'Passou' : 'Falhou'),
+      el('span.am-qa-n', `${o.passed} de ${o.total ?? rows.length} ${o.passed === 1 ? 'passou' : 'passaram'}${o.ms != null ? ' · ' + fmtMs(o.ms) : ''}`)),
+    el('div.am-qa-bar', {}, rows.map(s => el('i' + (s.skipped ? '.skip' : s.ok ? '.ok' : '.bad'), { title: [s.n ? s.n + '.' : '', s.name, s.on].filter(Boolean).join(' ') }))),
+    el('ol.am-qa-list', {}, rows.map(s => el('li' + (s.skipped ? '.skip' : s.ok ? '.ok' : '.bad'),
+      el('span.am-qa-st', s.skipped ? '–' : s.ok ? '✓' : '✕'),
+      el('div.am-qa-tx', el('b', s.name || ''), s.on && el('code', s.on), s.note && el('small', s.note), s.error && el('p', s.error),
+        s.shot && el('button.am-link', { type: 'button', onclick: () => openFile(s.shot) }, 'Ver a tela na hora da falha')),
+      el('span.am-qa-ms', s.skipped ? '' : s.ms != null ? fmtMs(s.ms) : '')))),
+    vals.length > 0 && el('div.am-qa-vals', el('h5', 'Campos lidos da tela'), vals.map(([k, v]) => el('div', el('span', k), el('b', String(v))))),
+    (o.js_errors?.length > 0 || o.bad_requests?.length > 0) && el('p.am-qa-warn', [o.js_errors?.length ? `${o.js_errors.length} ${o.js_errors.length === 1 ? 'erro' : 'erros'} de JavaScript na página` : '', o.bad_requests?.length ? `${o.bad_requests.length} ${o.bad_requests.length === 1 ? 'pedido falhou' : 'pedidos falharam'}` : ''].filter(Boolean).join(' · ')),
+    o.report && el('button.chip.am-wide', { type: 'button', onclick: () => openFile(o.report) }, 'Abrir o relatório'));
+}
 function runBlock(id) {
   const r = currentRun()?.nodes?.find(x => x.id === id); if (!r || r.status === 'skipped') return null;
   const out = r.output && Object.keys(r.output).length === 1 ? Object.values(r.output)[0] : r.output;
   return el('section.am-sec', el('h4', 'Última execução', el('span.am-tag.' + r.status, STATUS[r.status] + (r.ms != null ? ' · ' + fmtMs(r.ms) : ''))),
-    r.error ? el('pre.am-out.err', r.error) : r.status === 'completed' ? el('pre.am-out', show(out) || '(vazio)') : null,
+    r.error ? el('pre.am-out.err', r.error) : r.status === 'completed' ? (isQa(out) ? [qaView(out), el('details.am-io-ex', el('summary', 'Ver o JSON completo'), el('pre.am-out', show(out)))] : el('pre.am-out', show(out) || '(vazio)')) : null,
     r.status === 'completed' && !nodeLocked(id) ? treatRow(id, r) : null);
 }
 function runsBlock() {
@@ -930,6 +995,7 @@ function renderInspector() {
 }
 function renderInspectorInner() {
   if (!R.insp) return;
+  A.recStop?.(); // trocou de nó no meio de uma gravação: ela para
   const keep = R.insp.scrollTop, f = A.flow;
   R.insp.classList.toggle('has-node', A.sel.size > 0);
   if (!f) { R.insp.replaceChildren(); return; }
@@ -986,7 +1052,8 @@ function paintRun(id) {
     state.replaceChildren(el('span.am-ok', { html: IC.ok }), el('span.am-ms', fmtMs(r.ms)));
     // nó do meio não repete o resultado no quadro: quem mostra é o último de cada caminho
     const leaf = !A.flow.edges.some(x => x.from === id), out = r.output && Object.keys(r.output).length === 1 ? Object.values(r.output)[0] : r.output, text = show(out);
-    box.replaceChildren(...(leaf && text ? [el('div.am-prev', text.length > 600 ? text.slice(0, 600) + '…' : text)] : []));
+    if (isQa(out)) { const rows = out.steps || out.checks; box.replaceChildren(el('div.am-qa-mini' + (out.failed ? '.bad' : '.ok'), el('b', out.failed ? `${out.failed} ${out.failed === 1 ? 'falhou' : 'falharam'}` : 'Passou'), el('span', `${out.passed} de ${out.total ?? rows.length}`), el('div.am-qa-bar', {}, rows.map(s => el('i' + (s.skipped ? '.skip' : s.ok ? '.ok' : '.bad')))))); }
+    else box.replaceChildren(...(leaf && text ? [el('div.am-prev', text.length > 600 ? text.slice(0, 600) + '…' : text)] : []));
   } else if (r.status === 'failed') { state.replaceChildren(el('span.am-bad', { html: IC.err })); box.replaceChildren(el('div.am-err', { title: r.error || '' }, r.error || 'falhou')); }
   else if (r.status === 'cancelled') { state.replaceChildren(el('span.am-ms', 'parado')); box.replaceChildren(); }
   else { state.replaceChildren(); box.replaceChildren(); }
