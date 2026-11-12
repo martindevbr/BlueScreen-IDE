@@ -545,7 +545,7 @@ async fn manage(r: &Req) -> ApiResult<()> {
                 let had = old_of(f).unwrap_or_default();
                 vault_input::Ask { label: f.label.clone(), secret: f.secret, optional: f.optional, kind: f.kind.clone(), keep: !had.is_empty(), prefill: if f.secret { String::new() } else { had } }
             }).collect();
-            let prompt = vault_input::Prompt { replace: cur.is_some(), name: name.clone(), hosts: hosts.clone(), programs: programs.clone(), fields: asks };
+            let prompt = vault_input::Prompt { replace: cur.is_some(), name: name.clone(), hosts: hosts.clone(), programs: programs.clone(), fields: asks, place: "" };
             let got = {
                 let _g = ASKING.try_lock().map_err(|_| fail("já há uma janela do cofre aberta", 409))?;
                 tokio::task::spawn_blocking(move || vault_input::ask(&prompt)).await.ok().flatten().ok_or_else(|| fail("cancelado", 409))?

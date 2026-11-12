@@ -15,7 +15,7 @@
         { "name": "name", "label": "Nome do teste", "kind": "text", "placeholder": "Login com senha certa" },
         { "name": "url", "label": "Endereço", "kind": "text", "placeholder": "https://…" },
         { "name": "steps", "label": "Roteiro", "kind": "rows", "add": "Passo", "recorder": true,
-          "help": "Gravar abre o site: use ele normalmente e cada ação vira um passo. Na barra do topo, Ler campo devolve um texto da tela e Conferir garante que ele continua lá. Onde: um seletor CSS (#senha) ou texto=Entrar. Senhas: {{vault:nome}}.",
+          "help": "Gravar abre o site: use ele normalmente e cada ação vira um passo. Na barra do topo, Ler campo devolve um texto da tela e Conferir garante que ele continua lá. Onde: um seletor CSS (#senha) ou texto=Entrar. Senhas: {{cred:nome}}, guardadas em Credenciais.",
           "columns": [
             { "name": "do", "kind": "select", "options": [
               { "value": "click", "label": "Clicar", "tone": "act" }, { "value": "type", "label": "Digitar", "tone": "act" }, { "value": "select", "label": "Escolher opção", "tone": "act" },
@@ -51,7 +51,7 @@
       "fields": [
         { "name": "url", "label": "Endereço", "kind": "text", "placeholder": "https://…" },
         { "name": "steps", "label": "Passos", "kind": "rows", "add": "Passo", "recorder": true,
-          "help": "Gravar abre o site: use ele normalmente e cada ação vira um passo. Onde: um seletor CSS (#senha, .botao) ou texto=Entrar para achar pelo texto. Em Ler campo, o valor é o nome do campo na saída. Senhas: {{vault:site}}.",
+          "help": "Gravar abre o site: use ele normalmente e cada ação vira um passo. Onde: um seletor CSS (#senha, .botao) ou texto=Entrar para achar pelo texto. Em Ler campo, o valor é o nome do campo na saída. Senhas: {{cred:nome}}, guardadas em Credenciais.",
           "columns": [
             { "name": "do", "kind": "select", "options": [
               { "value": "click", "label": "Clicar", "tone": "act" }, { "value": "type", "label": "Digitar", "tone": "act" }, { "value": "select", "label": "Escolher opção", "tone": "act" },

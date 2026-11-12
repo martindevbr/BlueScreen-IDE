@@ -8,6 +8,7 @@
 
 mod assoc;
 mod automation;
+mod creds;
 mod tray;
 mod bigfile;
 mod deps;

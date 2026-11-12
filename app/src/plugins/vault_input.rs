@@ -16,15 +16,21 @@ pub struct Prompt {
     pub hosts: Vec<String>,
     pub programs: Vec<String>,
     pub fields: Vec<Ask>,
+    /// onde fica guardado, quando não é o Cofre da IDE ("nas credenciais do Automator"); vazio: o cofre
+    pub place: &'static str,
 }
 impl Prompt {
     fn spec(&self) -> Value {
-        json!({ "replace": self.replace, "name": self.name, "hosts": self.hosts, "programs": self.programs, "fields": self.fields })
+        json!({ "replace": self.replace, "name": self.name, "hosts": self.hosts, "programs": self.programs, "fields": self.fields, "place": self.place })
     }
     fn text(&self) -> String {
-        format!("{} \"{}\" no cofre: {}.\n\nPode ir para: {}\nProgramas: {}\n\nDigite ou cole (Ctrl+V). O que você digita aqui fica cifrado neste PC e não passa pela página do BlueScreen.",
-            if self.replace { "Trocar" } else { "Guardar" }, self.name,
-            self.fields.iter().map(|f| f.label.as_str()).collect::<Vec<_>>().join(", "),
+        let fields = self.fields.iter().map(|f| f.label.as_str()).collect::<Vec<_>>().join(", ");
+        let verb = if self.replace { "Trocar" } else { "Guardar" };
+        if !self.place.is_empty() {
+            return format!("{verb} \"{}\" {}: {fields}.\n\nDigite ou cole (Ctrl+V). O que você digita aqui fica cifrado neste PC e não passa pela página do BlueScreen.", self.name, self.place);
+        }
+        format!("{verb} \"{}\" no cofre: {fields}.\n\nPode ir para: {}\nProgramas: {}\n\nDigite ou cole (Ctrl+V). O que você digita aqui fica cifrado neste PC e não passa pela página do BlueScreen.",
+            self.name,
             if self.hosts.is_empty() { "nenhum site ainda".to_string() } else { self.hosts.join(", ") },
             if self.programs.is_empty() { "nenhum".to_string() } else { self.programs.join(", ") })
     }

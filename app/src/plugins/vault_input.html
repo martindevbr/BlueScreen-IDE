@@ -85,16 +85,16 @@ const chips = (l, none) => l && l.length ? l.map(x => `<span class="chip">${esc(
 const hint = (f) => f.keep && f.secret ? 'em branco mantém o atual' : f.optional ? 'opcional' : '';
 const ph = (f) => f.keep && f.secret ? '••••••••  (guardado)' : f.kind === 'url' ? 'https://…' : f.kind === 'email' ? 'nome@empresa.com' : f.kind === 'multiline' ? 'Cole aqui o texto inteiro (-----BEGIN …)' : '';
 document.getElementById('app').innerHTML = `<main>
-  <div class="hd"><span class="ic">${ICO.key}</span><div><h1>${SPEC.replace ? 'Trocar' : 'Guardar'} <code>${esc(SPEC.name)}</code> no cofre</h1>
-    <div class="sub">Digite ou cole (Ctrl+V) o que o segredo precisa.</div></div></div>
-  <div class="dest"><span>Pode ir para</span><div>${chips(SPEC.hosts, 'nenhum site ainda')}</div>${SPEC.programs && SPEC.programs.length ? `<span>Programas</span><div>${chips(SPEC.programs)}</div>` : ''}</div>
+  <div class="hd"><span class="ic">${ICO.key}</span><div><h1>${SPEC.replace ? 'Trocar' : 'Guardar'} <code>${esc(SPEC.name)}</code> ${SPEC.place ? esc(SPEC.place) : 'no cofre'}</h1>
+    <div class="sub">${SPEC.place ? 'Digite ou cole (Ctrl+V). Os fluxos usam como <code>{{cred:' + esc(SPEC.name) + '}}</code>.' : 'Digite ou cole (Ctrl+V) o que o segredo precisa.'}</div></div></div>
+  <div class="dest"${SPEC.place ? ' hidden' : ''}><span>Pode ir para</span><div>${chips(SPEC.hosts, 'nenhum site ainda')}</div>${SPEC.programs && SPEC.programs.length ? `<span>Programas</span><div>${chips(SPEC.programs)}</div>` : ''}</div>
   <form id="f" autocomplete="off">${F.map((f, i) => `<div class="fld" data-i="${i}"><label for="v${i}">${esc(f.label)}${hint(f) ? ` <small>${hint(f)}</small>` : ''}</label><div class="in">${
     f.kind === 'multiline' ? `<textarea id="v${i}" spellcheck="false" placeholder="${esc(ph(f))}">${esc(f.prefill)}</textarea>`
     : `<input id="v${i}" ${f.secret ? 'type="password" class="sec"' : `type="${f.kind === 'number' ? 'text" inputmode="numeric' : 'text'}"`} value="${esc(f.prefill)}" placeholder="${esc(ph(f))}" spellcheck="false" autocomplete="off">${f.secret ? `<button type="button" class="eye" tabindex="-1" title="Mostrar">${ICO.eye}</button>` : ''}`
   }</div></div>`).join('')}</form>
   <div class="err" id="err"></div>
 </main>
-<footer><span class="note">${ICO.lock}<span>Fica cifrado neste PC. Os plugins usam sem ver, e a página da IDE não vê o que você digita.</span></span>
+<footer><span class="note">${ICO.lock}<span>${SPEC.place ? 'Fica cifrado neste PC. Os fluxos usam sem mostrar, e a página não vê o que você digita.' : 'Fica cifrado neste PC. Os plugins usam sem ver, e a página da IDE não vê o que você digita.'}</span></span>
   <button class="b" id="no" type="button">Cancelar</button><button class="b p" id="ok" type="button">${SPEC.replace ? 'Trocar' : 'Guardar'}</button></footer>`;
 
 const box = (i) => document.getElementById('v' + i);

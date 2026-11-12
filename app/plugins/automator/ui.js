@@ -117,7 +117,7 @@ function el(tag, attrs, ...kids) {
 // ---------- estado ----------
 const A = {
   specs: [], byType: new Map(), flows: [], flow: null, saved: '', runs: [], runSig: '',
-  sel: new Set(), selEdge: null, cam: { x: 40, y: 40, z: 1 }, undo: [], redo: [], clip: null, drag: null, loaded: false, pane: null,
+  sel: new Set(), selEdge: null, cam: { x: 40, y: 40, z: 1 }, undo: [], redo: [], clip: null, drag: null, loaded: false, pane: null, creds: [],
 };
 let root, R = {}, nodeEls = new Map(), edgeEls = new Map(), timers = [], picker = null, busyRun = false;
 const spec = (t) => A.byType.get(t);
@@ -267,10 +267,10 @@ const TEMPLATES = [
   { label: 'Alarme num horário', hint: 'alerta com som no canto da tela', make: () => chain('Alarme', 'Todo dia, no horário marcado, abre um alerta com som no canto da tela. Ajuste o horário e a mensagem e ligue o fluxo.', [T('trigger.schedule', { mode: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }), T('windows.alarm', { title: 'Reunião diária', message: 'Começa em 5 minutos.', level: 'warn', sound: 'Alarm01.wav', repeat: 'loop', button2: 'Adiar' })]) },
   { label: 'Avisar quando chegar arquivo', hint: 'vigia uma pasta', make: () => chain('Arquivo novo na pasta', 'Avisa quando um arquivo é criado ou alterado na pasta. Informe a pasta no primeiro nó e ligue o fluxo.', [T('trigger.file', { path: '' }), T('windows.notify', { title: 'Arquivo novo', message: '{{input.name}}' })]) },
   { label: 'Diário num arquivo', hint: 'data e hora, depois grava', make: () => chain('Diário num arquivo', 'Acrescenta uma linha com a data e a hora num arquivo de texto. Informe o arquivo no último nó.', [T('trigger.manual', { sample: 'anotação' }), T('data.datetime', { format: '%d/%m/%Y %H:%M' }), T('file.write', { path: '', content: '{{input}}', mode: 'append' })]) },
-  { label: 'Automatizar um site', hint: 'abrir, clicar, digitar, ler', need: 'plugin.navegador.site', make: () => chain('Automatizar um site', 'Abre o site, faz os passos e mostra o que leu. Troque o endereço e os passos pelos do seu site; senhas vão como {{vault:site}}.', [T('trigger.manual', {}), T('plugin.navegador.site', { url: 'https://example.com', steps: [{ do: 'wait', on: 'h1', value: '' }, { do: 'read', on: 'h1', value: 'titulo' }], show: 'yes' }), T('util.output', {})]) },
+  { label: 'Automatizar um site', hint: 'abrir, clicar, digitar, ler', need: 'plugin.navegador.site', make: () => chain('Automatizar um site', 'Abre o site, faz os passos e mostra o que leu. Troque o endereço e os passos pelos do seu site; senhas vão como {{cred:senha}}.', [T('trigger.manual', {}), T('plugin.navegador.site', { url: 'https://example.com', steps: [{ do: 'wait', on: 'h1', value: '' }, { do: 'read', on: 'h1', value: 'titulo' }], show: 'yes' }), T('util.output', {})]) },
   { label: 'Endpoint com token', hint: 'recebe uma chamada e responde', make: () => {
     const t = T('trigger.webhook', { name: 'meu-endpoint', method: 'POST' }), s = T('sec.token', { got: '{{input.token}}', expected: '' }), l = T('sec.rate', { max: 30, per_s: 60, key: '{{input.token}}' }), q = T('sec.require', { value: '{{input.body}}', fields: ['nome'] });
-    return chain('Endpoint com token', 'Recebe um POST com JSON, confere o token e os campos e responde. Preencha o token esperado no nó "Exigir token" (de preferência {{vault:nome}}) e ligue o fluxo.', [t, s, l, q, T('http.respond', { status: 200, type: 'json', body: '{"ok": true, "ola": "{{nodes.' + t.id + '.out.body.nome}}"}' })]);
+    return chain('Endpoint com token', 'Recebe um POST com JSON, confere o token e os campos e responde. Preencha o token esperado no nó "Exigir token" (de preferência {{cred:nome}}) e ligue o fluxo.', [t, s, l, q, T('http.respond', { status: 200, type: 'json', body: '{"ok": true, "ola": "{{nodes.' + t.id + '.out.body.nome}}"}' })]);
   } },
   { label: 'Auditoria de um site', hint: 'no ar, certificado, cabeçalhos', make: () => {
     const t = T('trigger.schedule', { mode: 'daily', time: '08:00', days: [1, 2, 3, 4, 5] }), up = T('audit.http', { url: 'https://example.com' }), tls = T('audit.tls', { host: 'example.com' }), few = T('logic.if', { value: '{{input.days}}', op: 'lt', equals: '21' }, 'Vence em menos de 21 dias?');
@@ -871,6 +871,7 @@ function field(n, f) {
         rec = null; A.recStop = null;
         btn.classList.remove('on'); btn.lastChild.textContent = 'Gravar no navegador';
         note.textContent = r.count ? `${r.count} ${r.count === 1 ? 'passo gravado' : 'passos gravados'}. Confira o roteiro e clique em Executar.` : 'Nada foi gravado.';
+        if (r.count) renderInspector();
         if (r.url) renderInspector();
       };
       btn.onclick = guard(async () => {
@@ -889,7 +890,9 @@ function field(n, f) {
       above = el('div.am-rec-line', btn, note);
     }
   } else if (f.kind === 'area') {
-    input = el('textarea', { rows: 4, value: cur ?? '', placeholder: f.placeholder || '' }); input.oninput = () => set(input.value);
+    input = el('textarea' + (f.code ? '.mono' : ''), { rows: f.code ? 9 : 4, spellcheck: !f.code, value: cur ?? '', placeholder: f.placeholder || '' }); input.oninput = () => set(input.value);
+    // campo de script: a IA escreve ou altera, e a mudança aparece para conferir antes de entrar no nó
+    if (f.code) above = el('div.am-rec-line', el('button.chip.am-ai-btn', { type: 'button', onclick: () => nodeLocked(n.id) ? denied(flowLocked() ? '' : 'node') : scriptAi(n, f, input, set) }, el('span', { html: IC.spark }), el('span', String(cur ?? '').trim() ? 'Editar com IA' : 'Escrever com IA')));
   } else {
     input = el('input', { type: 'text', value: cur ?? '', placeholder: f.placeholder || '', spellcheck: false }); input.oninput = () => set(input.value);
   }
@@ -918,6 +921,9 @@ function field(n, f) {
       ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Saída de ${titleOf(u)}${spec(u.type).outputs.length > 1 ? ' (' + (PORT_LABEL[p] || p) + ')' : ''}`, action: () => insertAt(input, `{{nodes.${u.id}.${p}}}`) }))),
       // os campos do JSON que chega aqui (da última execução, ou do exemplo do nó anterior)
       ...(inside.length ? ['-', ...pathItems(inside, (path) => insertAt(input, `{{input.${path}}}`))] : []),
+      // senhas e tokens guardados no Automator: entra só o nome, o valor fica cifrado
+      '-', ...A.creds.flatMap(c => [{ label: 'Credencial: ' + c.name, k: c.label || 'senha ou token', action: () => insertAt(input, `{{cred:${c.name}}}`) }, ...(c.user ? [{ label: 'Usuário de ' + c.name, k: c.user, action: () => insertAt(input, `{{cred:${c.name}.user}}`) }] : [])]),
+      { label: A.creds.length ? 'Credenciais…' : 'Guardar uma senha ou token…', icon: IC.key, action: () => credsDialog() },
     ]); };
   }
   // campo que é um caminho dentro do JSON: a lista dos campos conhecidos, para não digitar
@@ -933,6 +939,9 @@ function field(n, f) {
   }
   if (f.clis) extra = el('button.am-link', { type: 'button', title: 'Modelo, esforço e programas de cada agente', onclick: () => bs.aiClis.open(typeof n.params[f.name] === 'string' ? n.params[f.name] : undefined) }, 'configurar');
   const id = 'amf-' + uid('');
+  // referência a uma credencial que ainda não foi guardada: o fluxo pararia neste nó
+  const lacking = [...new Set([...JSON.stringify(cur ?? '').matchAll(/\{\{\s*cred:\s*([\w-]+)/g)].map(m => m[1]))].filter(c => !A.creds.some(x => x.name === c));
+  if (lacking.length) { err.hidden = false; err.replaceChildren(...lacking.map(c => el('span.am-need', `A credencial "${c}" ainda não existe. `, el('button.am-link', { type: 'button', onclick: guard(async () => { await credEnter(c); renderInspector(); }) }, 'Guardar agora')))); }
   const group = f.kind === 'checks' || f.kind === 'rows';
   if (!group) input.id = id;
   return el('div.am-field', el('div.am-flabel', el('label', group ? {} : { htmlFor: id }, f.label), extra), control, f.help && el('small.am-hint', f.help), err);
@@ -1162,33 +1171,244 @@ function paintList() {
   if (!R.list.childElementCount) R.list.append(el('p.am-hint', q ? 'Nenhum fluxo com esse nome.' : 'Nenhum fluxo ainda.'));
 }
 
-// ---------- criar com IA ----------
+// ---------- credenciais do Automator: senhas e tokens que os fluxos usam como {{cred:nome}} ----------
+// A tela segue a do Cofre da IDE (vault.js): cartões, "Nova credencial", registro de uso e o arquivo no rodapé.
+const CR = { edit: null, log: [], file: '' };
+function paintCredsBtn() { if (R.credsBtn) R.credsBtn.textContent = A.creds.length ? String(A.creds.length) : ''; }
+function takeCreds(d) { A.creds = d.entries || []; CR.log = d.audit || []; CR.file = d.file || ''; paintCredsBtn(); }
+async function loadCreds() { try { takeCreds(await bs.api('automator/creds', {}, { quiet: true })); } catch { /* fica a lista que já tinha */ } }
+/** Abre a janela do BlueScreen (fora da página) para digitar o usuário e a senha ou token. */
+async function credEnter(name, label) { takeCreds(await post('automator/creds', { action: 'enter', name, ...(label != null ? { label } : {}) })); }
+const credSlug = (t) => t.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const credAgo = (t) => (bs.ago ? bs.ago(t) : '') || 'agora';
+function credCard(c) {
+  const flows = c.flows || [], ref = (t) => `<button type="button" class="vt-chip am-cr-copy" data-copy="${esc(t)}" title="Copiar para colar num campo">${esc(t)}</button>`;
+  return `<div class="vt-ent" data-name="${esc(c.name)}">
+    <div class="vt-hd"><span class="vt-key">${IC.key}</span><div class="vt-tx"><div><b>${esc(c.name)}</b>${c.label ? ` <span class="vt-lbl">${esc(c.label)}</span>` : ''}</div>
+      <div class="vt-meta">${c.user ? 'usuário + senha · ' : ''}${c.length} caracteres · trocada ${esc(credAgo(c.updated))}${c.lastUsed ? ` · usada ${esc(credAgo(c.lastUsed))} por ${esc(c.lastBy || '')}` : ' · nunca usada'}</div></div>
+      <button class="icon-btn" data-act="menu" title="Mais">${IC.more}</button></div>
+    ${CR.edit === c.name ? `<div class="vt-form"><label class="fld">Descrição<input data-f="label" value="${esc(c.label || '')}" spellcheck="false" maxlength="120"></label>
+        <div class="vt-btns"><button class="chip" data-act="cancel">Cancelar</button><button class="chip primary" data-act="save">Salvar</button></div></div>`
+    : `<div class="vt-row">Nos campos dos nós: ${ref(`{{cred:${c.name}}}`)}${c.user ? ' ' + ref(`{{cred:${c.name}.user}}`) : ''}</div>
+       ${c.user ? `<div class="vt-row">Usuário: <span class="vt-chip">${esc(c.user)}</span></div>` : ''}
+       <div class="vt-row">Fluxos que usam: ${flows.length ? flows.map(f => `<span class="vt-chip">${esc(f)}</span>`).join(' ') : '<span class="vt-none">nenhum fluxo salvo</span>'}</div>
+       ${c.origin === 'ia' ? '<div class="vt-why">Veio de um pedido feito à IA: o valor saiu do texto e foi guardado aqui.</div>' : ''}`}
+  </div>`;
+}
+function credsDialog(keep) {
+  if (!keep) CR.edit = null;
+  const html = `<div class="dlg-hd"><span class="dlg-ic">${IC.key}</span><div><h3>Cofre do Automator</h3><p>Senhas e tokens que os fluxos usam sem ver o valor. Ficam cifrados neste PC e são só do Automator: o Cofre da IDE é outro, com outras regras.</p></div></div>
+    <div class="vt-body">
+    <div class="vt-sub">Credenciais${A.creds.length ? ` <span class="vt-n">${A.creds.length}</span>` : ''}</div>
+    ${A.creds.length ? A.creds.map(credCard).join('') : '<div class="vt-none vt-empty">O cofre do Automator está vazio.</div>'}
+    <div class="vt-new"><div class="vt-sub">Nova credencial</div>
+      <p class="vt-why">Clique em <b>Digitar e guardar</b>: abre uma janela do BlueScreen pedindo o usuário (opcional) e a senha ou token. Digite ou cole ali (Ctrl+V). O que você digita vai direto para o cofre, sem passar por esta tela. Uma senha escrita num pedido de "Criar com IA" também vem parar aqui.</p>
+      <div class="vt-2"><label class="fld">Nome<input id="amCrName" spellcheck="false" maxlength="40" placeholder="senha-portal"></label>
+        <label class="fld">Descrição<input id="amCrLabel" spellcheck="false" maxlength="120" placeholder="Login do portal de notas"></label></div>
+      <div class="vt-row">Depois use nos nós como <span class="vt-chip">{{cred:nome}}</span> e, para o usuário, <span class="vt-chip">{{cred:nome.user}}</span></div>
+      <p class="am-gen-st" id="amCrSt" aria-live="polite"></p>
+      <div class="vt-btns"><button class="chip primary" id="amCrAdd" type="button">${IC.key}Digitar e guardar…</button></div></div>
+    ${CR.log.length ? `<details class="vt-log"><summary>Registro de uso <span class="vt-n">${CR.log.length}</span></summary>${CR.log.slice(0, 60).map(a => `<div class="${a.ok ? '' : 'bad'}"><span>${esc(credAgo(a.at))}</span><b>${esc(a.by || '')}</b> <code>${esc(a.name)}</code>${a.ok ? '' : ` · <em>${esc(a.why)}</em>`}</div>`).join('')}</details>` : ''}
+    </div>
+    <div class="actions"><span class="vt-file" title="${esc(CR.file)}">${esc(CR.file.split(/[\\/]/).pop() || 'automator-credentials.json')}</span><span class="spacer"></span><button class="chip" data-close>Fechar</button></div>`;
+  const box = dialog('amCreds', html, () => {}) || document.getElementById('amCreds');
+  box.querySelector('.dlg-box').classList.add('vt-box');
+  const $ = (q) => box.querySelector(q), st = $('#amCrSt');
+  const say = (t, bad) => { st.textContent = t; st.classList.toggle('bad', !!bad); };
+  const redraw = (msg) => { const y = box.querySelector('.dlg-scroll')?.scrollTop || 0; credsDialog(true); const b = document.getElementById('amCreds'); const sc = b.querySelector('.dlg-scroll'); if (sc) sc.scrollTop = y; if (msg) { const s2 = b.querySelector('#amCrSt'); s2.textContent = msg; } if (A.flow) renderInspector(); };
+  const quiet = (fn) => async (...a) => { try { await fn(...a); } catch (e) { if (e.message !== 'cancelado') say('Não deu: ' + e.message, true); } };
+  box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => bs.toast('Copiado: ' + b.dataset.copy, 'ok')).catch(() => {}));
+  box.querySelectorAll('.vt-ent').forEach(card => {
+    const name = card.dataset.name, c = A.creds.find(x => x.name === name);
+    const act = (a) => card.querySelector(`[data-act=${a}]`);
+    act('menu').onclick = (e) => bs.showMenu(e, [
+      { label: 'Trocar o valor ou o usuário…', icon: IC.key, action: quiet(async () => { await credEnter(name); redraw(`"${name}" atualizada.`); }) },
+      { label: 'Editar a descrição', action: () => { CR.edit = name; redraw(); } },
+      { label: 'Copiar a referência', icon: IC.copy, action: () => navigator.clipboard?.writeText(`{{cred:${name}}}`).then(() => bs.toast(`Copiado: {{cred:${name}}}`, 'ok')).catch(() => {}) },
+      '-',
+      { label: 'Apagar do cofre…', icon: IC.trash, action: quiet(async () => {
+        const used = (c.flows || []).length;
+        const yes = await ask(`Apagar "${name}" do cofre do Automator?`, used ? `Ela é usada em ${c.flows.join(', ')}. Sem ela, esses fluxos param no nó que a usa, até você guardar outra com o mesmo nome.` : 'Nenhum fluxo salvo usa esta credencial.', [{ label: 'Cancelar', value: false }, { label: 'Apagar', value: true, cls: 'primary' }]);
+        if (yes) takeCreds(await post('automator/creds', { action: 'delete', name }));
+        redraw(yes ? `"${name}" apagada.` : '');
+      }) },
+    ]);
+    if (act('cancel')) act('cancel').onclick = () => { CR.edit = null; redraw(); };
+    if (act('save')) act('save').onclick = quiet(async () => { takeCreds(await post('automator/creds', { action: 'label', name, label: card.querySelector('[data-f=label]').value })); CR.edit = null; redraw(); });
+  });
+  $('#amCrAdd').onclick = quiet(async () => {
+    const name = credSlug($('#amCrName').value);
+    if (!name) { say('Dê um nome à credencial.', true); return $('#amCrName').focus(); }
+    if (A.creds.some(c => c.name === name)) { say(`Já existe "${name}". Para mudar o valor, use o menu dela: Trocar o valor.`, true); return; }
+    say('Digite o valor na janela que abriu.');
+    await credEnter(name, $('#amCrLabel').value.trim());
+    redraw(`Guardada. Use {{cred:${name}}} nos campos dos nós.`);
+  });
+  $('#amCrName').onkeydown = (e) => { if (e.key === 'Enter') $('#amCrAdd').click(); };
+}
+
+// ---------- IA: quem escreve, e o que ela deixou para conferir ----------
+const WHO_KEY = 'bs.automator.aiWho';
+function whoHtml(id) {
+  let last = ''; try { last = localStorage.getItem(WHO_KEY) || ''; } catch { /* sem armazenamento: usa o padrão */ }
+  const [who, model] = last.split('|');
+  const opts = [...(spec('agent.cli')?.fields.find(f => f.name === 'provider')?.options || []).map(o => [o.value, o.label]), ['openrouter', 'OpenRouter']];
+  const cur = opts.some(o => o[0] === who) ? who : opts.some(o => o[0] === 'claude') ? 'claude' : opts[0][0];
+  return `<label class="fld">Quem escreve<select id="${id}Who">${opts.map(o => `<option value="${esc(o[0])}"${o[0] === cur ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label>
+    <label class="fld" id="${id}ModelBox"${cur === 'openrouter' ? '' : ' hidden'}>Modelo do OpenRouter<input id="${id}Model" placeholder="provedor/modelo" spellcheck="false" value="${esc(model || '')}"></label>`;
+}
+/** Liga o seletor de `whoHtml`; devolve a função que lê a escolha (e reclama se faltar o modelo). */
+function whoBind(box, id) {
+  const $ = (q) => box.querySelector(q);
+  $(`#${id}Who`).onchange = (e) => { $(`#${id}ModelBox`).hidden = e.target.value !== 'openrouter'; };
+  return () => {
+    const provider = $(`#${id}Who`).value, model = $(`#${id}Model`).value.trim();
+    if (provider === 'openrouter' && !model) { $(`#${id}Model`).focus(); throw new Error('informe o modelo do OpenRouter.'); }
+    try { localStorage.setItem(WHO_KEY, provider + '|' + model); } catch { /* só não lembra da próxima vez */ }
+    return { provider, model, cwd: bs.S.project?.path || '' };
+  };
+}
+/** O que aconteceu com as senhas do pedido, em frases: [tom, texto]. */
+function secretLines(res) {
+  return (res.secrets || []).map(x => x.error ? ['bad', `Não deu para guardar a credencial "${x.name}": ${x.error}`]
+    : !x.used ? ['warn', 'Uma senha escrita no pedido não foi usada, então não foi guardada.']
+    : x.existed ? ['key', `A senha do pedido já estava em Credenciais como "${x.name}". O valor não foi enviado para a IA.`]
+    : x.local ? ['key', `Senha guardada em Credenciais como "${x.name}". Ela saiu do pedido antes de ele ir para a IA.`]
+    : ['warn', `Senha guardada em Credenciais como "${x.name}". A IA chegou a ver o valor: ele estava escrito de um jeito que o BlueScreen não reconheceu sozinho.`]);
+}
+const doneList = (lines) => lines.map(([tone, text]) => `<li class="${tone}">${tone === 'key' ? IC.key : IC.err}<span>${esc(text)}</span></li>`).join('');
+/** Depois de a IA montar ou ajustar um fluxo: credenciais, o que falta preencher e o que a conferência achou. */
+function aiDone(title, res) {
+  const lines = secretLines(res), miss = res.missing_creds || [], notes = res.notes || [], warnings = res.warnings || [];
+  if (!lines.length && !miss.length && !notes.length && !warnings.length) return false;
+  const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>${esc(title)}</h3><p>Confira os pontos abaixo antes de salvar e executar.</p></div></div>
+    ${lines.length || miss.length ? `<h4 class="am-done-h">Credenciais</h4><ul class="am-done">${doneList(lines)}${miss.map(m => `<li class="warn">${IC.key}<span>O fluxo usa a credencial "${esc(m)}", que ainda não existe.</span><button class="chip" data-cred="${esc(m)}" type="button">Guardar agora</button></li>`).join('')}</ul>` : ''}
+    ${notes.length ? `<h4 class="am-done-h">Falta preencher ou conferir</h4><ul class="am-warn">${notes.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    ${warnings.length ? `<h4 class="am-done-h">A conferência automática achou</h4><ul class="am-warn">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    <div class="actions"><span class="spacer"></span><button class="chip primary" data-close>Entendi</button></div>`;
+  dialog('amGenDone', html, (box) => box.querySelectorAll('[data-cred]').forEach(b => b.onclick = guard(async () => { await credEnter(b.dataset.cred); b.closest('li').className = 'key'; b.previousElementSibling.textContent = `Credencial "${b.dataset.cred}" guardada.`; b.remove(); if (A.flow) renderInspector(); })));
+  return true;
+}
+/** Troca o fluxo aberto pelo que a IA devolveu, num passo só do desfazer. Nó que já existia fica onde estava. */
+function applyAi(flow) {
+  commit();
+  const old = new Map(A.flow.nodes.map(n => [n.id, n]));
+  let added = 0;
+  flow.nodes = flow.nodes.map(n => {
+    const o = old.get(n.id);
+    if (!o || o.type !== n.type) { added++; return n; }
+    if (o.locked) return clone(o);
+    return { ...n, position: o.position, disabled: o.disabled, locked: o.locked, ...(o.size ? { size: o.size } : {}) };
+  });
+  Object.assign(A.flow, { name: flow.name || A.flow.name, description: flow.description || A.flow.description || '', nodes: flow.nodes, edges: flow.edges });
+  normalize(A.flow); A.sel.clear(); A.selEdge = null;
+  renderAll(); changed(true);
+  if (added) requestAnimationFrame(() => { arrange(false); fit(); });
+}
 function generate() {
-  const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>Criar fluxo com IA</h3><p>Descreva a automação. A proposta abre no quadro para você conferir antes de salvar.</p></div></div>
-    <label class="fld">O que o fluxo deve fazer<textarea id="amGenReq" rows="5" placeholder="Todo dia útil às 9h, rodar git pull na pasta do projeto e me avisar se der erro."></textarea></label>
-    <label class="fld">Quem monta<select id="amGenWho">${(spec('agent.cli')?.fields.find(f => f.name === 'provider')?.options || []).map(o => `<option value="${esc(o.value)}"${o.value === 'claude' ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}<option value="openrouter">OpenRouter</option></select></label>
-    <label class="fld" id="amGenModelBox" hidden>Modelo do OpenRouter<input id="amGenModel" placeholder="provedor/modelo" spellcheck="false"></label>
+  const canEdit = !!A.flow && A.flow.nodes.length > 1 && !flowLocked();
+  const EX = ['Todo dia útil às 9h, rodar git pull na pasta do projeto e me avisar se der erro.', 'Quando chegar um PDF na pasta Downloads, mover para Documentos\\Notas e mostrar uma notificação.', 'A cada 10 minutos, testar se https://meusite.com.br responde em menos de 2 segundos e me avisar quando falhar.'];
+  const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>Fluxo com IA</h3><p>Descreva o que você quer. O resultado abre no quadro para conferir antes de salvar.</p></div></div>
+    ${canEdit ? `<div class="am-seg" id="amGenMode"><button type="button" data-m="edit" class="on">Ajustar o fluxo aberto</button><button type="button" data-m="new">Criar um fluxo novo</button></div>` : ''}
+    <label class="fld"><span id="amGenLabel"></span><textarea id="amGenReq" rows="5"></textarea></label>
+    <div class="am-ex" id="amGenEx">${EX.map((t, i) => `<button type="button" data-ex="${i}" title="Usar este exemplo">${esc(t)}</button>`).join('')}</div>
+    <p class="am-gen-note">${IC.key}<span>Pode escrever senha ou token no pedido. O valor vai para Credenciais e a IA recebe só o nome.</span></p>
+    ${whoHtml('amGen')}
     <p class="am-gen-st" id="amGenSt" aria-live="polite"></p>
-    <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amGenGo">Gerar proposta</button></div>`;
+    <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amGenGo"></button></div>`;
   dialog('amGen', html, (box) => {
-    const $ = (s) => box.querySelector(s), go = $('#amGenGo'), st = $('#amGenSt');
-    $('#amGenWho').onchange = (e) => { $('#amGenModelBox').hidden = e.target.value !== 'openrouter'; };
-    $('#amGenReq').focus();
+    const $ = (q) => box.querySelector(q), go = $('#amGenGo'), st = $('#amGenSt'), req = $('#amGenReq'), who = whoBind(box, 'amGen');
+    let mode = canEdit ? 'edit' : 'new';
+    const paint = () => {
+      box.querySelectorAll('#amGenMode button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+      $('#amGenLabel').textContent = mode === 'edit' ? `O que mudar em "${A.flow.name || 'este fluxo'}"` : 'O que o fluxo deve fazer';
+      req.placeholder = mode === 'edit' ? 'Depois de baixar, mandar também uma mensagem no Slack. E trocar o horário para 8h.' : 'Conte quando o fluxo começa, o que ele faz e o que você quer ver no final.';
+      $('#amGenEx').hidden = mode === 'edit';
+      go.textContent = mode === 'edit' ? 'Ajustar o fluxo' : 'Gerar proposta';
+    };
+    box.querySelectorAll('#amGenMode button').forEach(b => b.onclick = () => { mode = b.dataset.m; paint(); req.focus(); });
+    box.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => { req.value = EX[+b.dataset.ex]; req.focus(); });
+    paint(); req.focus();
     go.onclick = async () => {
-      const request = $('#amGenReq').value.trim(), provider = $('#amGenWho').value, model = $('#amGenModel').value.trim();
-      if (!request) { st.textContent = 'Descreva o que o fluxo deve fazer.'; return $('#amGenReq').focus(); }
-      if (provider === 'openrouter' && !model) { st.textContent = 'Informe o modelo do OpenRouter.'; return $('#amGenModel').focus(); }
-      go.disabled = true; st.textContent = 'Montando a proposta… pode levar até 3 minutos.';
+      const request = req.value.trim();
+      if (!request) { st.textContent = mode === 'edit' ? 'Diga o que mudar no fluxo.' : 'Descreva o que o fluxo deve fazer.'; return req.focus(); }
+      let body;
+      try { body = { request, ...who() }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
+      if (mode === 'edit') body.flow = { name: A.flow.name, description: A.flow.description || '', nodes: A.flow.nodes, edges: A.flow.edges };
+      const target = mode === 'edit' ? A.flow : null;
+      go.disabled = true; st.textContent = (mode === 'edit' ? 'Ajustando o fluxo' : 'Montando a proposta') + '… a IA monta, o BlueScreen confere e ela corrige. Pode levar alguns minutos.';
       try {
-        const flow = await post('automator/generate', { request, provider, model, cwd: bs.S.project?.path || '' });
+        const res = await post('automator/generate', body);
+        loadCreds();
+        const flow = { ...res }; for (const k of ['warnings', 'notes', 'secrets', 'missing_creds', 'rounds']) delete flow[k];
         box.hidden = true;
-        if (!(await leave())) return;
-        const warnings = flow.warnings || []; delete flow.warnings;
-        open(flow, true); requestAnimationFrame(() => { arrange(false); fit(); });
-        // o que a conferência ainda achou depois da correção: fica à vista para o usuário ajustar
-        if (warnings.length) dialog('amGenWarn', `<div class="dlg-hd"><div><h3>Proposta pronta, com ${warnings.length === 1 ? 'um ponto' : warnings.length + ' pontos'} para conferir</h3><p>O fluxo foi montado, mas a conferência achou isto. Ajuste antes de salvar.</p></div></div><ul class="am-warn">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul><div class="actions"><span class="spacer"></span><button class="chip primary" data-close>Entendi</button></div>`);
-        else bs.toast('Proposta pronta e conferida. Veja os nós e salve.', 'ok');
+        if (mode === 'edit') {
+          if (A.flow !== target) return bs.toast('O fluxo aberto mudou enquanto a IA trabalhava; o ajuste não foi aplicado.', 'err');
+          applyAi(flow);
+        } else {
+          if (!(await leave())) return;
+          open(flow, true); requestAnimationFrame(() => { arrange(false); fit(); });
+        }
+        if (!aiDone(mode === 'edit' ? 'Fluxo ajustado' : 'Proposta pronta', res)) bs.toast(mode === 'edit' ? 'Fluxo ajustado e conferido. Ctrl+Z desfaz.' : 'Proposta pronta e conferida. Veja os nós e salve.', 'ok');
+        else if (mode === 'edit') bs.toast('Fluxo ajustado. Ctrl+Z desfaz.', 'ok');
       } catch (e) { st.textContent = 'Não deu: ' + e.message; } finally { go.disabled = false; }
+    };
+  });
+}
+
+// ---------- script com IA: escreve ou altera o script do nó e mostra a mudança antes de aplicar ----------
+function lineDiff(a, b) {
+  const x = a.split('\n'), y = b.split('\n');
+  if (!a.trim()) return y.map(t => ['+', t]);
+  if (x.length * y.length > 400000) return y.map(t => [' ', t]);
+  const w = y.length + 1, dp = new Uint16Array((x.length + 1) * w);
+  for (let i = x.length - 1; i >= 0; i--) for (let j = y.length - 1; j >= 0; j--) dp[i * w + j] = x[i] === y[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < x.length && j < y.length) { if (x[i] === y[j]) { out.push([' ', x[i]]); i++; j++; } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) out.push(['-', x[i++]]); else out.push(['+', y[j++]]); }
+  while (i < x.length) out.push(['-', x[i++]]);
+  while (j < y.length) out.push(['+', y[j++]]);
+  return out;
+}
+function scriptAi(n, f, input, set) {
+  const original = input.value.replace(/\r\n/g, '\n'), fresh = !original.trim();
+  const last = currentRun()?.nodes?.find(x => x.id === n.id), lastErr = last?.status === 'failed' ? String(last.error || '') : '';
+  let proposal = null;
+  const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>Script com IA</h3><p>${fresh ? 'Diga o que o script deve fazer.' : 'Diga o que mudar no script.'} Você vê a mudança antes de ela entrar no nó.</p></div></div>
+    <label class="fld"><span id="amScLabel">${fresh ? 'O que o script deve fazer' : 'O que mudar'}</span><textarea id="amScReq" rows="3" placeholder="${fresh ? 'Listar os 5 maiores arquivos da pasta Downloads, com nome e tamanho em MB, em JSON.' : 'Ignorar arquivos ocultos e ordenar do maior para o menor.'}"></textarea></label>
+    ${lastErr ? `<label class="am-check"><input type="checkbox" id="amScErr" checked><span>Mandar junto o erro da última execução, para a IA corrigir</span></label>` : ''}
+    ${whoHtml('amSc')}
+    <div id="amScOut" hidden><p class="am-sc-sum" id="amScSum"></p><ul class="am-done" id="amScSec"></ul><div class="am-diff-hd"><span id="amScCount"></span><span class="am-diff-key"><i class="add"></i>entra<i class="del"></i>sai</span></div><pre class="am-diff" id="amScDiff"></pre></div>
+    <p class="am-gen-st" id="amScSt" aria-live="polite"></p>
+    <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amScGo">${fresh ? 'Escrever' : 'Alterar'}</button><button class="chip primary" id="amScUse" hidden>Aplicar no nó</button></div>`;
+  dialog('amScript', html, (box) => {
+    const $ = (q) => box.querySelector(q), go = $('#amScGo'), use = $('#amScUse'), st = $('#amScSt'), req = $('#amScReq'), who = whoBind(box, 'amSc');
+    req.focus();
+    go.onclick = async () => {
+      const request = req.value.trim();
+      if (!request) { st.textContent = 'Escreva o pedido.'; return req.focus(); }
+      let body;
+      try { body = { type: n.type, field: f.name, script: proposal ?? original, request, input: incoming(n) ?? null, error: $('#amScErr')?.checked ? lastErr : '', ...who() }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
+      go.disabled = use.disabled = true; st.textContent = 'Escrevendo… pode levar alguns minutos.';
+      try {
+        const res = await post('automator/script', body);
+        loadCreds();
+        proposal = res.script;
+        const diff = lineDiff(original, proposal), plus = diff.filter(d => d[0] === '+').length, minus = diff.filter(d => d[0] === '-').length;
+        $('#amScSum').textContent = res.summary || '';
+        $('#amScSec').innerHTML = doneList([...secretLines(res), ...(res.missing_creds || []).map(m => ['warn', `O script usa a credencial "${m}", que ainda não existe. Guarde em Credenciais antes de executar.`])]);
+        $('#amScCount').textContent = fresh ? `${plus} ${plus === 1 ? 'linha' : 'linhas'}` : `${plus} ${plus === 1 ? 'linha entra' : 'linhas entram'}, ${minus} ${minus === 1 ? 'sai' : 'saem'}`;
+        $('#amScDiff').replaceChildren(...diff.map(([k, t]) => el('span' + (k === '+' ? '.add' : k === '-' ? '.del' : ''), (k === ' ' ? '  ' : k + ' ') + t + '\n')));
+        $('#amScOut').hidden = false; use.hidden = false;
+        go.classList.remove('primary'); go.textContent = 'Pedir outra mudança';
+        $('#amScLabel').textContent = 'Quer mudar mais alguma coisa?'; req.value = ''; req.placeholder = 'Opcional: o que ajustar na proposta abaixo.';
+        const e = $('#amScErr'); if (e) { e.checked = false; e.closest('label').hidden = true; }
+        st.textContent = '';
+      } catch (e) { st.textContent = 'Não deu: ' + e.message; } finally { go.disabled = use.disabled = false; }
+    };
+    use.onclick = () => {
+      if (proposal == null || !node(n.id)) return;
+      input.value = proposal; set(proposal); box.hidden = true; renderInspector();
+      bs.toast('Script aplicado. Ctrl+Z desfaz; execute o fluxo para testar.', 'ok');
     };
   });
 }
@@ -1202,6 +1422,7 @@ function mount(pane) {
       <div class="am-side-row"><button class="chip am-grow" data-a="tpl" type="button">Modelos</button><button class="chip am-grow" data-a="ai" type="button">${IC.spark}<span>Criar com IA</span></button></div>
       <input class="am-search" type="search" placeholder="Buscar fluxo" aria-label="Buscar fluxo" spellcheck="false">
       <div class="am-list"></div>
+      <button class="am-creds-btn" data-a="creds" type="button" title="Senhas e tokens que os fluxos usam sem mostrar">${IC.key}<span>Credenciais</span><small></small></button>
     </aside>
     <div class="am-main">
       <div class="am-bar">
@@ -1228,14 +1449,14 @@ function mount(pane) {
     </div><input type="file" class="am-file" accept=".json,application/json" hidden>`;
   const $ = (s) => pane.querySelector(s);
   R = { side: $('.am-side'), list: $('.am-list'), search: $('.am-search'), bar: $('.am-bar'), name: $('.am-name'), dirty: $('.am-dirty'), sched: $('.am-sched'), active: $('.am-active'), next: $('.am-next'),
-    lockbtn: $('[data-a=lock]'), undo: $('[data-a=undo]'), redo: $('[data-a=redo]'), save: $('.am-save'), run: $('.am-runbtn'), stage: $('.am-stage'), cv: $('.am-cv'), world: $('.am-world'), svg: $('.am-wires'), nodes: $('.am-nodes'),
+    lockbtn: $('[data-a=lock]'), credsBtn: $('.am-creds-btn small'), undo: $('[data-a=undo]'), redo: $('[data-a=redo]'), save: $('.am-save'), run: $('.am-runbtn'), stage: $('.am-stage'), cv: $('.am-cv'), world: $('.am-world'), svg: $('.am-wires'), nodes: $('.am-nodes'),
     marquee: $('.am-marquee'), empty: $('.am-empty'), zoom: $('.am-zval'), insp: $('.am-insp'), file: $('.am-file') };
   R.ghost = document.createElementNS(SVGNS, 'path'); R.ghost.classList.add('am-wire', 'ghost'); R.svg.append(R.ghost);
 
   const acts = {
     new: () => create(() => blank()),
     tpl: (e) => bs.showMenu(e, TEMPLATES.filter(t => !t.need || spec(t.need)).map(t => ({ label: t.label, k: t.hint, action: () => create(t.make) }))),
-    ai: generate, save: guard(save), run, lock: () => toggleLock(),
+    ai: generate, creds: () => credsDialog(), save: guard(save), run, lock: () => toggleLock(),
     undo: () => travel(A.undo, A.redo), redo: () => travel(A.redo, A.undo),
     tidy: () => { arrange(); fit(); }, fit, zin: () => zoomBy(1.25), zout: () => zoomBy(0.8), z100: () => zoomBy(1 / A.cam.z),
     add: (e) => { const r = e.currentTarget.getBoundingClientRect(); openPicker(r.left, r.bottom + 6, (s) => addNode(s.type)); },
@@ -1246,6 +1467,7 @@ function mount(pane) {
   };
   // a lista de fluxos mora no painel da esquerda da IDE (no lugar do painel de arquivos), fora da aba
   R.side.remove();
+  loadCreds();
   const onClick = (e) => {
     const b = e.target.closest('[data-a]');
     if (b && acts[b.dataset.a]) { const r = b.getBoundingClientRect(); acts[b.dataset.a]({ currentTarget: b, target: b, clientX: r.left, clientY: r.bottom + 4, preventDefault() {}, stopPropagation() {} }); return; }

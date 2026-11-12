@@ -286,7 +286,7 @@ O que o endpoint devolve:
 Sobre a segurança:
 
 - **Quem pode chamar** começa em **Só este PC**. Com **A rede local também**, o endpoint atende outros aparelhos, mas só com o acesso pela rede local do BlueScreen ligado. Ele não fica exposto na internet.
-- No **Exigir token** e no **Conferir assinatura**, escreva `{{vault:nome}}` para usar um segredo do Cofre liberado para o Automator. Um token digitado direto no nó fica gravado no fluxo, em texto.
+- No **Exigir token** e no **Conferir assinatura**, escreva `{{cred:nome}}` (Credenciais do Automator) ou `{{vault:nome}}` (um segredo do Cofre liberado para o Automator). Um token digitado direto no nó fica gravado no fluxo, em texto.
 - O histórico de uma chamada não guarda o token, o `Authorization`, os cookies nem a assinatura.
 - Um fluxo atende uma chamada por vez, e o BlueScreen roda quatro fluxos ao mesmo tempo. É um endpoint para automações suas e da equipe, não para tráfego de produção.
 
@@ -337,7 +337,7 @@ O plugin **Navegador** traz dois nós que abrem o Edge (ou o Chrome) num perfil 
 - **Pausar:** usar o site sem gravar. **⇅** leva a barra para o outro lado, se ela estiver em cima do que você quer clicar.
 - **Concluir:** fecha o navegador e deixa os passos no nó.
 
-O gravador escolhe o jeito mais firme de achar cada elemento (id, atributos de teste como `data-testid`, nome do campo, texto do botão) e nunca grava senha: no lugar dela fica `{{vault:senha}}`, para você guardar o valor no Cofre. Sem endereço no nó, o primeiro site que você abrir vira o endereço. Os passos também podem ser escritos ou ajustados à mão; a cor da borda diz o tipo (azul: ação, verde: conferência, amarelo: leitura, cinza: espera).
+O gravador escolhe o jeito mais firme de achar cada elemento (id, atributos de teste como `data-testid`, nome do campo, texto do botão) e nunca grava senha: no lugar dela fica `{{cred:senha}}`, e o painel do nó oferece **Guardar agora** para você digitar o valor em Credenciais. Sem endereço no nó, o primeiro site que você abrir vira o endereço. Os passos também podem ser escritos ou ajustados à mão; a cor da borda diz o tipo (azul: ação, verde: conferência, amarelo: leitura, cinza: espera).
 
 | Passo | O que faz |
 |---|---|
@@ -397,7 +397,7 @@ let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
 - **Campos** (`kind`): `text`, `area`, `number` (`min`, `max`), `select` (`options`), `checks`, `time`, `json`, `lines` (um item por linha) e `rows` (uma lista de linhas, com `columns`). Num campo `text`, `"pick": "file"`, `"folder"`, `"save"`, `"program"` ou `"any"` põe o botão que abre o seletor do Windows. `show: { "campo": ["valor"] }` mostra o campo só quando outro tem um desses valores.
 - **Entrada do programa:** `{ node, params, input, data, secrets }`. As expressões já chegam resolvidas em `params`; `data` é a pasta de dados do plugin.
 - **Saída:** o que o programa escreve na saída padrão, lido como JSON (ou como texto). Código de saída diferente de zero falha o nó com o que ele escreveu na saída de erro. Com mais de uma saída em `outputs`, responda `{ "port": "nome", "value": ... }`.
-- **Segredos:** `{{vault:nome}}` num parâmetro não vai no JSON. O valor chega numa variável de ambiente, e `secrets` diz qual (`{ "{{vault:nome}}": "BS_SECRET_0" }`). O Cofre só entrega se o segredo estiver liberado para o plugin e para o programa.
+- **Segredos:** `{{vault:nome}}` e `{{cred:nome}}` num parâmetro não vão no JSON. O valor chega numa variável de ambiente, e `secrets` diz qual (`{ "{{vault:nome}}": "BS_SECRET_0" }`). O Cofre só entrega se o segredo estiver liberado para o plugin e para o programa.
 - **Gravador:** `"record": { "args": ["arquivo.js", "--record"] }` no nó e `"recorder": true` num campo `rows` põem o botão **Gravar** no painel. O programa recebe `{ params, data }` na primeira linha da entrada e escreve um passo por linha (`{ "do", "on", "value" }`); quando a entrada fecha, ele encerra. Numa opção de `select`, `"tone": "act" | "check" | "read" | "wait"` dá a cor do passo.
 - O programa roda na pasta do plugin, com o Node.js, o Python ou o que estiver no PC. O plugin **Navegador** (`app/plugins/navegador`) é um exemplo completo.
 
@@ -405,9 +405,41 @@ Dá para pedir um nó desses ao **IAMaker** sem sair do Automator: no fim da pal
 
 O núcleo roda até quatro coisas ao mesmo tempo (fluxos, revisões e propostas de IA). Um disparo automático sem vaga espera na fila; **Parar** tira da fila ou interrompe a execução.
 
-### Crie com IA
+### Crie e ajuste com IA
 
-**Criar com IA**, na lista de fluxos, monta uma proposta a partir de uma frase. A IA recebe um guia dos nós escrito para ela: o que cada um faz, o formato que recebe e devolve, as portas, os parâmetros com os valores aceitos e os campos da saída. Antes de mostrar a proposta, o BlueScreen confere o fluxo: parâmetro que o nó não tem, valor fora da lista, `{{nodes.x}}` apontando para nó que não existe ou que não vem antes, campo que a saída do nó anterior não tem e nó sem ninguém ligado nele. O que aparecer volta para a IA corrigir, uma vez; se ainda sobrar algo, a proposta abre com a lista dos pontos para você ajustar. Nada roda nem é salvo sem você conferir.
+**Criar com IA**, na lista de fluxos, monta um fluxo a partir de uma frase. Com um fluxo aberto, a mesma janela oferece **Ajustar o fluxo aberto**: você diz o que mudar ("avise também no Slack", "troque o horário para 8h") e a IA devolve o fluxo alterado. Os nós que já existiam ficam onde estavam, nó trancado não muda e `Ctrl+Z` desfaz o ajuste inteiro.
+
+A IA recebe um guia dos nós escrito para ela (o que cada um faz, o formato que recebe e devolve, as portas, os parâmetros com os valores aceitos e os campos da saída), um exemplo de fluxo bem montado e os nomes das credenciais que já existem. Antes de mostrar o resultado, o BlueScreen confere o fluxo:
+
+- parâmetro que o nó não tem e valor fora da lista;
+- `{{nodes.x}}` apontando para nó que não existe ou que não vem antes, e campo que a saída do nó anterior não tem;
+- expressão inventada, como `{{now}}`;
+- nó sem ninguém ligado nele e fluxo sem gatilho;
+- senha em argumento de programa e token escrito num nó.
+
+O que aparecer volta para a IA corrigir, até duas vezes. No fim, uma janela mostra o que ainda merece atenção: as credenciais guardadas, o que a IA deixou para você preencher e o que a conferência ainda achou. Nada roda nem é salvo sem você conferir.
+
+**Senhas no pedido.** Pode escrever a senha ou o token na frase ("entre no portal com a senha X"). O BlueScreen tira o valor do texto antes de ele ir para a IA, guarda em **Credenciais** e manda só o nome (`{{cred:senha-portal}}`). Ele reconhece tokens de formato conhecido (GitHub, GitLab, OpenAI, Slack, AWS, JWT) e o que vem depois de "senha", "token" ou "chave" quando parece um valor: entre aspas, depois de `:` ou `=`, ou com número ou símbolo no meio. Uma senha só de letras, sem aspas, passa por esse filtro; aí a IA é instruída a não copiá-la para o fluxo e a apontá-la, e a janela do resultado avisa que a IA viu o valor. Para ter certeza, escreva a senha entre aspas ou guarde-a antes em Credenciais.
+
+### Edite scripts com IA
+
+No nó **Script PowerShell**, o botão **Escrever com IA** (ou **Editar com IA**, quando já há script) abre uma janela: você diz o que o script deve fazer ou o que mudar, e a IA devolve o script inteiro com um resumo. A janela mostra as linhas que entram e as que saem; **Aplicar no nó** troca o script (um `Ctrl+Z` desfaz) e **Pedir outra mudança** continua a partir da proposta. A IA recebe o script atual, um exemplo do que chega no nó e, se a última execução falhou, o erro, para corrigir. Senhas escritas no pedido têm o mesmo tratamento do fluxo.
+
+Um nó de plugin ganha o mesmo botão com `"code": "linguagem"` num campo `area` do `automator.json`.
+
+### Credenciais
+
+**Credenciais**, no pé da lista de fluxos, é o cofre do Automator: senhas e tokens que os fluxos usam sem mostrar. É separado do Cofre da IDE e fica em `automator-credentials.json`, ao lado do arquivo dos fluxos, com cada valor cifrado pelo Windows (DPAPI): só o seu usuário, neste PC, decifra.
+
+- **Guardar:** dê um nome (`senha-portal`) e clique em **Guardar…**. O usuário e a senha são digitados numa janela do BlueScreen, fora da página. Senhas escritas num pedido à IA vêm parar aqui sozinhas.
+- **Usar:** `{{cred:nome}}` em qualquer campo de um nó; `{{cred:nome.user}}` é o usuário. O menu **+ dado** dos campos lista as credenciais.
+- **O valor não aparece:** nenhuma tela ou rota o devolve. Na execução ele entra no nó e é trocado por `••••••` no que o nó devolve, na saída e no erro, antes de seguir para os próximos nós e para o histórico.
+- **Em scripts:** no Script PowerShell, escreva `{{cred:nome}}` fora de aspas simples; o valor chega por variável de ambiente e não fica escrito no arquivo do script. Em **Executar programa**, credencial em argumento é recusada, porque outros programas do PC leem os argumentos.
+- **Em nós de plugin** (Testar site, Automatizar site): o valor chega ao programa do nó por variável de ambiente, como os segredos do Cofre.
+- Um campo que cita uma credencial que não existe mostra o aviso com **Guardar agora**.
+- **A tela** segue a do Cofre da IDE: um cartão por credencial, com quando foi trocada, quem usou por último (fluxo e nó) e os fluxos que a usam; o menu do cartão troca o valor, edita a descrição, copia a referência ou apaga. **Registro de uso** lista os usos e as recusas desde que o BlueScreen abriu.
+
+Diferença para o Cofre da IDE: uma credencial do Automator não tem lista de sites nem de programas. Qualquer fluxo pode usá-la, para onde o fluxo mandar. Para um token que só pode ir a um site, use o Cofre (`{{vault:nome}}`), que continua valendo nos nós.
 
 ### OpenRouter e tokens
 
@@ -415,7 +447,7 @@ O núcleo roda até quatro coisas ao mesmo tempo (fluxos, revisões e propostas 
 2. Guarde o token na janela do Cofre e libere o segredo `openrouter` para o Automator.
 3. Informe o modelo no nó, no formato `provedor/modelo`.
 
-O fluxo guarda só o nome do segredo. O núcleo põe o token no cabeçalho da chamada e o tira da resposta. Em Requisição HTTP e Ferramenta MCP, use `{{vault:nome}}` nos cabeçalhos:
+O fluxo guarda só o nome do segredo. O núcleo põe o token no cabeçalho da chamada e o tira da resposta. Em Requisição HTTP e Ferramenta MCP, use `{{vault:nome}}` nos cabeçalhos (ou `{{cred:nome}}`, das Credenciais do Automator):
 
 ```json
 { "Authorization": "Bearer {{vault:meu-servico}}" }
@@ -486,7 +518,7 @@ Download, conferência de versão e de hash são os do núcleo. Para hospedar o 
 
 ## Dados e testes
 
-Fluxos, fila, compromissos, execuções e revisões ficam em `~/.bluescreen/automation.json`. O histórico guarda as cem últimas execuções; saídas muito grandes entram cortadas. Depois de uma queda do processo, o que estava rodando aparece como `interrompido`. Os tokens ficam no Cofre. Essas rotas só respondem pelo PC local.
+Fluxos, fila, compromissos, execuções e revisões ficam em `~/.bluescreen/automation.json`. O histórico guarda as cem últimas execuções; saídas muito grandes entram cortadas. Depois de uma queda do processo, o que estava rodando aparece como `interrompido`. Os tokens ficam no Cofre; as credenciais do Automator, em `automator-credentials.json`, na mesma pasta. Essas rotas só respondem pelo PC local.
 
 `BLUESCREEN_AUTOMATION_FILE` aponta outro arquivo de dados (os testes usam uma pasta temporária).
 

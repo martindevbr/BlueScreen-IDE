@@ -108,7 +108,7 @@ struct Pending {
     #[serde(default)]
     payload: Value,
 }
-fn file() -> std::path::PathBuf {
+pub(crate) fn file() -> std::path::PathBuf {
     std::env::var_os("BLUESCREEN_AUTOMATION_FILE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| user_dir().join("automation.json"))
@@ -202,7 +202,7 @@ fn builtin() -> Value {
          "fields":[
             {"name":"url","label":"Endereço","kind":"text"},
             {"name":"method","label":"Método","kind":"select","options":["GET","POST","PUT","PATCH","DELETE","HEAD"]},
-            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Objeto JSON. Tokens: {{vault:nome}}."},
+            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Objeto JSON. Tokens: {{cred:nome}} (Credenciais do Automator) ou {{vault:nome}} (Cofre da IDE)."},
             {"name":"body","label":"Corpo","kind":"area","show":{"method":["POST","PUT","PATCH","DELETE"]}},
             {"name":"timeout","label":"Tempo limite (ms)","kind":"number","min":1000,"max":600000}
          ]},
@@ -310,7 +310,7 @@ fn more() -> Value {
         {"type":"windows.powershell","name":"Script PowerShell","category":"Windows","desc":"Roda um script e entrega o que ele escreveu.","inputs":["in"],"outputs":["out"],
          "params":{"script":"Get-Date","cwd":"","timeout":60000},
          "fields":[
-            {"name":"script","label":"Script","kind":"area","help":"O que chegou neste nó fica em $env:BS_INPUT."},
+            {"name":"script","label":"Script","kind":"area","code":"powershell","help":"O que chegou neste nó fica em $env:BS_INPUT. Senha ou token: escreva {{cred:nome}} no script, fora de aspas simples."},
             {"name":"cwd","label":"Pasta de trabalho","kind":"text","pick":"folder","placeholder":"vazio: sua pasta de usuário"},
             {"name":"timeout","label":"Tempo limite (ms)","kind":"number","min":100,"max":3600000}
          ]},
@@ -422,7 +422,7 @@ fn ops_catalog() -> Value {
 
         {"type":"sec.token","name":"Exigir token","category":"Segurança","desc":"Só continua se a chamada trouxer o token certo. Senão responde 401.","inputs":["in"],"outputs":["out"],
          "params":{"got":"{{input.token}}","expected":""},
-         "fields":[{"name":"got","label":"Token recebido","kind":"text"},{"name":"expected","label":"Token esperado","kind":"text","placeholder":"{{vault:meu-endpoint}}","help":"Use {{vault:nome}} para um segredo do Cofre liberado para o Automator. Um texto escrito aqui fica gravado no fluxo."}]},
+         "fields":[{"name":"got","label":"Token recebido","kind":"text"},{"name":"expected","label":"Token esperado","kind":"text","placeholder":"{{vault:meu-endpoint}}","help":"Use {{cred:nome}} (Credenciais do Automator) ou {{vault:nome}} (Cofre da IDE). Um texto escrito aqui fica gravado no fluxo."}]},
         {"type":"sec.rate","name":"Limitar chamadas","category":"Segurança","desc":"Recusa com 429 quem chama demais.","inputs":["in"],"outputs":["out"],
          "params":{"max":30,"per_s":60,"key":"{{input.token}}"},
          "fields":[{"name":"max","label":"No máximo","kind":"number","min":1,"max":100000},{"name":"per_s","label":"A cada (segundos)","kind":"number","min":1,"max":86400},
@@ -430,7 +430,7 @@ fn ops_catalog() -> Value {
         {"type":"sec.hmac","name":"Conferir assinatura","category":"Segurança","desc":"Confere a assinatura HMAC-SHA256 do corpo (GitHub, Stripe e parecidos). Senão responde 401.","inputs":["in"],"outputs":["out"],
          "params":{"raw":"{{input.raw}}","signature":"{{input.headers.x-hub-signature-256}}","secret":""},
          "fields":[{"name":"raw","label":"Corpo recebido","kind":"text"},{"name":"signature","label":"Assinatura recebida","kind":"text","help":"Aceita com ou sem o prefixo sha256=."},
-            {"name":"secret","label":"Segredo","kind":"text","placeholder":"{{vault:github-webhook}}","help":"Use {{vault:nome}} para um segredo do Cofre liberado para o Automator."}]},
+            {"name":"secret","label":"Segredo","kind":"text","placeholder":"{{vault:github-webhook}}","help":"Use {{cred:nome}} (Credenciais do Automator) ou {{vault:nome}} (Cofre da IDE)."}]},
         {"type":"sec.require","name":"Exigir campos","category":"Segurança","desc":"Só continua se os campos vierem preenchidos. Senão responde 400.","inputs":["in"],"outputs":["out"],
          "params":{"value":"{{input.body}}","fields":["nome"]},
          "fields":[{"name":"value","label":"Onde procurar","kind":"text"},{"name":"fields","label":"Campos obrigatórios","kind":"lines","help":"Um por linha. Campo dentro de outro: cliente.email."}]},
@@ -964,14 +964,159 @@ fn json_node(kind: &str, p: &Value) -> ApiResult<Value> {
     })
 }
 const GEN_RULES: &str = "# Regras
-- Comece por um gatilho (categoria Gatilhos). Use só os tipos, portas e parâmetros listados abaixo, com os valores permitidos.
+- Comece por um gatilho (categoria Gatilhos). Use só os tipos, portas e parâmetros listados em 'Nós disponíveis', com os valores permitidos. Não invente tipo de nó nem parâmetro.
 - Cada nó diz o que recebe e o que devolve (texto, JSON, lista, número, arquivo). Ligue a saída de um nó a outro que aceite aquele formato. Se um nó devolve texto e o próximo precisa de JSON, ponha um json.parse no meio; para tirar um campo de um JSON use json.get ou {{input.campo}}.
-- Dados entre nós: {{input}} é o que chegou no nó; {{input.campo.sub}} é um campo do JSON que chegou; {{nodes.ID.out}} (ou {{nodes.ID.true}}) é a saída de um nó anterior. Só use campos que aparecem em 'saída' do nó de origem.
-- Nós com as portas true e false (Condição e parecidos) seguem por um caminho ou pelo outro: ligue from_port 'true' e/ou 'false'.
+- Dados entre nós: {{input}} é o que chegou no nó; {{input.campo.sub}} é um campo do JSON que chegou; {{nodes.ID.out}} (ou {{nodes.ID.true}}) é a saída de um nó anterior. Não existe outra expressão: nada de {{now}}, {{trigger...}} ou {{ID.campo}}. Só use campos que aparecem em 'saída' do nó de origem.
+- Nós com as portas true e false (Condição, Testar site, Testar API e parecidos) seguem por um caminho ou pelo outro: ligue from_port 'true' e/ou 'false'.
 - Todo nó que não é gatilho precisa de uma conexão chegando nele. Sem ciclos.
-- Dê um title curto a cada nó quando ajudar a entender o passo.
-- Nunca embuta senha ou token: use {{vault:nome}}. Não execute nada nem altere arquivos agora: só descreva o fluxo.
-- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho).";
+- Dê um title curto a cada nó, dizendo o que aquele passo faz neste fluxo.
+- Preencha os parâmetros com o que o pedido informou (endereços, pastas, horários, textos). O que o pedido não informou e o usuário precisa preencher ou conferir vai em 'notes', uma frase curta por item, dizendo em qual nó.
+- Senhas, tokens e chaves nunca ficam escritos no fluxo: use {{cred:nome}}, uma credencial do Automator ({{cred:nome.user}} é o usuário dela). Reaproveite as de 'Credenciais que já existem' quando servirem. O pedido pode trazer {{cred:nome}} no lugar de uma senha que o usuário escreveu: use exatamente essa referência onde a senha é usada. Se ainda houver uma senha ou token escrito no pedido, não o copie para o fluxo: dê um nome, use {{cred:nome}} e liste em 'secrets' como {\"name\":\"nome\",\"value\":\"o valor\"}.
+- {{cred:nome}} funciona nos campos dos nós e dentro do script de windows.powershell (fora de aspas simples). Não funciona nos argumentos de windows.command.
+- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho). Num script, o que chegou vem em $env:BS_INPUT e a saída é o que o script escrever.
+- Não execute nada nem altere arquivos agora: só descreva o fluxo.";
+const GEN_FORMAT: &str = "{\"name\":\"Nome\",\"description\":\"Para que serve\",\"notes\":[\"o que o usuário ainda precisa preencher ou conferir\"],\"secrets\":[],\"nodes\":[{\"id\":\"n1\",\"type\":\"trigger.manual\",\"title\":\"nome do passo\",\"params\":{\"sample\":\"\"},\"position\":[60,100]}],\"edges\":[{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"}]}";
+const GEN_EXAMPLE: &str = "Pedido: A cada 30 minutos, chamar https://api.exemplo.com/status com o token {{cred:token-exemplo}} e me avisar se o campo ok vier falso.
+Resposta: {\"name\":\"Vigiar a API\",\"description\":\"Chama o status a cada 30 minutos e avisa quando ok vem falso.\",\"notes\":[\"Consultar o status: confira se o token vai mesmo no cabeçalho Authorization.\"],\"secrets\":[],\"nodes\":[{\"id\":\"n1\",\"type\":\"trigger.schedule\",\"title\":\"A cada 30 minutos\",\"params\":{\"mode\":\"interval\",\"every_minutes\":30}},{\"id\":\"n2\",\"type\":\"http.request\",\"title\":\"Consultar o status\",\"params\":{\"url\":\"https://api.exemplo.com/status\",\"method\":\"GET\",\"headers\":{\"Authorization\":\"Bearer {{cred:token-exemplo}}\"}}},{\"id\":\"n3\",\"type\":\"logic.if\",\"title\":\"ok veio falso?\",\"params\":{\"value\":\"{{input.ok}}\",\"op\":\"eq\",\"equals\":\"false\"}},{\"id\":\"n4\",\"type\":\"windows.notify\",\"title\":\"Avisar\",\"params\":{\"title\":\"API com problema\",\"message\":\"O status respondeu ok = falso.\"}}],\"edges\":[{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"},{\"from\":\"n2\",\"from_port\":\"out\",\"to\":\"n3\",\"to_port\":\"in\"},{\"from\":\"n3\",\"from_port\":\"true\",\"to\":\"n4\",\"to_port\":\"in\"}]}";
+/// O pedido inteiro para a IA que monta (ou altera, com `current`) um fluxo.
+fn gen_prompt(request: &str, current: Option<&Value>) -> String {
+    let creds = crate::creds::names();
+    let have = if creds.is_empty() { "nenhuma ainda".to_string() } else { creds.join(", ") };
+    let task = match current {
+        Some(f) => format!("Altere o fluxo de automação do BlueScreen abaixo conforme o pedido. Mantenha id, title, params e position dos nós que não mudam e devolva o fluxo INTEIRO, não só a diferença.\n\n# Fluxo atual\n{}", f.to_string().chars().take(40_000).collect::<String>()),
+        None => "Monte um fluxo de automação Windows do BlueScreen.".to_string(),
+    };
+    format!("{task}\n\nRetorne SOMENTE JSON, neste formato: {GEN_FORMAT}\n\n{GEN_RULES}\n\n# Credenciais que já existem\n{have}\n\n# Exemplo de um fluxo bem montado\n{GEN_EXAMPLE}\n\n# Nós disponíveis\n{}\n\n# Pedido do usuário\n{request}", ai_guide())
+}
+/// Uma senha ou token achado num pedido à IA, ou que a IA apontou.
+struct Secret { name: String, value: String, /// já há uma credencial com esse valor
+    exists: bool, /// tirado do pedido aqui no PC: a IA não chegou a ver
+    local: bool }
+static TOKEN_SHAPE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\b(ghp_[A-Za-z0-9]{30,}|github_pat_\w{30,}|glpat-[\w-]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,})").unwrap());
+/// Senhas e tokens escritos num texto: (início, fim, nome sugerido, valor). Pega tokens de formato conhecido (GitHub,
+/// OpenAI, Slack, AWS, JWT) e o que vem depois de "senha", "token", "chave"... quando parece mesmo um valor: entre
+/// aspas, depois de ":" ou "=", ou com número ou símbolo no meio. "a senha do usuário" não é uma senha.
+fn find_secrets(text: &str) -> Vec<(usize, usize, String, String)> {
+    static WORD: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"(?i)\b(senha|password|passwd|pwd|token|api[ _-]?key|chave de api|chave da api|chave|secret|segredo)\b(\s*(?::|=|é|eh)\s*|\s+)("[^"\n]{1,200}"|'[^'\n]{1,200}'|`[^`\n]{1,200}`|[^\s"'`]{1,200})"#).unwrap());
+    static HOST: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)\b(?:https?://)?((?:[a-z0-9-]+\.)+(?:com|net|org|io|dev|app|br|gov|edu|co|me|ai))\b").unwrap());
+    // de que site é: "app.loja.com.br" -> "app-loja"
+    let site = HOST.captures(text).map(|c| c[1].to_lowercase().split('.').filter(|p| !matches!(*p, "www" | "com" | "net" | "org" | "io" | "dev" | "app" | "br" | "gov" | "edu" | "co" | "me" | "ai")).collect::<Vec<_>>().join("-")).filter(|s| !s.is_empty());
+    let named = |base: &str| crate::creds::slug(&match &site { Some(s) => format!("{base}-{s}"), None => base.to_string() });
+    let mut out: Vec<(usize, usize, String, String)> = vec![];
+    for m in TOKEN_SHAPE.find_iter(text) {
+        let v = m.as_str();
+        let base = if v.starts_with("gh") { "token-github" } else if v.starts_with("glpat") { "token-gitlab" } else if v.starts_with("sk-") { "chave-api" } else if v.starts_with("xox") { "token-slack" } else if v.starts_with("AKIA") { "chave-aws" } else { "token" };
+        out.push((m.start(), m.end(), if v.starts_with("gh") || v.starts_with("glpat") || v.starts_with("xox") || v.starts_with("AKIA") { base.to_string() } else { named(base) }, v.to_string()));
+    }
+    // "a senha do painel é X": até quatro palavras entre o nome e o valor, e aí só vale o que parece mesmo uma senha
+    static FAR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"(?i)\b(senha|password|passwd|pwd|token|api[ _-]?key|chave de api|chave da api|chave|secret|segredo)\b(?:\s+[\p{L}\d-]+){1,4}?(?:\s*[:=]\s*|\s+(?:é|eh)\s+)("[^"
+]{1,200}"|'[^'
+]{1,200}'|`[^`
+]{1,200}`|[^\s"'`]{1,200})"#).unwrap());
+    let near = WORD.captures_iter(text).map(|c| (c[1].to_lowercase(), c[2].trim().to_string(), c.get(3).unwrap()));
+    let far = FAR.captures_iter(text).map(|c| (c[1].to_lowercase(), String::new(), c.get(2).unwrap()));
+    for (word, sep, raw) in near.chain(far) {
+        let quoted = raw.as_str().starts_with(['"', '\'', '`']);
+        let value = if quoted { &raw.as_str()[1..raw.as_str().len() - 1] } else { raw.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?', ')']) };
+        let (start, end) = if quoted { (raw.start(), raw.end()) } else { (raw.start(), raw.start() + value.len()) };
+        if value.contains("{{") || value.contains("}}") || out.iter().any(|o| start < o.1 && o.0 < end) { continue; }
+        let n = value.chars().count();
+        let odd = value.chars().any(|ch| ch.is_ascii_digit() || (!ch.is_alphanumeric() && ch != '-'));
+        let sure = if quoted { n >= 3 } else if sep == ":" || sep == "=" { n >= 4 } else { n >= 6 && odd };
+        if !sure { continue; }
+        let base = match word.as_str() { "senha" | "password" | "passwd" | "pwd" => "senha", "token" => "token", "secret" | "segredo" => "segredo", _ => "chave" };
+        out.push((start, end, named(base), value.to_string()));
+    }
+    out.sort_by_key(|o| o.0);
+    out
+}
+/// O pedido sem as senhas: cada uma vira `{{cred:nome}}` antes de o texto ir para a IA. O nome é o de uma credencial
+/// que já tem aquele valor, ou um novo, livre.
+fn take_secrets(text: &str) -> (String, Vec<Secret>) {
+    let mut secrets: Vec<Secret> = vec![];
+    let (mut out, mut pos) = (String::new(), 0);
+    for (start, end, base, value) in find_secrets(text) {
+        let name = match secrets.iter().find(|s| s.value == value) {
+            Some(s) => s.name.clone(),
+            None => {
+                let taken: Vec<String> = secrets.iter().map(|s| s.name.clone()).collect();
+                let (name, exists) = crate::creds::plan_name(&base, &value, &taken);
+                secrets.push(Secret { name: name.clone(), value, exists, local: true });
+                name
+            }
+        };
+        out.push_str(&text[pos..start]); out.push_str(&format!("{{{{cred:{name}}}}}")); pos = end;
+    }
+    out.push_str(&text[pos..]);
+    (out, secrets)
+}
+fn swap_text(v: &mut Value, from: &str, to: &str) {
+    match v {
+        Value::String(s) if s.contains(from) => *s = s.replace(from, to),
+        Value::Array(a) => a.iter_mut().for_each(|x| swap_text(x, from, to)),
+        Value::Object(o) => o.values_mut().for_each(|x| swap_text(x, from, to)),
+        _ => {}
+    }
+}
+/// O que a IA listou em `secrets` (uma senha que ela viu no pedido): o valor sai de `target` (os parâmetros do
+/// fluxo, ou o script) e entra a referência; o nome que ela deu vira o nome livre de verdade.
+fn ai_secrets(raw: &Value, target: &mut Value, secrets: &mut Vec<Secret>) {
+    for s in raw.as_array().into_iter().flatten() {
+        let Some(value) = s["value"].as_str().filter(|v| !v.is_empty() && !v.contains("{{")) else { continue };
+        if secrets.iter().any(|x| x.value == value) { continue; }
+        let given = crate::creds::slug(s["name"].as_str().unwrap_or(""));
+        let taken: Vec<String> = secrets.iter().map(|x| x.name.clone()).collect();
+        let (name, exists) = crate::creds::plan_name(if given.is_empty() { "credencial" } else { &given }, value, &taken);
+        swap_text(target, value, &format!("{{{{cred:{name}}}}}"));
+        if !given.is_empty() && given != name {
+            swap_text(target, &format!("cred:{given}}}}}"), &format!("cred:{name}}}}}"));
+            swap_text(target, &format!("cred:{given}."), &format!("cred:{name}."));
+        }
+        secrets.push(Secret { name, value: value.to_string(), exists, local: false });
+    }
+}
+/// Guarda nas credenciais do Automator as senhas que o resultado usa de fato. Devolve o que a tela mostra de cada uma
+/// (sem o valor) e os nomes que o resultado cita e não existem.
+fn keep_secrets(secrets: &[Secret], text: &str, label: &str) -> (Vec<Value>, Vec<String>) {
+    let mut report = vec![];
+    for s in secrets {
+        let used = text.contains(&format!("cred:{}}}}}", s.name)) || text.contains(&format!("cred:{}.", s.name));
+        let (mut stored, mut error) = (s.exists, String::new());
+        if used && !s.exists { match crate::creds::add(&s.name, &s.value, label, "ia") { Ok(()) => stored = true, Err(e) => error = e.msg } }
+        report.push(json!({"name": s.name, "stored": stored, "used": used, "local": s.local, "existed": s.exists, "error": error}));
+    }
+    let have = crate::creds::names();
+    let mut missing: Vec<String> = crate::creds::marks(text).into_iter().map(|m| m.1).filter(|n| !have.contains(n)).collect();
+    missing.sort(); missing.dedup();
+    (report, missing)
+}
+/// Pergunta a um agente de IA (CLI ou OpenRouter) e devolve o texto da resposta. `b`: { provider, model, cwd }.
+async fn ai_ask(b: &Value, prompt: String) -> ApiResult<String> {
+    let provider = b["provider"].as_str().unwrap_or("codex");
+    let response = match provider {
+        "openrouter" => execute_node(&Node{id:String::new(),kind:"ai.openrouter".into(),title:None,params:Value::Null,position:[0.,0.],disabled:false,locked:false,size:None},json!({"prompt":prompt,"model":b["model"],"secret":"openrouter","max_tokens":8192}),Value::Null).await?["out"].clone(),
+        _ => { let v = cli("automator",provider,&prompt,&b["cwd"],&Value::Null).await?; if v["ok"]!=true { return Err(fail(format!("CLI falhou: {}",v["err"]),422)); } v["out"].clone() },
+    };
+    response.as_str().map(String::from).ok_or_else(||fail("IA respondeu sem texto",422))
+}
+const SCRIPT_PS: &str = "- O que chegou no nó vem em $env:BS_INPUT, sempre como texto; se for JSON, leia com ConvertFrom-Json.
+- A saída do nó é o que o script escrever. Escreva só o resultado; com mais de um campo, um objeto com ConvertTo-Json -Compress -Depth 6.
+- Roda sem ninguém olhando: nada de Read-Host, janelas ou confirmações. Em erro, use throw com uma mensagem clara em português.
+- É o Windows PowerShell 5.1: sem &&, ||, operador ternário nem ?.
+- Para usar uma senha ou token, escreva {{cred:nome}} direto no script, fora de aspas simples: na execução vira uma variável de ambiente com o valor.";
+/// O script e o resumo dentro da resposta da IA: o script vem num bloco ``` e o resumo depois de "RESUMO:".
+fn script_answer(out: &str) -> ApiResult<(String, String)> {
+    let start = out.find("```").ok_or_else(|| fail("a IA respondeu sem o script", 422))?;
+    let end = out.rfind("```").filter(|e| *e > start).ok_or_else(|| fail("a IA mandou o script pela metade", 422))?;
+    let body = &out[start + 3..end];
+    // a primeira linha do bloco é o nome da linguagem (ou vazia)
+    let body = body.split_once('\n').map(|x| x.1).unwrap_or("");
+    let script = body.replace("\r\n", "\n").trim_end().to_string();
+    if script.trim().is_empty() { return Err(fail("a IA devolveu um script vazio", 422)); }
+    let rest = out[end + 3..].trim();
+    let summary = rest.split_once("RESUMO:").map(|x| x.1).unwrap_or(rest).trim().chars().take(600).collect();
+    Ok((script, summary))
+}
 /// O catálogo escrito para a IA que monta fluxos: por categoria, o que cada nó faz, o que recebe e devolve, as portas,
 /// os parâmetros com o valor padrão e os valores aceitos, e os campos da saída quando são conhecidos.
 fn ai_guide() -> String {
@@ -1006,17 +1151,18 @@ fn ai_guide() -> String {
     out
 }
 /// O JSON do fluxo dentro da resposta da IA, já com os parâmetros que faltaram e a estrutura validada.
-fn gen_flow(out: &str) -> ApiResult<Flow> {
+fn gen_flow(out: &str) -> ApiResult<(Flow, Value)> {
     let first = out.find('{').ok_or_else(|| fail("IA não retornou um fluxo JSON", 422))?;
     let last = out.rfind('}').ok_or_else(|| fail("JSON incompleto", 422))?;
-    let mut flow: Flow = serde_json::from_str(&out[first..=last]).map_err(|e| fail(format!("fluxo JSON inválido: {e}"), 422))?;
+    let raw: Value = serde_json::from_str(&out[first..=last]).map_err(|e| fail(format!("fluxo JSON inválido: {e}"), 422))?;
+    let mut flow: Flow = serde_json::from_value(raw.clone()).map_err(|e| fail(format!("fluxo JSON inválido: {e}"), 422))?;
     flow.id.clear(); flow.active = false; flow.next_run = None;
     for (i, n) in flow.nodes.iter_mut().enumerate() {
         if n.position == [0., 0.] { n.position = [60. + (i % 3) as f32 * 240., 80. + (i / 3) as f32 * 180.]; }
         if let Some(s) = spec(&n.kind) { let mut params = s["params"].as_object().cloned().unwrap_or_default(); if let Some(p) = n.params.as_object() { params.extend(p.clone()); } n.params = json!(params); }
     }
     validate(&flow)?;
-    Ok(flow)
+    Ok((flow, raw))
 }
 /// O que a estrutura não pega: parâmetro que o nó não tem, valor fora da lista, referência a nó que não existe ou que
 /// não vem antes, campo que a saída do nó anterior não tem, e nó sem ninguém ligado nele.
@@ -1061,6 +1207,22 @@ fn flow_issues(f: &Flow) -> Vec<String> {
                 out.push(format!("{name}: \"{}\" devolve {}, que não tem campos; para ler um campo, ponha um json.parse antes", src["name"].as_str().unwrap_or(""), src["gives"].as_str().unwrap_or("")));
             }
         }
+    }
+    if !f.nodes.iter().any(|n| n.kind.starts_with("trigger.")) { out.push("o fluxo não tem gatilho: comece por um nó da categoria Gatilhos".into()); }
+    static ANY: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{\s*([^{}]+?)\s*\}\}").unwrap());
+    for n in &f.nodes {
+        let name = format!("{} ({})", n.id, specs.get(&n.kind).and_then(|s| s["name"].as_str()).unwrap_or(&n.kind));
+        let text = n.params.to_string();
+        for c in ANY.captures_iter(&text) {
+            let k = &c[1];
+            if !(k == "input" || ["input.", "nodes.", "vault:", "cred:", "secret:"].iter().any(|p| k.starts_with(p))) {
+                out.push(format!("{name}: {{{{{k}}}}} não é uma expressão que existe (use {{{{input}}}}, {{{{input.campo}}}} ou {{{{nodes.ID.out}}}})"));
+            }
+        }
+        if n.kind == "windows.command" && { let a = n.params["args"].to_string() + &n.params["program"].to_string(); a.contains("cred:") || a.contains("vault:") } {
+            out.push(format!("{name}: senha não vai em argumento de programa; use windows.powershell com {{{{cred:nome}}}} dentro do script"));
+        }
+        if TOKEN_SHAPE.is_match(&text) { out.push(format!("{name}: há um token escrito no nó; troque por {{{{cred:nome}}}} e liste o valor em 'secrets'")); }
     }
     out.sort(); out.dedup();
     out.truncate(20);
@@ -1878,6 +2040,44 @@ fn file_changes(f: &Flow) -> Option<Value> {
     }
     hit
 }
+/// As referências `{{vault:nome}}` e `{{cred:nome}}` de um texto, cada uma numa variável de ambiente: (variáveis,
+/// referência -> nome da variável). A do Cofre da IDE segue como referência (quem resolve é o `plugin/exec`, com as
+/// permissões do cofre); a credencial do Automator já vai com o valor.
+fn secret_env(text: &str) -> ApiResult<(serde_json::Map<String, Value>, serde_json::Map<String, Value>)> {
+    static MARK: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{\s*(?:vault|cred):[^{}]+\}\}").unwrap());
+    let creds = crate::creds::resolve_all(text)?;
+    let (mut env, mut secrets) = (serde_json::Map::new(), serde_json::Map::new());
+    for m in MARK.find_iter(text) {
+        if secrets.contains_key(m.as_str()) { continue; }
+        let name = format!("BS_SECRET_{}", secrets.len());
+        let value = creds.iter().find(|c| c.0 == m.as_str()).map(|c| c.1.clone()).unwrap_or_else(|| m.as_str().to_string());
+        env.insert(name.clone(), json!(value));
+        secrets.insert(m.as_str().to_string(), json!(name));
+    }
+    Ok((env, secrets))
+}
+/// Roda o nó com as credenciais do Automator (`{{cred:nome}}`) no lugar e tira os valores do que ele devolve, saída e
+/// erro, antes de seguir para os próximos nós e para o histórico.
+async fn run_node(flow: &str, n: &Node, p: Value, input: Value) -> ApiResult<Value> {
+    let text = p.to_string();
+    if !text.contains("cred:") { return execute_node(n, p, input).await; }
+    let who = format!("{flow} › {}", n.title.clone().filter(|t| !t.trim().is_empty()).or_else(|| spec(&n.kind).and_then(|s| s["name"].as_str().map(String::from))).unwrap_or_else(|| n.kind.clone()));
+    let found = match crate::creds::resolve_all(&text) { Ok(f) => f, Err(e) => { crate::creds::note_use(&text, &who, false, &e.msg); return Err(e); } };
+    if found.is_empty() { return execute_node(n, p, input).await; }
+    if n.kind == "windows.command" && (p["args"].to_string().contains("cred:") || p["program"].to_string().contains("cred:")) {
+        let e = fail("credencial não vai em argumento de programa (outros programas do PC conseguem ler). Use o nó Script PowerShell: lá {{cred:nome}} chega por variável de ambiente.", 400);
+        crate::creds::note_use(&text, &who, false, "credencial em argumento de programa");
+        return Err(e);
+    }
+    crate::creds::note_use(&text, &who, true, "");
+    let values: Vec<String> = found.iter().map(|x| x.1.clone()).collect();
+    // nó de plugin e script do PowerShell recebem por variável de ambiente (secret_env); os outros, no próprio campo
+    let p = if n.kind.starts_with("plugin.") || n.kind == "windows.powershell" { p } else { crate::creds::fill(&p, &found) };
+    match execute_node(n, p, input).await {
+        Ok(v) => Ok(crate::creds::scrub_value(&v, &values)),
+        Err(mut e) => { e.msg = crate::plugins::vault::scrub(&e.msg, &values); Err(e) }
+    }
+}
 /// Nó de plugin: roda o programa do plugin na pasta dele. Pela entrada padrão vai um JSON
 /// `{ node, params, input, data, secrets }`; a saída padrão (JSON, ou texto) é a saída do nó.
 /// `{{vault:nome}}` nos parâmetros não vai no JSON: cada um vira uma variável de ambiente (`secrets` diz qual), e o
@@ -1885,17 +2085,8 @@ fn file_changes(f: &Flow) -> Option<Value> {
 async fn run_plugin_node(kind: &str, p: Value, input: Value) -> ApiResult<Value> {
     let s = spec(kind).ok_or_else(|| fail("o plugin deste nó está desligado ou foi removido", 409))?;
     let plugin = s["plugin"].as_str().unwrap_or("");
-    static MARK: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{vault:[^}]+\}\}").unwrap());
     let text = p.to_string();
-    let mut env = serde_json::Map::new();
-    let mut secrets = serde_json::Map::new();
-    for m in MARK.find_iter(&text) {
-        if !secrets.contains_key(m.as_str()) {
-            let name = format!("BS_SECRET_{}", secrets.len());
-            env.insert(name.clone(), json!(m.as_str()));
-            secrets.insert(m.as_str().to_string(), json!(name));
-        }
-    }
+    let (env, secrets) = secret_env(&text)?;
     let stdin = json!({"node": kind.rsplit('.').next(), "params": p, "input": input, "data": s["data"], "secrets": secrets}).to_string();
     let run = &s["run"];
     let v = service(plugin, "plugin/exec", json!({
@@ -2626,7 +2817,12 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
         "windows.powershell" => {
             let script = text_of(&p, "script");
             if script.trim().is_empty() { return Err(fail("o script está vazio", 400)); }
-            run_ps(&script, &p["cwd"], &p["timeout"], json!({"BS_INPUT": stringify(&input)})).await?
+            // {{cred:nome}} e {{vault:nome}} no script viram ${env:BS_SECRET_n}: o valor não fica escrito no arquivo
+            let (mut env, secrets) = secret_env(&script)?;
+            let mut script = script;
+            for (mark, var) in &secrets { script = script.replace(mark, &format!("${{env:{}}}", var.as_str().unwrap_or(""))); }
+            env.insert("BS_INPUT".into(), json!(stringify(&input)));
+            run_ps(&script, &p["cwd"], &p["timeout"], Value::Object(env)).await?
         }
         "windows.alarm" => alarm_node(&p, &input).await?,
         "text.case" => {
@@ -2785,7 +2981,7 @@ fn start(f: Flow, via: &str, payload: Value) -> ApiResult<Value> {
             let action = async {
                 let p = fill(&n.params, &input, &outputs)?;
                 if is_trigger && !payload.is_null() { return Ok(json!({"out": payload.clone()})); }
-                execute_node(n, p, input).await
+                run_node(&f.name, n, p, input).await
             };
             let stop = async { while !cancel.load(Ordering::Relaxed) && enabled("automator") { tokio::time::sleep(Duration::from_millis(200)).await; } };
             let result = tokio::select! { r = action => Some(r), _ = stop => None };
@@ -2826,29 +3022,86 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
         if !r.is_post(){return Err(fail("use POST",405));}
         let _slot=SLOTS.try_acquire().map_err(|_|fail("aguarde as execuções em andamento",409))?;
         let b:Value=r.body_json()?;
-        let request=b["request"].as_str().filter(|s|!s.trim().is_empty()).ok_or_else(||fail("descreva a automação",400))?;
-        let prompt = format!("Monte um fluxo de automação Windows do BlueScreen. Retorne SOMENTE JSON, neste formato: {{\"name\":\"Nome\",\"description\":\"Para que serve\",\"nodes\":[{{\"id\":\"n1\",\"type\":\"trigger.manual\",\"title\":\"nome opcional do passo\",\"params\":{{\"sample\":\"\"}},\"position\":[60,100]}}],\"edges\":[{{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"}}]}}.\n\n{GEN_RULES}\n\n# Nós disponíveis\n{}\n\n# Pedido do usuário\n{request}", ai_guide());
-        let ask = |prompt: String| { let b = b.clone(); async move {
-            let provider = b["provider"].as_str().unwrap_or("codex");
-            let response = match provider {
-                "openrouter" => execute_node(&Node{id:String::new(),kind:"ai.openrouter".into(),title:None,params:Value::Null,position:[0.,0.],disabled:false,locked:false,size:None},json!({"prompt":prompt,"model":b["model"],"secret":"openrouter","max_tokens":8192}),Value::Null).await?["out"].clone(),
-                _ => { let v = cli("automator",provider,&prompt,&b["cwd"],&Value::Null).await?; if v["ok"]!=true { return Err(fail(format!("CLI falhou: {}",v["err"]),422)); } v["out"].clone() },
-            };
-            response.as_str().map(String::from).ok_or_else(||fail("IA respondeu sem texto",422))
-        } };
-        let first = ask(prompt.clone()).await?;
-        let mut parsed = gen_flow(&first);
-        // o que a conferência achar volta para a IA uma vez, com o fluxo que ela mandou
-        let problems = match &parsed { Ok(f) => flow_issues(f), Err(e) => vec![e.msg.clone()] };
-        if !problems.is_empty() {
-            let fix = format!("{prompt}\n\n# Sua resposta anterior\n{}\n\n# Problemas encontrados nela\n- {}\n\nCorrija todos e retorne o fluxo inteiro de novo, SOMENTE o JSON.", first.chars().take(20000).collect::<String>(), problems.join("\n- "));
-            if let Ok(second) = ask(fix).await { let again = gen_flow(&second); if again.is_ok() || parsed.is_err() { parsed = again; } }
+        let asked=b["request"].as_str().filter(|s|!s.trim().is_empty()).ok_or_else(||fail("descreva a automação",400))?;
+        // senha ou token escrito no pedido sai dele aqui: a IA recebe {{cred:nome}} no lugar
+        let (request, mut secrets) = take_secrets(asked);
+        // com `flow`, o pedido é para alterar o fluxo que está aberto
+        let current = b.get("flow").filter(|f| f["nodes"].as_array().is_some_and(|a| !a.is_empty())).map(|f| json!({"name": f["name"], "description": f["description"], "nodes": f["nodes"], "edges": f["edges"]}));
+        let prompt = gen_prompt(&request, current.as_ref());
+        let mut answer = ai_ask(&b, prompt.clone()).await?;
+        let mut parsed = gen_flow(&answer);
+        // o que a conferência achar volta para a IA, com o fluxo que ela mandou: até duas rodadas
+        let mut rounds = 0;
+        for _ in 0..2 {
+            let problems = match &parsed { Ok((f, _)) => flow_issues(f), Err(e) => vec![e.msg.clone()] };
+            if problems.is_empty() { break; }
+            let fix = format!("{prompt}\n\n# Sua resposta anterior\n{}\n\n# Problemas encontrados nela\n- {}\n\nCorrija todos e retorne o fluxo inteiro de novo, SOMENTE o JSON.", answer.chars().take(20000).collect::<String>(), problems.join("\n- "));
+            let Ok(second) = ai_ask(&b, fix).await else { break };
+            let again = gen_flow(&second);
+            if again.is_err() && parsed.is_ok() { break; }
+            parsed = again; answer = second; rounds += 1;
         }
-        let flow = parsed?;
+        let (mut flow, raw) = parsed?;
+        if let Some(cur) = &current && flow.name.trim().is_empty() { flow.name = cur["name"].as_str().unwrap_or("").to_string(); }
+        let mut params = Value::Array(flow.nodes.iter().map(|n| n.params.clone()).collect());
+        ai_secrets(&raw["secrets"], &mut params, &mut secrets);
+        for (n, p) in flow.nodes.iter_mut().zip(params.as_array().cloned().unwrap_or_default()) { n.params = p; }
+        let (report, missing) = keep_secrets(&secrets, &serde_json::to_string(&flow.nodes)?, &format!("Do fluxo \"{}\"", flow.name));
         let warnings = flow_issues(&flow);
+        let values: Vec<String> = secrets.iter().map(|s| s.value.clone()).collect();
+        let notes: Vec<String> = raw["notes"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).map(|n| crate::plugins::vault::scrub(n.trim(), &values).chars().take(300).collect::<String>()).filter(|n| !n.is_empty()).take(8).collect();
         let mut out = serde_json::to_value(&flow)?;
         out["warnings"] = json!(warnings);
+        out["notes"] = json!(notes);
+        out["secrets"] = json!(report);
+        out["missing_creds"] = json!(missing);
+        out["rounds"] = json!(rounds);
         ok(out)
+    }));
+    // a IA escreve ou altera o script de um nó (campo com `code`): { type, field, script, request, input, error, provider, model }
+    m.insert("automator/script".into(), route_fn(|r| async move {
+        r.local_only()?; require_enabled("automator")?;
+        if !r.is_post() { return Err(fail("use POST", 405)); }
+        let _slot = SLOTS.try_acquire().map_err(|_| fail("aguarde as execuções em andamento", 409))?;
+        let b: Value = r.body_json()?;
+        let asked = b["request"].as_str().filter(|s| !s.trim().is_empty()).ok_or_else(|| fail("diga o que o script deve fazer ou o que mudar", 400))?;
+        let s = spec(b["type"].as_str().unwrap_or("")).ok_or_else(|| fail("nó desconhecido", 400))?;
+        let field = s["fields"].as_array().into_iter().flatten().find(|f| f["name"] == b["field"] && f["code"].is_string()).cloned().ok_or_else(|| fail("este campo não é um script", 400))?;
+        let lang = field["code"].as_str().unwrap_or("");
+        let script = b["script"].as_str().unwrap_or("");
+        if script.len() > 60_000 { return Err(fail("script grande demais para editar com IA (até 60 mil caracteres)", 400)); }
+        let (request, mut secrets) = take_secrets(asked);
+        let cut = |v: &Value, n: usize| { let t = stringify(v); if t.chars().count() > n { format!("{}…", t.chars().take(n).collect::<String>()) } else { t } };
+        let creds = crate::creds::names();
+        let mut prompt = format!("Você escreve o script ({lang}) de um nó \"{}\" numa automação do BlueScreen, no Windows. {}\n\n# Regras\n{}\n- Mantenha o que o pedido não mandou mudar. Não execute nada nem altere arquivos agora: só escreva o script.\n- Se o pedido trouxer uma senha ou token escrito, não o copie: use {{{{cred:nome}}}} e, na última linha da resposta, escreva SEGREDOS: seguido de um JSON [{{\"name\":\"nome\",\"value\":\"o valor\"}}].\n- Responda com o script INTEIRO dentro de um único bloco ``` e, depois do bloco, uma linha começando com RESUMO: dizendo em uma ou duas frases o que o script faz ou o que mudou.\n\n# Credenciais que já existem\n{}\n",
+            s["name"].as_str().unwrap_or(""), field["help"].as_str().unwrap_or(""), if lang == "powershell" { SCRIPT_PS } else { "- Siga o que a ajuda do campo diz sobre a entrada e a saída." },
+            if creds.is_empty() { "nenhuma ainda".to_string() } else { creds.join(", ") });
+        if script.trim().is_empty() { prompt.push_str("\n# Script atual\n(vazio: escreva do zero)\n"); } else { prompt.push_str(&format!("\n# Script atual\n```\n{script}\n```\n")); }
+        if !b["input"].is_null() { prompt.push_str(&format!("\n# Exemplo do que chega no nó\n{}\n", cut(&b["input"], 3000))); }
+        if b["error"].as_str().is_some_and(|e| !e.trim().is_empty()) { prompt.push_str(&format!("\n# Erro da última execução deste script\n{}\n", cut(&b["error"], 1500))); }
+        prompt.push_str(&format!("\n# Pedido\n{request}"));
+        let answer = ai_ask(&b, prompt).await?;
+        let (script, summary) = script_answer(&answer)?;
+        let mut target = json!(script);
+        let listed = answer.rsplit_once("SEGREDOS:").and_then(|x| serde_json::from_str::<Value>(x.1.trim().lines().next().unwrap_or("")).ok()).unwrap_or(Value::Null);
+        ai_secrets(&listed, &mut target, &mut secrets);
+        let script = target.as_str().unwrap_or("").to_string();
+        let (report, missing) = keep_secrets(&secrets, &script, &format!("Do script de \"{}\"", s["name"].as_str().unwrap_or("")));
+        let values: Vec<String> = secrets.iter().map(|s| s.value.clone()).collect();
+        let summary = crate::plugins::vault::scrub(summary.split("SEGREDOS:").next().unwrap_or("").trim(), &values);
+        ok(json!({"script": script, "summary": summary, "secrets": report, "missing_creds": missing}))
+    }));
+    // Credenciais do Automator (creds.rs): GET -> { entries (sem valores, com os fluxos que usam cada uma), audit, file }; POST { action, name, ... }
+    m.insert("automator/creds".into(), route_fn(|r| async move {
+        r.local_only()?; require_enabled("automator")?;
+        if r.is_post() { let b: Value = r.body_json()?; crate::creds::manage(&b).await?; }
+        let flows: Vec<(String, String)> = load()?.flows.iter().map(|f| (f.name.clone(), serde_json::to_string(&f.nodes).unwrap_or_default())).collect();
+        let mut list = crate::creds::list();
+        for c in list.as_array_mut().into_iter().flatten() {
+            let name = c["name"].as_str().unwrap_or("").to_string();
+            c["flows"] = json!(flows.iter().filter(|f| crate::creds::marks(&f.1).iter().any(|m| m.1 == name)).map(|f| f.0.clone()).collect::<Vec<_>>());
+        }
+        ok(json!({"entries": list, "audit": crate::creds::audit_log(), "file": crate::creds::file_path()}))
     }));
     // abre no programa padrão um arquivo que um nó gerou (relatório, evidência); só arquivos que existem, desses tipos
     m.insert("automator/open".into(), route_fn(|r| async move {
@@ -3479,6 +3732,38 @@ mod tests {
         let ok: Flow = serde_json::from_value(json!({"name":"T","nodes":[{"id":"a","type":"trigger.manual","params":{}},{"id":"b","type":"sys.info","params":{}},{"id":"c","type":"util.text","params":{"text":"{{input.cpu_percent}} {{nodes.b.out.disks}}"}}],
             "edges":[{"from":"a","from_port":"out","to":"b","to_port":"in"},{"from":"b","from_port":"out","to":"c","to_port":"in"}]})).unwrap();
         assert_eq!(flow_issues(&ok), Vec::<String>::new());
+    }
+    #[test]
+    fn senhas_do_pedido_e_script_da_ia() {
+        let t = "Entre em https://app.loja.com.br com usuário ana e senha Tr0ca!123, depois use o token ghp_abcdefghijklmnopqrstuvwxyz0123456789 e a chave: minhachave. A senha do usuário é obrigatória; api key 'x y z'.";
+        let f = find_secrets(t);
+        let got: Vec<(&str, &str)> = f.iter().map(|x| (x.2.as_str(), x.3.as_str())).collect();
+        assert_eq!(got, [("senha-loja", "Tr0ca!123"), ("token-github", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"), ("chave-loja", "minhachave"), ("chave-loja", "x y z")], "{got:?}");
+        let far: Vec<String> = find_secrets("A senha do painel é Xk9#mudar, a do jardim é girassol e o token do github: veja abaixo. A senha do usuário é obrigatória.").into_iter().map(|x| x.3).collect();
+        assert_eq!(far, ["Xk9#mudar"]);
+        for x in &f { assert_eq!(&t[x.0..x.1].trim_matches('\''), &x.3); }
+        assert!(find_secrets("troque a senha do usuário e avise; o token do github já está em {{cred:gh}}; senha: {{cred:x}}").is_empty());
+        let (s, r) = script_answer("Claro.\n```powershell\n$a = 1\nWrite-Output \"`n$a\"\n```\nRESUMO: escreve 1.").unwrap();
+        assert_eq!((s.as_str(), r.as_str()), ("$a = 1\nWrite-Output \"`n$a\"", "escreve 1."));
+        assert!(script_answer("sem bloco").is_err() && script_answer("```\n```").is_err());
+        let mut v = json!([{"a": "senha abc123 aqui {{cred:velho}} {{cred:velho.user}}"}]);
+        swap_text(&mut v, "abc123", "{{cred:novo}}"); swap_text(&mut v, "cred:velho}}", "cred:novo}}"); swap_text(&mut v, "cred:velho.", "cred:novo.");
+        assert_eq!(v, json!([{"a": "senha {{cred:novo}} aqui {{cred:novo}} {{cred:novo.user}}"}]));
+        // conferência: expressão inventada, senha em argumento, token escrito
+        let f: Flow = serde_json::from_value(json!({"name":"T","nodes":[
+            {"id":"a","type":"trigger.manual","params":{}},
+            {"id":"b","type":"util.text","params":{"text":"{{now}} {{input}} {{cred:x}} ghp_abcdefghijklmnopqrstuvwxyz0123456789"}},
+            {"id":"c","type":"windows.command","params":{"program":"curl","args":["-u","{{cred:x}}"]}}],
+            "edges":[{"from":"a","from_port":"out","to":"b","to_port":"in"},{"from":"b","from_port":"out","to":"c","to_port":"in"}]})).unwrap();
+        let p = flow_issues(&f).join("\n");
+        for want in ["{{now}} não é uma expressão", "senha não vai em argumento", "há um token escrito"] { assert!(p.contains(want), "faltou: {want}\n{p}"); }
+        let g = gen_prompt("oi", Some(&json!({"name":"X","nodes":[]})));
+        assert!(g.contains("# Fluxo atual") && g.contains("# Credenciais que já existem") && g.contains("{{cred:token-exemplo}}"));
+        // o exemplo do pedido tem que passar na própria conferência
+        let ex = GEN_EXAMPLE.split_once("Resposta: ").unwrap().1;
+        let (flow, raw) = gen_flow(ex).unwrap();
+        assert_eq!(flow_issues(&flow), Vec::<String>::new());
+        assert!(raw["notes"].is_array());
     }
     #[test]
     fn schedule_by_interval_and_by_clock() {

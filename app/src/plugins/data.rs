@@ -54,7 +54,7 @@ fn read(p: &Path) -> Map<String, Value> { let _g = LOCK.lock(); read_obj(p) }
 
 // ---------- segredos (DPAPI) ----------
 #[cfg(windows)]
-pub(super) mod dpapi {
+pub(crate) mod dpapi {
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData};
     fn blob(d: &[u8]) -> CRYPT_INTEGER_BLOB { CRYPT_INTEGER_BLOB { cbData: d.len() as u32, pbData: d.as_ptr() as *mut u8 } }
@@ -74,7 +74,7 @@ pub(super) mod dpapi {
     }
 }
 #[cfg(not(windows))]
-pub(super) mod dpapi {
+pub(crate) mod dpapi {
     // fora do Windows não há DPAPI: o arquivo fica só com permissão do usuário (base64, sem cifra)
     pub fn protect(data: &[u8], _: &[u8], _: bool) -> Option<Vec<u8>> { Some(data.to_vec()) }
 }

@@ -146,10 +146,10 @@ async function openBrowser(data, hidden) {
 async function run() {
   const req = JSON.parse(await readStdin());
   const p = req.params || {}, test = req.node === 'test';
-  // {{vault:nome}}: o valor chega numa variável de ambiente, e só se o cofre liberou para este plugin
-  const secret = (v) => String(v ?? '').replace(/\{\{vault:[^}]+\}\}/g, (m) => {
+  // {{vault:nome}} e {{cred:nome}}: o valor chega numa variável de ambiente (o do Cofre, só se liberado para este plugin)
+  const secret = (v) => String(v ?? '').replace(/\{\{\s*(?:vault|cred):[^{}]+\}\}/g, (m) => {
     const name = (req.secrets || {})[m];
-    if (!name || process.env[name] == null) die(`O cofre não entregou ${m}. Libere esse segredo para o plugin Navegador e para o programa node.`);
+    if (!name || process.env[name] == null) die(m.includes('cred:') ? `A credencial ${m} não chegou. Guarde em Credenciais, no Automator.` : `O cofre não entregou ${m}. Libere esse segredo para o plugin Navegador e para o programa node.`);
     return process.env[name];
   });
   const stepTimeout = Math.max(1, Math.min(300, Number(p.wait_s) || 15)) * 1000;
@@ -438,7 +438,7 @@ function REC() {
     if (lastTyped && lastTyped[0] === on && lastTyped[1] === v) return;
     lastTyped = [on, v];
     // senha nunca vai para o fluxo: fica a referência do Cofre, para a pessoa guardar o valor lá
-    say({ do: 'type', on: on, value: el.type === 'password' ? '{{vault:senha}}' : v });
+    say({ do: 'type', on: on, value: el.type === 'password' ? '{{cred:senha}}' : v });
   };
   document.addEventListener('mousemove', (e) => {
     if (mode !== 'read' && mode !== 'check') return;
