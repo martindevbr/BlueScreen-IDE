@@ -80,7 +80,9 @@ fn classify(rel: &str) -> Option<Kind> {
     if let Some(g) = rel.strip_prefix(".git/") {
         return (g == "HEAD" || g == "index" || g == "MERGE_HEAD" || g == "packed-refs" || g.starts_with("refs/")).then_some(Kind::Vcs);
     }
-    if rel == ".git" { return Some(Kind::Vcs); }
+    // a pasta .git em si muda a cada arquivo temporário que o Git cria e apaga lá dentro (index.lock): não é notícia.
+    // Criar ou apagar o repositório aparece pelo HEAD.
+    if rel == ".git" { return None; }
     if let Some(s) = rel.strip_prefix(".svn/") { return (s == "wc.db").then_some(Kind::Vcs); }
     if rel.split('/').any(|seg| IGNORED.contains(&seg)) { return None; }
     // arquivo temporário do salvar de arquivos grandes (bigfile.rs): vira o arquivo de verdade logo em seguida
@@ -230,6 +232,7 @@ mod tests {
         assert!(classify(".git/index") == Some(Kind::Vcs));
         assert!(classify(".git/refs/heads/main") == Some(Kind::Vcs));
         assert!(classify(".git/objects/ab/cdef").is_none());
+        assert!(classify(".git").is_none() && classify(".git/index.lock").is_none() && classify(".git/HEAD") == Some(Kind::Vcs));
         assert!(classify("web/node_modules/x/index.js").is_none());
         assert!(classify("target/debug/app.exe").is_none());
     }

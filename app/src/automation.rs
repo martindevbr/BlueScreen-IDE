@@ -73,7 +73,7 @@ struct Agenda {
     notified: bool,
     flow_id: Option<String>,
 }
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Store {
     /// agentes de IA por linha de comando: os dois de fábrica (com o que o usuário mudou) e os que ele criou
@@ -121,25 +121,44 @@ pub(crate) fn file() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| user_dir().join("automation.json"))
 }
-fn load() -> ApiResult<Store> {
-    match std::fs::read_to_string(file()) {
-        Ok(s) => Ok(serde_json::from_str(&s)?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Store::default()),
-        Err(e) => Err(e.into()),
-    }
+/// O arquivo de dados já lido e analisado, para não reler e reanalisar o JSON inteiro a cada consulta (a tela pergunta
+/// pelas execuções o tempo todo, e o agendador olha os fluxos a cada 5 segundos). Vale enquanto o arquivo for o mesmo,
+/// com a mesma data e o mesmo tamanho: se outro programa mexer nele, a próxima leitura percebe e relê.
+struct Cached { path: std::path::PathBuf, stamp: (Option<std::time::SystemTime>, u64), store: Store, /// o mesmo conteúdo em JSON compacto, para comparar depois de uma edição
+    compact: Option<String> }
+static CACHE: LazyLock<Mutex<Option<Cached>>> = LazyLock::new(Default::default);
+fn stamp_of(path: &std::path::Path) -> Option<(Option<std::time::SystemTime>, u64)> { std::fs::metadata(path).ok().map(|m| (m.modified().ok(), m.len())) }
+/// Deixa o cache em dia com o arquivo e roda `f` com os dados, sem copiar nada.
+fn with_store<T>(f: impl FnOnce(&Store, &mut Option<String>) -> T) -> ApiResult<T> {
+    let path = file();
+    let stamp = stamp_of(&path);
+    let mut c = CACHE.lock();
+    if let (Some(x), Some(st)) = (c.as_mut(), stamp) && x.path == path && x.stamp == st { return Ok(f(&x.store, &mut x.compact)); }
+    let store: Store = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => { *c = None; return Ok(f(&Store::default(), &mut None)); }
+        Err(e) => return Err(e.into()),
+    };
+    // a data é a de antes da leitura: se o arquivo mudou no meio, a próxima consulta relê
+    let x = c.insert(Cached { path, stamp: stamp.unwrap_or((None, 0)), store, compact: None });
+    Ok(f(&x.store, &mut x.compact))
 }
+fn load() -> ApiResult<Store> { with_store(|s, _| s.clone()) }
 fn edit<T>(f: impl FnOnce(&mut Store) -> ApiResult<T>) -> ApiResult<T> {
     let _g = STORE.lock();
-    let mut s = load()?;
-    let before = serde_json::to_string(&s)?;
+    // os dados de agora e o JSON compacto deles (guardado da última vez, quando houver)
+    let (mut s, before) = with_store(|s, compact| (s.clone(), compact.get_or_insert_with(|| serde_json::to_string(s).unwrap_or_default()).clone()))?;
     let out = f(&mut s)?;
-    if before == serde_json::to_string(&s)? {
+    let after = serde_json::to_string(&s)?;
+    if before == after {
         return Ok(out);
     }
-    if let Some(parent) = file().parent() {
+    let path = file();
+    if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    write_atomic(&file(), &serde_json::to_string_pretty(&s)?)?;
+    write_atomic(&path, &serde_json::to_string_pretty(&s)?)?;
+    *CACHE.lock() = stamp_of(&path).map(|stamp| Cached { path, stamp, store: s, compact: Some(after) });
     Ok(out)
 }
 fn id() -> String {
@@ -172,12 +191,15 @@ fn builtin() -> Value {
         {"type":"trigger.manual","name":"Iniciar manualmente","category":"Gatilhos","desc":"Começa quando você clica em Executar.","inputs":[],"outputs":["out"],
          "params":{"sample":""},"fields":[{"name":"sample","label":"Entrada de exemplo","kind":"area","help":"Texto entregue ao próximo nó."}]},
         {"type":"trigger.schedule","name":"Agenda","category":"Gatilhos","desc":"Começa sozinho, por intervalo ou num horário.","inputs":[],"outputs":["out"],
-         "params":{"mode":"interval","every_minutes":60,"time":"09:00","days":[]},
+         "params":{"mode":"interval","every_minutes":60,"time":"09:00","days":[],"window":"all","from":"08:00","to":"18:00"},
          "fields":[
             {"name":"mode","label":"Quando","kind":"select","options":[{"value":"interval","label":"A cada intervalo"},{"value":"daily","label":"Num horário do dia"}]},
             {"name":"every_minutes","label":"Intervalo em minutos","kind":"number","min":1,"max":525600,"show":{"mode":["interval"]}},
             {"name":"time","label":"Horário","kind":"time","show":{"mode":["daily"]}},
-            {"name":"days","label":"Dias da semana","kind":"checks","show":{"mode":["daily"]},"help":"Nenhum marcado: todos os dias.",
+            {"name":"window","label":"Em que parte do dia","kind":"select","show":{"mode":["interval"]},"options":[{"value":"all","label":"O dia inteiro"},{"value":"between","label":"Só entre dois horários"}]},
+            {"name":"from","label":"Das","kind":"time","show":{"mode":["interval"],"window":["between"]}},
+            {"name":"to","label":"Até as","kind":"time","show":{"mode":["interval"],"window":["between"]},"help":"Fora desse horário o fluxo não dispara; o próximo disparo fica para a hora em que ele recomeça. Um fim menor que o início atravessa a meia-noite."},
+            {"name":"days","label":"Dias da semana","kind":"checks","help":"Nenhum marcado: todos os dias. Vale para os dois modos.",
              "options":[{"value":1,"label":"Seg"},{"value":2,"label":"Ter"},{"value":3,"label":"Qua"},{"value":4,"label":"Qui"},{"value":5,"label":"Sex"},{"value":6,"label":"Sáb"},{"value":0,"label":"Dom"}]}
          ]},
         {"type":"util.text","name":"Texto","category":"Texto","desc":"Monta um texto com o que chegou.","inputs":["in"],"outputs":["out"],
@@ -765,6 +787,11 @@ fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
         "image.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com o tamanho da imagem.", json!({"width": 1920, "height": 1080})),
         "media.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com duração, tamanho e formatos.", json!({"seconds": 93.4, "duration": "00:01:33", "size": 10485760, "format": "mov,mp4", "width": 1920, "height": 1080, "video": "h264", "audio": "aac"})),
         k if k.starts_with("image.") || k.starts_with("audio.") || k.starts_with("video.") => ("Nada em especial: o arquivo vem do campo (pode ser a saída de outro nó).", FILE, n),
+        "time.window" => ("Qualquer dado: segue adiante sem mudar.", "A mesma entrada, pela saída sim (é dia e horário) ou não (fora do horário, ou dia de folga).", n),
+        "time.now" => ("Nada em especial.", "A data e a hora de agora em campos.", json!({"date": "12/11/2026", "time": "14:30", "iso": "2026-11-12T14:30:00-03:00", "weekday": 4, "weekday_name": "quinta", "weekend": false, "day": 12, "month": 11, "year": 2026, "hour": 14, "minute": 30, "timestamp": 1794504600000u64})),
+        "time.compare" => ("Qualquer dado: segue adiante sem mudar.", "A mesma entrada, pela saída sim ou não conforme a comparação das datas.", n),
+        "time.shift" => ("Qualquer dado, para usar no campo Data.", "A data calculada, como texto no formato escolhido (ou número, ou campos).", n),
+        "time.until" => ("Qualquer dado: segue adiante sem mudar.", "A mesma entrada, depois da espera.", n),
         "qa.api" => ("Qualquer dado, para usar no endereço, nos cabeçalhos e no corpo.", "O resultado do teste, pela saída sim (passou) ou não (falhou): cada conferência, o status, o tempo e a resposta.",
             json!({"ok": true, "name": "GET https://exemplo.com/api", "passed": 2, "failed": 0, "total": 2, "status": 200, "ms": 180, "checks": [{"name": "Status", "ok": true, "got": 200, "expected": "200"}], "body": {"itens": []}})),
         "qa.data" => ("Nada.", "Um objeto com os dados gerados (ou uma lista, quando pede mais de um).", json!({"nome": "Ana Souza", "email": "ana.souza482@exemplo.com", "cpf": "529.982.247-25", "telefone": "(11) 98765-4321"})),
@@ -793,7 +820,9 @@ fn io_kind(kind: &str) -> Option<(&'static str, &'static str)> {
         "trigger.manual" => ("none", "text"),
         k if k.starts_with("trigger.") => ("none", "object"),
         "logic.stop" => ("any", "none"),
-        "logic.if" | "logic.assert" | "util.delay" | "util.output" | "windows.notify" | "windows.open" | "windows.alarm" | "notify.chat" | "file.exists" => ("any", "same"),
+        "logic.if" | "logic.assert" | "util.delay" | "util.output" | "windows.notify" | "windows.open" | "windows.alarm" | "notify.chat" | "file.exists" | "time.window" | "time.compare" | "time.until" => ("any", "same"),
+        "time.now" => ("none", "object"),
+        "time.shift" => ("any", "text"),
         k if k.starts_with("sec.") => ("object", "same"),
         "util.text" | "data.datetime" | "file.read" | "windows.command" | "windows.powershell" | "windows.clipboard" | "agent.cli" | "ai.openrouter" => ("any", "text"),
         "text.replace" | "text.case" | "text.extract" => ("text", "text"),
@@ -982,7 +1011,7 @@ const GEN_RULES: &str = "# Regras
 - Preencha os parâmetros com o que o pedido informou (endereços, pastas, horários, textos). O que o pedido não informou e o usuário precisa preencher ou conferir vai em 'notes', uma frase curta por item, dizendo em qual nó.
 - Senhas, tokens e chaves nunca ficam escritos no fluxo: use {{cred:nome}}, uma credencial do Automator ({{cred:nome.user}} é o usuário dela). Reaproveite as de 'Credenciais que já existem' quando servirem. O pedido pode trazer {{cred:nome}} no lugar de uma senha que o usuário escreveu: use exatamente essa referência onde a senha é usada. Se ainda houver uma senha ou token escrito no pedido, não o copie para o fluxo: dê um nome, use {{cred:nome}} e liste em 'secrets' como {\"name\":\"nome\",\"value\":\"o valor\"}.
 - {{cred:nome}} funciona nos campos dos nós e dentro do script de windows.powershell (fora de aspas simples). Não funciona nos argumentos de windows.command.
-- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho). Num script, o que chegou vem em $env:BS_INPUT e a saída é o que o script escrever.
+- Dias e horários: para o fluxo rodar sozinho só em certos dias e horas, use trigger.schedule com 'days' e, no modo interval, window 'between' com 'from' e 'to'. Para decidir no meio do fluxo se agora é dia e hora de trabalho, use time.window (saídas true e false). Os dias são números: 1 segunda … 6 sábado, 0 domingo.\n- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho). Num script, o que chegou vem em $env:BS_INPUT e a saída é o que o script escrever.
 - Não execute nada nem altere arquivos agora: só descreva o fluxo.";
 const GEN_FORMAT: &str = "{\"name\":\"Nome\",\"description\":\"Para que serve\",\"notes\":[\"o que o usuário ainda precisa preencher ou conferir\"],\"secrets\":[],\"nodes\":[{\"id\":\"n1\",\"type\":\"trigger.manual\",\"title\":\"nome do passo\",\"params\":{\"sample\":\"\"},\"position\":[60,100]}],\"edges\":[{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"}]}";
 const GEN_EXAMPLE: &str = "Pedido: A cada 30 minutos, chamar https://api.exemplo.com/status com o token {{cred:token-exemplo}} e me avisar se o campo ok vier falso.
@@ -1285,6 +1314,158 @@ fn flow_issues(f: &Flow) -> Vec<String> {
     out.sort(); out.dedup();
     out.truncate(20);
     out
+}
+/// Nós de data e hora: saber se é dia e horário de trabalho, ler o agora em campos, comparar e calcular datas, esperar.
+fn time_catalog() -> Value {
+    let days = json!([{"value":1,"label":"Seg"},{"value":2,"label":"Ter"},{"value":3,"label":"Qua"},{"value":4,"label":"Qui"},{"value":5,"label":"Sex"},{"value":6,"label":"Sáb"},{"value":0,"label":"Dom"}]);
+    let units = json!([{"value":"minutes","label":"minutos"},{"value":"hours","label":"horas"},{"value":"days","label":"dias"},{"value":"weeks","label":"semanas"},{"value":"months","label":"meses"}]);
+    json!([
+        {"type":"time.window","name":"Dentro do horário?","category":"Data e hora","desc":"Segue por sim se agora é um dos dias e está no horário escolhidos; senão, por não.","inputs":["in"],"outputs":["true","false"],
+         "params":{"days":[1,2,3,4,5],"window":"between","from":"08:00","to":"18:00","except":[],"when":""},
+         "fields":[
+            {"name":"days","label":"Dias da semana","kind":"checks","options":days,"help":"Nenhum marcado: todos os dias."},
+            {"name":"window","label":"Em que parte do dia","kind":"select","options":[{"value":"between","label":"Só entre dois horários"},{"value":"all","label":"O dia inteiro"}]},
+            {"name":"from","label":"Das","kind":"time","show":{"window":["between"]}},
+            {"name":"to","label":"Até as","kind":"time","show":{"window":["between"]},"help":"Um fim menor que o início atravessa a meia-noite (22:00 até 06:00), e o dia que conta é o do começo."},
+            {"name":"except","label":"Dias de folga","kind":"lines","help":"Um por linha: 25/12 (todo ano), 02/11/2026 ou 2026-11-02. Nesses dias a resposta é não."},
+            {"name":"when","label":"Conferir outro momento","kind":"text","placeholder":"vazio: agora","help":"Uma data e hora no lugar de agora, por exemplo {{input.criado_em}}."}
+         ]},
+        {"type":"time.now","name":"Agora","category":"Data e hora","desc":"Entrega a data e a hora de agora em campos: dia da semana, hora, se é fim de semana.","inputs":["in"],"outputs":["out"],
+         "params":{},"fields":[]},
+        {"type":"time.compare","name":"Comparar datas","category":"Data e hora","desc":"Segue por sim ou por não conforme uma data vem antes, depois ou está longe de outra.","inputs":["in"],"outputs":["true","false"],
+         "params":{"value":"{{input}}","op":"before","other":"","amount":1,"unit":"days"},
+         "fields":[
+            {"name":"value","label":"Data","kind":"text","placeholder":"25/12/2026 14:30, 2026-12-25 ou {{input.data}}","help":"Aceita dia/mês/ano, ano-mês-dia, com ou sem hora, e o número de milissegundos."},
+            {"name":"op","label":"Comparação","kind":"select","options":[
+                {"value":"before","label":"é antes de"},{"value":"after","label":"é depois de"},{"value":"same_day","label":"é no mesmo dia que"},
+                {"value":"older","label":"é mais antiga que (há mais de…)"},{"value":"newer","label":"é mais recente que (há menos de…)"}]},
+            {"name":"amount","label":"Quanto","kind":"number","min":0,"max":100000,"show":{"op":["older","newer"]}},
+            {"name":"unit","label":"Unidade","kind":"select","options":units.clone(),"show":{"op":["older","newer"]}},
+            {"name":"other","label":"Comparar com","kind":"text","placeholder":"vazio: agora"}
+         ]},
+        {"type":"time.shift","name":"Calcular data","category":"Data e hora","desc":"Soma ou tira minutos, horas, dias, semanas ou meses de uma data e entrega no formato escolhido.","inputs":["in"],"outputs":["out"],
+         "params":{"value":"","amount":1,"unit":"days","format":"date"},
+         "fields":[
+            {"name":"value","label":"Data","kind":"text","placeholder":"vazio: agora"},
+            {"name":"amount","label":"Somar","kind":"number","min":-100000,"max":100000,"help":"Número negativo volta no tempo. Zero só muda o formato."},
+            {"name":"unit","label":"Unidade","kind":"select","options":units},
+            {"name":"format","label":"Entregar como","kind":"select","options":[
+                {"value":"date","label":"dia/mês/ano"},{"value":"datetime","label":"dia/mês/ano hora:minuto"},{"value":"time","label":"hora:minuto"},
+                {"value":"iso","label":"ano-mês-dia e hora (ISO)"},{"value":"timestamp","label":"número de milissegundos"},{"value":"fields","label":"campos (como o nó Agora)"}]}
+         ]},
+        {"type":"time.until","name":"Esperar até o horário","category":"Data e hora","desc":"Segura o fluxo até a próxima vez que o relógio marcar o horário, e segue com o que chegou.","inputs":["in"],"outputs":["out"],
+         "params":{"time":"09:00","max_hours":24},
+         "fields":[
+            {"name":"time","label":"Horário","kind":"time"},
+            {"name":"max_hours","label":"Esperar no máximo (horas)","kind":"number","min":1,"max":24,"help":"Se a espera passar disso, o nó falha em vez de segurar o fluxo. Enquanto espera, o fluxo conta como em execução."}
+         ]}
+    ])
+}
+/// Uma data escrita de um dos jeitos comuns: dia/mês/ano ou ano-mês-dia, com ou sem hora, ISO com fuso, ou o número
+/// de segundos ou milissegundos. Vazio: agora.
+fn parse_when(v: &Value) -> ApiResult<chrono::DateTime<chrono::Local>> {
+    use chrono::TimeZone;
+    let t = stringify(v);
+    let t = t.trim();
+    if t.is_empty() || t == "null" { return Ok(chrono::Local::now()); }
+    if let Ok(n) = t.parse::<i64>() {
+        let ms = if n.abs() < 100_000_000_000 { n * 1000 } else { n };
+        return chrono::Local.timestamp_millis_opt(ms).single().ok_or_else(|| fail(format!("data fora do que dá para representar: {t}"), 400));
+    }
+    if let Ok(d) = chrono::DateTime::parse_from_rfc3339(t) { return Ok(d.with_timezone(&chrono::Local)); }
+    let local = |n: chrono::NaiveDateTime| chrono::Local.from_local_datetime(&n).earliest();
+    for f in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"] {
+        if let Some(d) = chrono::NaiveDateTime::parse_from_str(t, f).ok().and_then(local) { return Ok(d); }
+    }
+    for f in ["%Y-%m-%d", "%d/%m/%Y"] {
+        if let Some(d) = chrono::NaiveDate::parse_from_str(t, f).ok().and_then(|d| d.and_hms_opt(0, 0, 0)).and_then(local) { return Ok(d); }
+    }
+    Err(fail(format!("não entendi a data \"{t}\": use dia/mês/ano ou ano-mês-dia, com ou sem hora"), 400))
+}
+/// A data em campos, para os nós seguintes usarem como {{input.weekday}}, {{input.hour}}...
+fn time_fields(t: chrono::DateTime<chrono::Local>) -> Value {
+    use chrono::{Datelike, Timelike};
+    const NAMES: [&str; 7] = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+    let wd = t.weekday().num_days_from_sunday();
+    json!({"date": t.format("%d/%m/%Y").to_string(), "time": t.format("%H:%M").to_string(), "iso": t.format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        "weekday": wd, "weekday_name": NAMES[wd as usize], "weekend": wd == 0 || wd == 6,
+        "day": t.day(), "month": t.month(), "year": t.year(), "hour": t.hour(), "minute": t.minute(), "timestamp": t.timestamp_millis()})
+}
+/// Soma `n` unidades a uma data (meses pelo calendário: 31/01 + 1 mês = último dia de fevereiro).
+fn shift_time(t: chrono::DateTime<chrono::Local>, n: i64, unit: &str) -> Option<chrono::DateTime<chrono::Local>> {
+    match unit {
+        "minutes" => t.checked_add_signed(chrono::Duration::minutes(n)),
+        "hours" => t.checked_add_signed(chrono::Duration::hours(n)),
+        "weeks" => t.checked_add_signed(chrono::Duration::weeks(n)),
+        "months" => if n >= 0 { t.checked_add_months(chrono::Months::new(n as u32)) } else { t.checked_sub_months(chrono::Months::new((-n) as u32)) },
+        _ => t.checked_add_signed(chrono::Duration::days(n)),
+    }
+}
+/// O dia é um dos "dias de folga"? Cada linha: 25/12 (todo ano), 02/11/2026 ou 2026-11-02.
+fn day_off(t: chrono::DateTime<chrono::Local>, list: &Value) -> ApiResult<bool> {
+    use chrono::Datelike;
+    for line in list.as_array().into_iter().flatten().filter_map(|l| l.as_str()).map(str::trim).filter(|l| !l.is_empty()) {
+        let hit = if let Some((d, m)) = line.split_once('/').filter(|x| !x.1.contains('/')) {
+            let (d, m) = (d.trim().parse::<u32>(), m.trim().parse::<u32>());
+            match (d, m) { (Ok(d), Ok(m)) => t.day() == d && t.month() == m, _ => return Err(fail(format!("dia de folga que não entendi: \"{line}\" (use 25/12, 02/11/2026 ou 2026-11-02)"), 400)) }
+        } else {
+            let d = chrono::NaiveDate::parse_from_str(line, "%d/%m/%Y").or_else(|_| chrono::NaiveDate::parse_from_str(line, "%Y-%m-%d"))
+                .map_err(|_| fail(format!("dia de folga que não entendi: \"{line}\" (use 25/12, 02/11/2026 ou 2026-11-02)"), 400))?;
+            t.date_naive() == d
+        };
+        if hit { return Ok(true); }
+    }
+    Ok(false)
+}
+async fn time_node(kind: &str, p: &Value, input: Value) -> ApiResult<Value> {
+    let port = |yes: bool, v: Value| { let mut m = serde_json::Map::new(); m.insert(if yes { "true" } else { "false" }.to_string(), v); Value::Object(m) };
+    Ok(match kind {
+        "time.window" => {
+            let t = parse_when(&p["when"])?;
+            let (days, span) = window_of(p)?;
+            // dentro: o intervalo que contém `t` (ou o próximo) já começou. O dia de folga é o do começo do intervalo.
+            let inside = match work_window(t, &days, span) { Some((start, _)) if start <= t => !day_off(start, &p["except"])?, _ => false };
+            port(inside, input)
+        }
+        "time.now" => json!({"out": time_fields(chrono::Local::now())}),
+        "time.compare" => {
+            let (a, b) = (parse_when(&p["value"])?, parse_when(&p["other"])?);
+            if stringify(&p["value"]).trim().is_empty() { return Err(fail("informe a data a comparar", 400)); }
+            let limit = || shift_time(b, -p["amount"].as_i64().unwrap_or(0).abs(), p["unit"].as_str().unwrap_or("days")).ok_or_else(|| fail("quantidade grande demais", 400));
+            let yes = match p["op"].as_str().unwrap_or("before") {
+                "after" => a > b,
+                "same_day" => a.date_naive() == b.date_naive(),
+                "older" => a < limit()?,
+                "newer" => a >= limit()? && a <= b,
+                _ => a < b,
+            };
+            port(yes, input)
+        }
+        "time.shift" => {
+            let t = shift_time(parse_when(&p["value"])?, p["amount"].as_i64().unwrap_or(0), p["unit"].as_str().unwrap_or("days")).ok_or_else(|| fail("a data calculada sai do calendário", 400))?;
+            json!({"out": match p["format"].as_str().unwrap_or("date") {
+                "datetime" => json!(t.format("%d/%m/%Y %H:%M").to_string()),
+                "time" => json!(t.format("%H:%M").to_string()),
+                "iso" => json!(t.format("%Y-%m-%dT%H:%M:%S%:z").to_string()),
+                "timestamp" => json!(t.timestamp_millis()),
+                "fields" => time_fields(t),
+                _ => json!(t.format("%d/%m/%Y").to_string()),
+            }})
+        }
+        "time.until" => {
+            use chrono::TimeZone;
+            let (h, m) = clock(p["time"].as_str().unwrap_or("")).ok_or_else(|| fail("informe o horário como HH:MM", 400))?;
+            let now = chrono::Local::now();
+            let today = chrono::Local.from_local_datetime(&now.date_naive().and_hms_opt(h, m, 0).ok_or_else(|| fail("horário inválido", 400))?).earliest().ok_or_else(|| fail("horário inválido", 400))?;
+            let at = if today > now { today } else { today + chrono::Duration::days(1) };
+            let wait = (at - now).to_std().unwrap_or_default();
+            let max = p["max_hours"].as_u64().unwrap_or(24).clamp(1, 24);
+            if wait.as_secs() > max * 3600 { return Err(fail(format!("faltam mais de {max} h para as {h:02}:{m:02}; aumente o limite ou use a Agenda"), 400)); }
+            tokio::time::sleep(wait).await;
+            json!({"out": input})
+        }
+        _ => return Err(fail(format!("tipo de nó desconhecido: {kind}"), 400)),
+    })
 }
 /// Ferramentas de QA que não precisam de navegador: teste de API, dados de teste, carga leve e relatório.
 fn qa_catalog() -> Value {
@@ -1589,6 +1770,7 @@ pub fn catalog() -> Value {
     all.extend(alarm_catalog().as_array().cloned().unwrap_or_default());
     all.extend(json_catalog().as_array().cloned().unwrap_or_default());
     all.extend(qa_catalog().as_array().cloned().unwrap_or_default());
+    all.extend(time_catalog().as_array().cloned().unwrap_or_default());
     all.extend(plugin_nodes());
     // o que cada nó espera e entrega (o plugin pode trazer o dele no automator.json)
     for s in &mut all {
@@ -1603,7 +1785,7 @@ pub fn catalog() -> Value {
         if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
     }
     // a paleta mostra um grupo por categoria, nesta ordem; as categorias dos plugins vêm depois, na ordem em que chegam
-    const ORDER: [&str; 16] = ["Gatilhos", "Lógica", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Rede", "QA", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
+    const ORDER: [&str; 17] = ["Gatilhos", "Lógica", "Data e hora", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Rede", "QA", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
     let mut extra: Vec<String> = vec![];
     for s in &all { let c = s["category"].as_str().unwrap_or(""); if !ORDER.contains(&c) && !extra.iter().any(|e| e == c) { extra.push(c.to_string()); } }
     all.sort_by_key(|s| { let c = s["category"].as_str().unwrap_or(""); ORDER.iter().position(|o| *o == c).unwrap_or_else(|| ORDER.len() + extra.iter().position(|e| e == c).unwrap_or(0)) });
@@ -1640,6 +1822,8 @@ fn validate(f: &Flow) -> ApiResult<Vec<usize>> {
                 if clock(n.params["time"].as_str().unwrap_or("")).is_none() { return Err(fail("agenda: informe o horário como HH:MM", 400)); }
             } else if !(1..=525600).contains(&n.params["every_minutes"].as_u64().unwrap_or(0)) {
                 return Err(fail("agenda: o intervalo vai de 1 a 525600 minutos", 400));
+            } else if window_of(&n.params).is_err() {
+                return Err(fail("agenda: informe os horários do intervalo como HH:MM", 400));
             }
         }
     }
@@ -1667,12 +1851,44 @@ fn validate(f: &Flow) -> ApiResult<Vec<usize>> {
     Ok(out)
 }
 /// Próximo disparo da Agenda do fluxo depois de `from` (ms): por intervalo, ou no horário local nos dias marcados.
+/// Os dias da semana marcados num parâmetro (0 = domingo); vazio: todos.
+fn week_days(v: &Value) -> Vec<u32> { v.as_array().map(|a| a.iter().filter_map(|d| d.as_u64().or_else(|| d.as_str().and_then(|t| t.parse().ok())).map(|d| d as u32)).collect()).unwrap_or_default() }
+/// O intervalo de trabalho que contém `t`, ou o próximo: (início, fim). `days`: os dias em que o intervalo começa;
+/// `span`: das HH:MM até as HH:MM (um fim menor ou igual ao início atravessa a meia-noite); sem `span`, o dia inteiro.
+fn work_window(t: chrono::DateTime<chrono::Local>, days: &[u32], span: Option<((u32, u32), (u32, u32))>) -> Option<(chrono::DateTime<chrono::Local>, chrono::DateTime<chrono::Local>)> {
+    use chrono::{Datelike, TimeZone};
+    // começa por ontem: um intervalo que atravessa a meia-noite pode ainda estar valendo
+    (-1..9).find_map(|d| {
+        let date = t.date_naive() + chrono::Duration::days(d);
+        if !days.is_empty() && !days.contains(&date.weekday().num_days_from_sunday()) { return None; }
+        let (a, b) = span.unwrap_or(((0, 0), (0, 0)));
+        let start = chrono::Local.from_local_datetime(&date.and_hms_opt(a.0, a.1, 0)?).earliest()?;
+        let end_day = if b <= a { date + chrono::Duration::days(1) } else { date };
+        let end = chrono::Local.from_local_datetime(&end_day.and_hms_opt(b.0, b.1, 0)?).earliest()?;
+        (t < end).then_some((start, end))
+    })
+}
+/// Dias e horário de um nó (Agenda, Dentro do horário?): os dias marcados e, se pedir "entre dois horários", o intervalo.
+fn window_of(p: &Value) -> ApiResult<(Vec<u32>, Option<((u32, u32), (u32, u32))>)> {
+    let span = if p["window"] == "between" {
+        let get = |k: &str| clock(p[k].as_str().unwrap_or("")).ok_or_else(|| fail("informe os horários como HH:MM", 400));
+        Some((get("from")?, get("to")?))
+    } else { None };
+    Ok((week_days(&p["days"]), span))
+}
 fn next_fire(f: &Flow, from: i64) -> Option<i64> {
     use chrono::{Datelike, TimeZone};
     let p = &schedule_node(f)?.params;
-    if p["mode"] != "daily" { return p["every_minutes"].as_i64().filter(|n| *n > 0).map(|n| from + n * 60000); }
+    if p["mode"] != "daily" {
+        let at = from + p["every_minutes"].as_i64().filter(|n| *n > 0)? * 60000;
+        // com dias ou horário escolhidos, o disparo que cairia fora fica para o começo do próximo intervalo
+        let (days, span) = window_of(p).ok()?;
+        if days.is_empty() && span.is_none() { return Some(at); }
+        let (start, _) = work_window(chrono::Local.timestamp_millis_opt(at).single()?, &days, span)?;
+        return Some(at.max(start.timestamp_millis()));
+    }
     let (h, m) = clock(p["time"].as_str()?)?;
-    let days: Vec<u32> = p["days"].as_array().map(|a| a.iter().filter_map(|d| d.as_u64().map(|d| d as u32)).collect()).unwrap_or_default();
+    let days = week_days(&p["days"]);
     let start = chrono::Local.timestamp_millis_opt(from).single()?;
     (0..8).find_map(|d| {
         let date = start.date_naive() + chrono::Duration::days(d);
@@ -2631,6 +2847,7 @@ async fn ops_node(n: &Node, p: &Value, input: &Value) -> Option<ApiResult<Value>
 
 async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
     if n.kind.starts_with("qa.") { return qa_node(&n.kind, &p).await; }
+    if n.kind.starts_with("time.") { return time_node(&n.kind, &p, input).await; }
     if let Some(r) = ops_node(n, &p, &input).await { return r; }
     let out = match n.kind.as_str() {
         "trigger.manual" => p.get("sample").cloned().unwrap_or(Value::Null),
@@ -3595,6 +3812,14 @@ pub async fn scheduler() {
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let first = std::mem::replace(&mut boot, false);
+        let (automator, agenda) = (enabled("automator"), enabled("agenda"));
+        let quiet = !first && with_store(|s, _| {
+            let t = now();
+            s.pending.is_empty()
+                && !(automator && s.flows.iter().any(|f| f.active && (f.next_run.is_some_and(|x| x <= t) || f.nodes.iter().any(|n| n.kind == "trigger.file" && !n.disabled))))
+                && !(agenda && s.events.iter().any(|e| !e.done && !e.notified && e.at <= t))
+        }).unwrap_or(false);
+        if quiet { continue; }
         let due = edit(|s| {
             let mut flows: Vec<(Flow, String, Value)> = Vec::new();
             let mut notifications = Vec::new();
@@ -3720,7 +3945,7 @@ mod tests {
         let kinds: Vec<&str> = all.as_array().unwrap().iter().filter_map(|s| s["type"].as_str()).collect();
         let unique: HashSet<&str> = kinds.iter().copied().collect();
         assert_eq!(kinds.len(), unique.len());
-        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm", "json.get", "json.group", "qa.api", "qa.data", "qa.load", "qa.report", "flow.call"] { assert!(unique.contains(k), "{k}"); }
+        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm", "json.get", "json.group", "qa.api", "qa.data", "qa.load", "qa.report", "flow.call", "time.window", "time.now", "time.compare", "time.shift", "time.until"] { assert!(unique.contains(k), "{k}"); }
         assert_eq!((folder_name("  Financeiro "), folder_name(" a / b "), folder_name(""), folder_name("a//b"), folder_name("1/2/3/4/5/6/7")), (Some("Financeiro".to_string()), Some("a/b".to_string()), None, None, None));
         let st = Store { folders: vec!["x/y/z".into(), "a".into()], ..Default::default() };
         assert_eq!(folder_list(&st), ["x", "x/y", "x/y/z", "a"]);
@@ -3909,6 +4134,23 @@ mod tests {
         assert!(raw["notes"].is_array());
     }
     #[test]
+    fn dados_em_memoria_acompanham_o_arquivo() {
+        // sem arquivo: vazio, e nada fica guardado
+        let dir = std::env::temp_dir().join(format!("bs-cache-{}", id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.json");
+        assert!(stamp_of(&path).is_none());
+        std::fs::write(&path, r#"{"flows":[{"id":"x","name":"Um","nodes":[],"edges":[]}]}"#).unwrap();
+        let a = stamp_of(&path).unwrap();
+        // outro tamanho: o carimbo muda, então quem compara relê
+        std::fs::write(&path, r#"{"flows":[{"id":"x","name":"Um e meio","nodes":[],"edges":[]}]}"#).unwrap();
+        let b = stamp_of(&path).unwrap();
+        assert_ne!(a.1, b.1);
+        let s: Store = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(s.clone().flows[0].name, "Um e meio");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
     fn schedule_by_interval_and_by_clock() {
         use chrono::{Datelike, TimeZone, Timelike};
         let mut f = flow();
@@ -3929,6 +4171,66 @@ mod tests {
         assert_eq!((next.day(), next.hour()), (11, 18));
         f.nodes[0].params = json!({"mode":"daily","time":"25:00"});
         assert!(validate(&f).is_err());
+        // a cada 30 minutos, só de segunda a sexta das 08:00 às 18:00. Quarta 10:00: segue normal
+        let at = |x: i64| chrono::Local.timestamp_millis_opt(x).unwrap();
+        f.nodes[0].params = json!({"mode":"interval","every_minutes":30,"days":[1,2,3,4,5],"window":"between","from":"08:00","to":"18:00"});
+        let next = at(next_fire(&f, from.timestamp_millis()).unwrap());
+        assert_eq!((next.day(), next.hour(), next.minute()), (11, 10, 30));
+        // quarta 17:50: o próximo cairia às 18:20, fora do horário, então fica para quinta 08:00
+        let late = chrono::Local.with_ymd_and_hms(2026, 11, 11, 17, 50, 0).unwrap();
+        let next = at(next_fire(&f, late.timestamp_millis()).unwrap());
+        assert_eq!((next.day(), next.hour(), next.minute()), (12, 8, 0));
+        // sexta 17:50: pula o fim de semana e vai para segunda 08:00
+        let fri = chrono::Local.with_ymd_and_hms(2026, 11, 13, 17, 50, 0).unwrap();
+        let next = at(next_fire(&f, fri.timestamp_millis()).unwrap());
+        assert_eq!((next.day(), next.hour(), next.minute()), (16, 8, 0));
+        // só os dias, o dia inteiro: sexta 23:50 + 30 min cai no sábado, vai para segunda 00:00
+        f.nodes[0].params = json!({"mode":"interval","every_minutes":30,"days":[1,2,3,4,5],"window":"all"});
+        let next = at(next_fire(&f, chrono::Local.with_ymd_and_hms(2026, 11, 13, 23, 50, 0).unwrap().timestamp_millis()).unwrap());
+        assert_eq!((next.day(), next.hour(), next.minute()), (16, 0, 0));
+        f.nodes[0].params = json!({"mode":"interval","every_minutes":30,"window":"between","from":"8h","to":"18:00"});
+        assert!(validate(&f).is_err());
+    }
+    #[test]
+    fn data_e_hora() {
+        use chrono::{Datelike, TimeZone, Timelike};
+        let when = |t: &str| parse_when(&json!(t)).unwrap();
+        let d = when("11/11/2026 10:15");
+        assert_eq!((d.year(), d.month(), d.day(), d.hour(), d.minute()), (2026, 11, 11, 10, 15));
+        assert_eq!(when("2026-11-11").hour(), 0);
+        assert_eq!(when("2026-11-11T10:15:00"), d);
+        assert_eq!(parse_when(&json!(d.timestamp_millis())).unwrap(), d);
+        assert_eq!(parse_when(&json!(d.timestamp())).unwrap(), d);
+        assert!(parse_when(&json!("amanhã")).is_err());
+        // dentro do horário: quarta 10:15, de segunda a sexta das 08:00 às 18:00
+        let run = |p: Value| { let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap(); rt.block_on(time_node("time.window", &p, json!("x"))).unwrap() };
+        let gate = |when: &str, extra: Value| { let mut p = json!({"days":[1,2,3,4,5],"window":"between","from":"08:00","to":"18:00","except":[],"when":when}); p.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap()); run(p) };
+        assert_eq!(gate("11/11/2026 10:15", json!({})), json!({"true": "x"}));
+        assert_eq!(gate("11/11/2026 18:00", json!({})), json!({"false": "x"}));
+        assert_eq!(gate("11/11/2026 07:59", json!({})), json!({"false": "x"}));
+        assert_eq!(gate("14/11/2026 10:15", json!({})), json!({"false": "x"}), "sábado");
+        assert_eq!(gate("11/11/2026 10:15", json!({"except": ["25/12", "11/11/2026"]})), json!({"false": "x"}), "dia de folga");
+        assert_eq!(gate("25/12/2026 10:15", json!({"except": ["25/12"]})), json!({"false": "x"}), "folga de todo ano");
+        assert_eq!(gate("14/11/2026 10:15", json!({"days": [], "window": "all"})), json!({"true": "x"}));
+        // turno da noite, 22:00 às 06:00, começando de segunda a sexta: sábado 02:00 ainda é o turno de sexta
+        let night = json!({"from": "22:00", "to": "06:00"});
+        assert_eq!(gate("14/11/2026 02:00", night.clone()), json!({"true": "x"}));
+        assert_eq!(gate("14/11/2026 23:00", night.clone()), json!({"false": "x"}), "sábado à noite não começa turno");
+        assert_eq!(gate("11/11/2026 12:00", night), json!({"false": "x"}));
+        // contas e campos
+        let f = time_fields(d);
+        assert_eq!((f["weekday"].as_u64(), f["weekday_name"].as_str(), f["weekend"].as_bool(), f["time"].as_str()), (Some(3), Some("quarta"), Some(false), Some("10:15")));
+        let jan = chrono::Local.with_ymd_and_hms(2026, 1, 31, 9, 0, 0).unwrap();
+        assert_eq!(shift_time(jan, 1, "months").unwrap().day(), 28);
+        assert_eq!(shift_time(jan, -2, "days").unwrap().day(), 29);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let cmp = |p: Value| rt.block_on(time_node("time.compare", &p, json!(1))).unwrap();
+        assert_eq!(cmp(json!({"value": "10/11/2026", "op": "before", "other": "11/11/2026"})), json!({"true": 1}));
+        assert_eq!(cmp(json!({"value": "01/11/2026", "op": "older", "other": "11/11/2026", "amount": 7, "unit": "days"})), json!({"true": 1}));
+        assert_eq!(cmp(json!({"value": "09/11/2026", "op": "newer", "other": "11/11/2026", "amount": 7, "unit": "days"})), json!({"true": 1}));
+        assert_eq!(cmp(json!({"value": "11/11/2026 23:00", "op": "same_day", "other": "2026-11-11 01:00"})), json!({"true": 1}));
+        let out = rt.block_on(time_node("time.shift", &json!({"value": "31/01/2026", "amount": 1, "unit": "months", "format": "date"}), Value::Null)).unwrap();
+        assert_eq!(out, json!({"out": "28/02/2026"}));
     }
     #[tokio::test]
     async fn condition_selects_one_port() {

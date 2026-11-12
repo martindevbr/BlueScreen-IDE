@@ -62,13 +62,15 @@ impl DiffPair {
     fn with_disk(original: String, (modified, enc, bom): (String, &'static str, bool)) -> Self { DiffPair { original, modified, encoding: Some(enc), bom } }
 }
 
+// --no-optional-locks: um "git status" de consulta não cria o index.lock para atualizar o índice. Sem isso, cada
+// consulta mexia na pasta .git, o vigia de arquivos via a mudança e a IDE consultava de novo, sem parar.
 pub async fn git(cwd: &Path, a: &[&str]) -> ProcResult {
-    let mut v = vec!["-c", "core.quotepath=off"];
+    let mut v = vec!["--no-optional-locks", "-c", "core.quotepath=off"];
     v.extend_from_slice(a);
     run("git", &v, cwd, 20000).await
 }
 pub async fn git_t(cwd: &Path, a: &[&str], timeout_ms: u64) -> ProcResult {
-    let mut v = vec!["-c", "core.quotepath=off"];
+    let mut v = vec!["--no-optional-locks", "-c", "core.quotepath=off"];
     v.extend_from_slice(a);
     run("git", &v, cwd, timeout_ms).await
 }

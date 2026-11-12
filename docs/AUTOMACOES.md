@@ -62,6 +62,26 @@ A lista de fluxos aceita pastas, e a ordem é a que você arrumar.
 
 No menu **⋯** da barra do fluxo, **Salvar sozinho a cada alteração** grava o fluxo cerca de um segundo depois de você parar de mexer. O botão passa a mostrar **Salvando…** e **Salvo**. Se o núcleo recusar (um horário de agenda inválido, por exemplo), um aviso aparece uma vez e a gravação volta a ser tentada quando você mexer de novo. Fluxo trancado não é gravado.
 
+### Dias e horários
+
+Para um fluxo acontecer só nos dias em que você trabalha, das tantas às tantas, há dois caminhos, e eles combinam.
+
+**Na Agenda (o gatilho).** No modo **A cada intervalo**, marque os **Dias da semana** e escolha **Só entre dois horários**, com **Das** e **Até as**. O fluxo dispara a cada N minutos só dentro disso: fora do horário não há disparo nenhum, e o próximo fica marcado para a hora em que o horário recomeça (sexta às 17:50, de segunda a sexta das 08:00 às 18:00, o próximo é segunda às 08:00). No modo **Num horário do dia**, os dias da semana valem como antes.
+
+**No meio do fluxo (categoria Data e hora).**
+
+| Nó | O que faz |
+|---|---|
+| Dentro do horário? | Sai por **sim** se agora é um dos dias marcados e está entre os dois horários (ou em qualquer hora, com **O dia inteiro**); senão, por **não**. **Dias de folga** aceita uma data por linha: `25/12` (todo ano), `02/11/2026` ou `2026-11-02`. Um fim menor que o início atravessa a meia-noite (22:00 até 06:00), e o dia que conta é o do começo do turno. **Conferir outro momento** testa uma data no lugar de agora. |
+| Agora | Entrega a data e a hora em campos: `date`, `time`, `weekday` (0 domingo … 6 sábado), `weekday_name`, `weekend`, `day`, `month`, `year`, `hour`, `minute`, `iso`, `timestamp`. Use com a Condição: `{{input.hour}}` é maior que 17. |
+| Comparar datas | Sai por sim ou não: a data é antes, depois ou no mesmo dia que outra (em branco, agora), ou é mais antiga ou mais recente que N minutos, horas, dias, semanas ou meses. |
+| Calcular data | Soma ou tira tempo de uma data (em branco, agora) e entrega como dia/mês/ano, com hora, só a hora, ISO, número ou em campos. Meses seguem o calendário: 31/01 mais um mês é 28/02. |
+| Esperar até o horário | Segura o fluxo até a próxima vez que o relógio marcar o horário (no máximo 24 horas) e segue com o que chegou. Enquanto espera, o fluxo conta como em execução. |
+
+As datas podem ser escritas como `25/12/2026`, `25/12/2026 14:30`, `2026-12-25`, `2026-12-25 14:30`, no formato ISO com fuso, ou como o número de segundos ou milissegundos. Tudo usa o relógio e o fuso do PC.
+
+Um exemplo: **Agenda** (a cada 15 minutos, segunda a sexta, 08:00 às 18:00) → **Dentro do horário?** com os feriados em Dias de folga → pela saída **sim**, o trabalho do fluxo.
+
 ### Chame um fluxo dentro de outro
 
 O nó **Chamar fluxo** (categoria Lógica) roda outro fluxo salvo, do começo ao fim, e continua com o resultado dele. Serve para ter um fluxo "Entrar no portal" ou "Avisar o time" pronto e usá-lo em vários outros.

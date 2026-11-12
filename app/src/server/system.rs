@@ -2,6 +2,24 @@
 //! Separadas de server.rs só por assunto: as funções de apoio (project, in_project, blocking...) ficam lá.
 use super::*;
 
+// ---------- a janela do Estúdio (um processo filho, só a janela: main.rs --studio) ----------
+static STUDIO_WIN: Mutex<Option<std::process::Child>> = Mutex::new(None);
+static STUDIO_GOTO: Mutex<String> = Mutex::new(String::new());
+static STUDIO_ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static STUDIO_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STUDIO_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn studio_alive() -> bool { STUDIO_WIN.lock().as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) }
+/// O Estúdio está aberto com trabalho não salvo (um fluxo alterado, por exemplo)? Se sim, ele vem para a frente.
+pub fn studio_holds_quit() -> bool {
+    let held = studio_alive() && STUDIO_DIRTY.load(std::sync::atomic::Ordering::Relaxed);
+    if held { STUDIO_ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+    held
+}
+/// O BlueScreen está saindo: a janela do Estúdio sai junto (sem ele, ela ficaria aberta falando com ninguém).
+pub fn studio_kill() {
+    if let Some(mut c) = STUDIO_WIN.lock().take() { let _ = c.kill(); let _ = c.wait(); }
+}
+
 pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
     let mut add = |name: &str, f: RouteFn| { m.insert(name.into(), f); };
     add("session", route_fn(|r| async move { ok(json!({ "remote": r.remote, "authed": true })) }));
@@ -23,21 +41,26 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         match UI.get() { Some(f) => { f(UiEvent::Activate); ok(json!({ "ok": true })) } None => Err(fail("sem janela", 409)) }
     }));
     // Estúdio: os plugins numa janela só deles, sem a IDE em volta. POST abre (ou chama para a frente a que já está
-    // aberta); GET é a própria janela do Estúdio perguntando se alguém pediu para ela vir para a frente.
+    // aberta); POST { close: true } pede para ela fechar (a IDE abriu o projeto que o Estúdio pediu). GET é a própria
+    // janela do Estúdio perguntando o que há para ela (vir para a frente, abrir um plugin, fechar) e contando, em
+    // ?dirty=1, se tem trabalho não salvo.
     add("studio", route_fn(|r| async move {
         r.local_only()?;
-        static WIN: Mutex<Option<std::process::Child>> = Mutex::new(None);
-        static ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         use std::sync::atomic::Ordering::Relaxed;
-        static GOTO: Mutex<String> = Mutex::new(String::new());
-        if !r.is_post() { return ok(json!({ "focus": ASKED.load(Relaxed), "app": std::mem::take(&mut *GOTO.lock()) })); }
+        if !r.is_post() {
+            if let Some(d) = r.q("dirty") { STUDIO_DIRTY.store(d == "1", Relaxed); }
+            return ok(json!({ "focus": STUDIO_ASKED.load(Relaxed), "app": std::mem::take(&mut *STUDIO_GOTO.lock()), "close": STUDIO_CLOSE.swap(false, Relaxed) }));
+        }
+        let b = serde_json::from_slice::<Value>(&r.body).unwrap_or(Value::Null);
+        if b["close"] == true { if studio_alive() { STUDIO_CLOSE.store(true, Relaxed); } return ok(json!({ "ok": true })); }
         // { "app": "automator" }: abre direto naquele plugin
-        let goto = serde_json::from_slice::<Value>(&r.body).ok().and_then(|v| v["app"].as_str().map(String::from)).filter(|a| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+        let goto = b["app"].as_str().map(String::from).filter(|a| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
         if UI.get().is_none() { return Err(fail("sem janela: abra o Estúdio pelo navegador", 409)); }
-        let mut win = WIN.lock();
-        if let Some(c) = win.as_mut() && matches!(c.try_wait(), Ok(None)) { if let Some(a) = &goto { *GOTO.lock() = a.clone(); } ASKED.fetch_add(1, Relaxed); return ok(json!({ "ok": true, "already": true })); }
+        let mut win = STUDIO_WIN.lock();
+        if let Some(c) = win.as_mut() && matches!(c.try_wait(), Ok(None)) { if let Some(a) = &goto { *STUDIO_GOTO.lock() = a.clone(); } STUDIO_ASKED.fetch_add(1, Relaxed); return ok(json!({ "ok": true, "already": true })); }
         let exe = std::env::current_exe().map_err(|e| fail(format!("não achei o executável: {e}"), 500))?;
         let child = std::process::Command::new(exe).arg("--studio").args(goto.iter()).env("BLUESCREEN_PORT", app().port.to_string()).spawn().map_err(|e| fail(format!("não deu para abrir o Estúdio: {e}"), 500))?;
+        STUDIO_DIRTY.store(false, Relaxed); STUDIO_CLOSE.store(false, Relaxed);
         *win = Some(child);
         ok(json!({ "ok": true }))
     }));
@@ -57,12 +80,13 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
     add("quit", route_fn(|r| async move {
         r.local_only()?;
         if !r.is_post() || r.headers.get("x-bluescreen").and_then(|v|v.to_str().ok())!=Some("takeover") {return Err(fail("use o comando --quit do BlueScreen",403));}
-        match UI.get(){Some(f)=>f(UiEvent::Quit),None=>{tokio::spawn(async{tokio::time::sleep(std::time::Duration::from_millis(150)).await;std::process::exit(0);});}}
+        match UI.get(){Some(f)=>f(UiEvent::Quit),None=>{studio_kill();tokio::spawn(async{tokio::time::sleep(std::time::Duration::from_millis(150)).await;std::process::exit(0);});}}
         ok(json!({"ok":true}))
     }));
     add("shutdown", route_fn(|r| async move {
         if r.remote || !r.is_post() || r.headers.get("x-bluescreen").and_then(|v| v.to_str().ok()) != Some("takeover") { return Err(fail("só pelo PC local", 403)); }
         log("Outra instância do BlueScreen assumiu. Encerrando.");
+        studio_kill();
         tokio::spawn(async { tokio::time::sleep(std::time::Duration::from_millis(150)).await; std::process::exit(0); });
         ok(json!({ "ok": true }))
     }));

@@ -18,6 +18,7 @@ mod history;
 mod network;
 mod sdks;
 mod system;
+pub use system::{studio_holds_quit, studio_kill};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

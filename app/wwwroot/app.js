@@ -256,7 +256,22 @@ function studioMode() {
   window.BS_DOC_CLOSE = () => S.tabs.some(losesWork) ? askClose(S.tabs.slice()) : desktop({ type: 'close' });
   // a IDE pediu o Estúdio de novo com esta janela já aberta: ela vem para a frente
   let seen = null;
-  setInterval(async () => { try { const r = await api('studio', {}, { quiet: true }); if (seen != null && r.focus !== seen) desktop({ type: 'focus' }); seen = r.focus; if (r.app) studioOpen(r.app); } catch { /* a IDE fechou */ } }, 2000);
+  let lost = 0;
+  setInterval(async () => {
+    try {
+      // conta à IDE se há trabalho não salvo aqui (ela não deixa o BlueScreen sair por cima disso)
+      const r = await api('studio', { dirty: S.tabs.some(losesWork) ? 1 : 0 }, { quiet: true });
+      lost = 0;
+      if (seen != null && r.focus !== seen) desktop({ type: 'focus' });
+      seen = r.focus;
+      if (r.app) studioOpen(r.app);
+      // a IDE abriu o projeto pedido daqui: o Estúdio sai de cena, e a tela passa a ser a da IDE
+      if (r.close) window.BS_DOC_CLOSE();
+    } catch {
+      // o BlueScreen fechou (ou caiu): esta janela não tem mais com quem falar, então fecha também
+      if (++lost >= 3) desktop({ type: 'quit' });
+    }
+  }, 2000);
   // /?studio=automator: já abre naquele plugin
   const first = new URLSearchParams(location.search).get('studio');
   if (first && first !== '1') studioOpen(first);
@@ -279,9 +294,17 @@ const openIde = (ask = {}) => api('ide/open', {}, { method: 'POST', body: JSON.s
 // a IDE busca o pedido quando a janela volta para a frente (e, por garantia, de tempos em tempos)
 async function ideInbox() {
   if (DOC || STUDIO || !S.started) return;
-  try { const r = await api('ide/open', {}, { quiet: true }); if (r.pick) openProjectDialog(); else if (r.path) openProject(r.path); } catch { /* fica para a próxima */ }
+  try {
+    const r = await api('ide/open', {}, { quiet: true });
+    if (!r.pick && !r.path) return;
+    // o pedido veio do Estúdio: quando o projeto abrir aqui, o Estúdio fecha (a tela muda, em vez de sobrar uma janela)
+    const before = S.project && S.project.path;
+    if (r.pick) await openProjectDialog(); else await openProject(r.path);
+    const now = S.project && S.project.path;
+    if (now && (now !== before || r.path)) api('studio', {}, { method: 'POST', body: JSON.stringify({ close: true }), quiet: true }).catch(() => {});
+  } catch { /* fica para a próxima */ }
 }
-window.addEventListener('focus', ideInbox); document.addEventListener('visibilitychange', () => { if (!document.hidden) ideInbox(); }); setInterval(ideInbox, 3000);
+window.addEventListener('focus', ideInbox); document.addEventListener('visibilitychange', () => { if (!document.hidden) ideInbox(); }); setInterval(ideInbox, 15000);
 // Rodapé: um plugin deixa um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso), sem ocupar a barra lateral
 const FOOTER = {
   set(id, { icon = '', text = '', title = '', run } = {}) {

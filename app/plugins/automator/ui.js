@@ -34,6 +34,7 @@ const IC = {
 const CATS = {
   'Gatilhos': { c: '#E3A63A', i: svg('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>') },
   'Dados': { c: 'var(--accent-2)', i: svg('<path d="M5 6h14M5 12h14M5 18h9"/>') },
+  'Data e hora': { c: '#38BDF8', i: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>') },
   'QA': { c: '#3FC98A', i: svg('<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M8 15h8"/>') },
   'JSON': { c: '#F2C55C', i: svg('<path d="M8 4c-2 0-3 1-3 3v2c0 1.5-1 2.5-2 3 1 .5 2 1.5 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1.5 1 2.5 2 3-1 .5-2 1.5-2 3v2c0 2-1 3-3 3"/>') },
   'Lógica': { c: 'var(--j-enum)', i: svg('<path d="M6 3v6a6 6 0 0 0 6 6h6M6 9v12M15 12l3 3-3 3"/>') },
@@ -385,10 +386,23 @@ function summary(n) {
   switch (n.type) {
     case 'trigger.manual': return one(p.sample);
     case 'trigger.schedule': {
-      if (p.mode !== 'daily') { const m = +p.every_minutes || 0; return m % 1440 === 0 && m ? `a cada ${m / 1440} dia${m > 1440 ? 's' : ''}` : m % 60 === 0 && m ? `a cada ${m / 60} h` : `a cada ${m} min`; }
       const d = (p.days || []).slice().sort((a, b) => (a || 7) - (b || 7));
-      return `${p.time || '--:--'} · ${!d.length || d.length === 7 ? 'todo dia' : d.join() === '1,2,3,4,5' ? 'dias úteis' : d.map(i => DAYS[i]).join(', ')}`;
+      const days = !d.length || d.length === 7 ? 'todo dia' : d.join() === '1,2,3,4,5' ? 'dias úteis' : d.map(i => DAYS[i]).join(', ');
+      if (p.mode !== 'daily') {
+        const m = +p.every_minutes || 0, every = m % 1440 === 0 && m ? `a cada ${m / 1440} dia${m > 1440 ? 's' : ''}` : m % 60 === 0 && m ? `a cada ${m / 60} h` : `a cada ${m} min`;
+        return [every, p.window === 'between' ? `${p.from || '--:--'} às ${p.to || '--:--'}` : '', d.length && d.length < 7 ? days : ''].filter(Boolean).join(' · ');
+      }
+      return `${p.time || '--:--'} · ${days}`;
     }
+    case 'time.window': {
+      const d = (p.days || []).slice().sort((a, b) => (a || 7) - (b || 7));
+      const days = !d.length || d.length === 7 ? 'todo dia' : d.join() === '1,2,3,4,5' ? 'dias úteis' : d.map(i => DAYS[i]).join(', ');
+      const off = (p.except || []).filter(Boolean).length;
+      return [days, p.window === 'all' ? 'o dia inteiro' : `${p.from || '--:--'} às ${p.to || '--:--'}`, off ? `${off} ${off === 1 ? 'folga' : 'folgas'}` : ''].filter(Boolean).join(' · ');
+    }
+    case 'time.compare': { const o = spec(n.type).fields.find(f => f.name === 'op').options.find(x => x.value === (p.op || 'before')); const far = ['older', 'newer'].includes(p.op); return `${one(p.value)} ${far ? (p.op === 'older' ? 'há mais de' : 'há menos de') + ` ${p.amount} ${spec(n.type).fields.find(f => f.name === 'unit').options.find(x => x.value === p.unit)?.label || ''}` : (o?.label || '') + ' ' + (one(p.other) || 'agora')}`; }
+    case 'time.shift': { const u = spec(n.type).fields.find(f => f.name === 'unit').options.find(x => x.value === p.unit)?.label || ''; return `${one(p.value) || 'agora'}${+p.amount ? ` ${p.amount > 0 ? '+' : '−'} ${Math.abs(p.amount)} ${u}` : ''}`; }
+    case 'time.until': return 'até as ' + (p.time || '--:--');
     case 'flow.call': return A.flows.find(x => x.id === p.flow || x.name === p.flow)?.name || (p.flow ? 'fluxo que não existe mais' : 'escolha o fluxo');
     case 'logic.if': { const o = spec(n.type).fields.find(f => f.name === 'op').options.find(x => x.value === (p.op || 'eq')); return `${one(p.value)} ${o?.label || ''}${['empty', 'not_empty', 'true'].includes(p.op) ? '' : ' ' + one(p.equals)}`; }
     case 'util.delay': return `${p.seconds} s`;

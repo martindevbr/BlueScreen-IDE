@@ -192,6 +192,11 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>, studio: bool) -> !
         match event {
             Event::UserEvent(Ev::Notify(t,b)) => { if let Some(tray) = &tray { tray.notify(&t,&b); } }
             Event::UserEvent(Ev::Quit) => {
+                // o Estúdio aberto com um fluxo não salvo segura a saída: ele vem para a frente para a pessoa decidir
+                if server::studio_holds_quit() {
+                    if let Some(t) = &tray { t.notify("O Estúdio tem alterações não salvas", "Salve ou feche o Estúdio e saia de novo."); }
+                    return;
+                }
                 // A página faz a mesma verificação de documentos não salvos do botão fechar.
                 window.set_visible(true); window.set_minimized(false); window.set_focus();
                 let _ = webview.evaluate_script("window.BS_APP_QUIT && BS_APP_QUIT()");
@@ -340,7 +345,7 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>, studio: bool) -> !
                 // a página troca o ícone de maximizar e esconde as bordas de redimensionar
                 let _ = webview.evaluate_script(&format!("window.BS_WIN && BS_WIN.max({})", window.is_maximized()));
             }
-            Event::LoopDestroyed => { drop(tray.take()); drop(prompts.drain().collect::<Vec<_>>()); std::process::exit(0); },
+            Event::LoopDestroyed => { server::studio_kill(); drop(tray.take()); drop(prompts.drain().collect::<Vec<_>>()); std::process::exit(0); },
             _ => {}
         }
     })
