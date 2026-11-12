@@ -2,7 +2,7 @@
    Quadro com câmera (arrastar o fundo, roda do mouse), nós em DOM com geometria fixa, fios em SVG puxados de uma
    bolinha até a outra, seleção (clique, Shift, laço), desfazer/refazer e execução acompanhada nó a nó.
    O documento usa os mesmos campos do HexLab: nodes/edges/position/from_port/to_port. */
-const NODE_W = 232, HEAD = 37, PAD = 6, ROW = 24, ZMIN = 0.2, ZMAX = 2.5, GRID = 12;
+const NODE_MIN = 168, NODE_MAX = 720, NODE_W = 232, HEAD = 37, PAD = 6, ROW = 24, ZMIN = 0.2, ZMAX = 2.5, GRID = 12;
 const SVGNS = 'http://www.w3.org/2000/svg';
 const svg = (d, extra = '') => `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
 const IC = {
@@ -161,6 +161,7 @@ function normalize(f) {
     if (!Array.isArray(n.position) || n.position.length !== 2 || !n.position.every(Number.isFinite)) n.position = [60 + (i % 4) * 280, 60 + Math.floor(i / 4) * 150];
     n.params = { ...clone(spec(n.type)?.params || {}), ...(n.params && typeof n.params === 'object' ? n.params : {}) };
     n.disabled = !!n.disabled; n.locked = !!n.locked;
+    if (Array.isArray(n.size) && n.size.length === 2 && n.size.every(Number.isFinite) && n.size[0] >= NODE_MIN) n.size = [Math.min(NODE_MAX, n.size[0]), Math.max(0, n.size[1])]; else delete n.size;
   });
   const ids = new Set(f.nodes.map(n => n.id));
   f.edges = f.edges.filter(e => ids.has(e.from) && ids.has(e.to));
@@ -237,6 +238,7 @@ const TEMPLATES = [
     f.nodes.push(n, o); f.edges.push({ id: uid('e'), from: c.id, from_port: 'true', to: n.id, to_port: 'in' }, { id: uid('e'), from: c.id, from_port: 'false', to: o.id, to_port: 'in' });
     return f;
   } },
+  { label: 'Alarme num horário', hint: 'alerta com som no canto da tela', make: () => chain('Alarme', 'Todo dia, no horário marcado, abre um alerta com som no canto da tela. Ajuste o horário e a mensagem e ligue o fluxo.', [T('trigger.schedule', { mode: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }), T('windows.alarm', { title: 'Reunião diária', message: 'Começa em 5 minutos.', level: 'warn', sound: 'Alarm01.wav', repeat: 'loop', button2: 'Adiar' })]) },
   { label: 'Avisar quando chegar arquivo', hint: 'vigia uma pasta', make: () => chain('Arquivo novo na pasta', 'Avisa quando um arquivo é criado ou alterado na pasta. Informe a pasta no primeiro nó e ligue o fluxo.', [T('trigger.file', { path: '' }), T('windows.notify', { title: 'Arquivo novo', message: '{{input.name}}' })]) },
   { label: 'Diário num arquivo', hint: 'data e hora, depois grava', make: () => chain('Diário num arquivo', 'Acrescenta uma linha com a data e a hora num arquivo de texto. Informe o arquivo no último nó.', [T('trigger.manual', { sample: 'anotação' }), T('data.datetime', { format: '%d/%m/%Y %H:%M' }), T('file.write', { path: '', content: '{{input}}', mode: 'append' })]) },
   { label: 'Automatizar um site', hint: 'abrir, clicar, digitar, ler', need: 'plugin.navegador.site', make: () => chain('Automatizar um site', 'Abre o site, faz os passos e mostra o que leu. Troque o endereço e os passos pelos do seu site; senhas vão como {{vault:site}}.', [T('trigger.manual', {}), T('plugin.navegador.site', { url: 'https://example.com', steps: [{ do: 'wait', on: 'h1', value: '' }, { do: 'read', on: 'h1', value: 'titulo' }], show: 'yes' }), T('util.output', {})]) },
@@ -271,7 +273,9 @@ function zoomAt(sx, sy, factor) {
 }
 const zoomBy = (f) => { const r = R.cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, f); };
 const toWorld = (cx, cy) => { const r = R.cv.getBoundingClientRect(); return [(cx - r.left - A.cam.x) / A.cam.z, (cy - r.top - A.cam.y) / A.cam.z]; };
-const rectOf = (n) => ({ x: n.position[0], y: n.position[1], w: NODE_W, h: nodeEls.get(n.id)?.offsetHeight || 96 });
+// largura do nó: a que o usuário deu ao redimensionar, ou a padrão
+const widthOf = (n) => n?.size?.[0] || NODE_W;
+const rectOf = (n) => ({ x: n.position[0], y: n.position[1], w: widthOf(n), h: nodeEls.get(n.id)?.offsetHeight || 96 });
 function fit() {
   if (!R.cv) return;
   const r = R.cv.getBoundingClientRect(), nodes = A.flow?.nodes || [];
@@ -291,7 +295,7 @@ function ports(n) { const s = spec(n.type); return { ins: s?.inputs || [], outs:
 function portPos(id, dir, name) {
   const n = node(id); if (!n) return [0, 0];
   const p = ports(n), i = Math.max(0, (dir === 'in' ? p.ins : p.outs).indexOf(name));
-  return [n.position[0] + (dir === 'in' ? 0 : NODE_W), n.position[1] + HEAD + PAD + i * ROW + ROW / 2];
+  return [n.position[0] + (dir === 'in' ? 0 : widthOf(n)), n.position[1] + HEAD + PAD + i * ROW + ROW / 2];
 }
 const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 // nome do agente de IA (Codex, Claude Code ou um que o usuário cadastrou em Agentes de IA)
@@ -318,6 +322,7 @@ function summary(n) {
     case 'trigger.file': case 'file.read': case 'file.write': case 'file.list': case 'file.exists': return one(p.path);
     case 'file.manage': return `${{ copy: 'copiar', move: 'mover', trash: 'Lixeira' }[p.op] || ''} ${one(p.from)}`;
     case 'windows.open': return one(p.target);
+    case 'windows.alarm': return [one(p.title), p.sound && p.sound !== 'custom' ? String(p.sound).replace(/\.wav$/i, '') : ''].filter(Boolean).join(' · ');
     case 'windows.powershell': return one(p.script);
     case 'windows.clipboard': return p.op === 'write' ? 'copiar: ' + one(p.text) : 'ler o que está copiado';
     case 'http.download': return one(p.url);
@@ -333,7 +338,8 @@ function summary(n) {
 }
 function fillNode(e, n) {
   const s = spec(n.type), cat = catOf(n), { ins, outs } = ports(n), rows = Math.max(ins.length, outs.length, 1);
-  e.className = 'am-node' + (A.sel.has(n.id) ? ' selected' : '') + (n.disabled ? ' disabled' : '') + (s ? '' : ' unknown');
+  e.className = 'am-node' + (A.sel.has(n.id) ? ' selected' : '') + (n.disabled ? ' disabled' : '') + (n.locked ? ' locked' : '') + (n.size ? ' sized' : '') + (s ? '' : ' unknown');
+  applySize(e, n);
   e.style.setProperty('--cat', cat.c);
   e.setAttribute('aria-label', titleOf(n));
   const used = new Set(A.flow.edges.filter(x => x.from === n.id).map(x => x.from_port));
@@ -348,7 +354,7 @@ function fillNode(e, n) {
   }
   e.replaceChildren(
     el('div.am-head', el('span.am-ico', { html: cat.i }), el('span.am-title', { title: titleOf(n) }, titleOf(n)), n.locked && el('span.am-nlock', { html: IC.lock, title: 'Nó trancado' }), n.disabled && el('span.am-off', 'desligado'), el('span.am-state')),
-    body, el('div.am-sum', s ? summary(n) : 'Este tipo de nó não existe mais.'), el('div.am-run'));
+    body, el('div.am-sum', s ? summary(n) : 'Este tipo de nó não existe mais.'), el('div.am-run'), el('span.am-grip', { title: 'Arraste para redimensionar. Duplo clique volta ao tamanho padrão' }));
   paintRun(n.id);
 }
 function makeNode(n) {
@@ -359,6 +365,12 @@ function makeNode(n) {
   return e;
 }
 function refreshNode(id) { const n = node(id), e = nodeEls.get(id); if (n && e) { fillNode(e, n); touch([id]); } }
+// altura mínima de um nó: o cabeçalho e as bolinhas nunca ficam cortados
+const baseHeight = (n) => { const p = ports(n); return HEAD + Math.max(p.ins.length, p.outs.length, 1) * ROW + PAD * 2 + 10; };
+function applySize(e, n) {
+  e.style.width = widthOf(n) + 'px';
+  e.style.height = n.size && n.size[1] > 0 ? Math.max(baseHeight(n), n.size[1]) + 'px' : '';
+}
 function setPos(n, x, y) { n.position = [x, y]; nodeEls.get(n.id).style.transform = `translate(${x}px, ${y}px)`; }
 
 // ---------- quadro: fios ----------
@@ -510,12 +522,15 @@ function arrange(record = true) {
   }
   const cols = new Map();
   for (const n of nodes) { const d = depth.get(n.id); if (!cols.has(d)) cols.set(d, []); cols.get(d).push(n); }
-  for (const [d, list] of cols) { list.sort((a, b) => a.position[1] - b.position[1]); let y = 48; for (const n of list) { setPos(n, 60 + d * (NODE_W + 60), y); y += (nodeEls.get(n.id)?.offsetHeight || 96) + 36; } }
+  const all = A.flow.nodes, wide = (d) => Math.max(NODE_W, ...all.filter(n => depth.get(n.id) === d).map(widthOf)), colX = new Map();
+  { let x = 60; for (const d of [...cols.keys()].sort((a, b) => a - b)) { colX.set(d, x); x += wide(d) + 60; } }
+  for (const [d, list] of cols) { list.sort((a, b) => a.position[1] - b.position[1]); let y = 48; for (const n of list) { setPos(n, colX.get(d), y); y += (nodeEls.get(n.id)?.offsetHeight || 96) + 36; } }
   touch(nodes.map(n => n.id)); changed();
 }
 
 // ---------- quadro: ponteiro ----------
 function onDown(e) {
+  bs.closeMenu();
   if (e.button === 2) return;
   closePicker();
   if (e.target.closest('.am-zoom, .am-add')) return;
@@ -523,6 +538,15 @@ function onDown(e) {
   const plus = e.target.closest('.am-plus'), port = e.target.closest('.am-port'), nodeEl = e.target.closest('.am-node'), edge = e.target.closest('.am-edge');
   if (plus && nodeEl) return;
   if (!A.flow) return;
+  const grip = e.target.closest('.am-grip');
+  if (grip && nodeEl) {
+    const n = node(nodeEl.dataset.id); if (!n) return;
+    if (nodeLocked(n.id)) return denied(flowLocked() ? '' : 'node');
+    e.preventDefault(); try { R.cv.setPointerCapture(e.pointerId); } catch { /* ponteiro sintético */ }
+    if (!A.sel.has(n.id)) select([n.id]);
+    A.drag = { kind: 'size', pid: e.pointerId, sx: e.clientX, sy: e.clientY, n, w0: widthOf(n), h0: nodeEl.offsetHeight, had: n.size ? [...n.size] : null, moved: false };
+    return;
+  }
   const cap = () => { try { R.cv.setPointerCapture(e.pointerId); } catch { /* ponteiro sintético */ } };
   if (port && nodeEl) {
     if (flowLocked()) return denied();
@@ -556,6 +580,15 @@ function onMove(e) {
     if (!d.moved) { commit(); d.moved = true; R.cv.classList.add('dragging'); }
     d.list.forEach((n, i) => { let x = d.start[i][0] + dx / A.cam.z, y = d.start[i][1] + dy / A.cam.z; if (!e.altKey) { x = Math.round(x / GRID) * GRID; y = Math.round(y / GRID) * GRID; } setPos(n, x, y); });
     touch(d.list.map(n => n.id));
+  } else if (d.kind === 'size') {
+    if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    if (!d.moved) { commit(); d.moved = true; R.cv.classList.add('sizing'); }
+    const snap = (v) => e.altKey ? Math.round(v) : Math.round(v / GRID) * GRID;
+    const w = clamp(snap(d.w0 + dx / A.cam.z), NODE_MIN, NODE_MAX);
+    // quem só puxa para o lado não fixa a altura: ela continua a do conteúdo
+    const tall = Math.abs(dy) >= 6 ? Math.max(baseHeight(d.n), snap(d.h0 + dy / A.cam.z)) : (d.had?.[1] || 0);
+    d.n.size = [w, tall];
+    const elN = nodeEls.get(d.n.id); elN.classList.add('sized'); applySize(elN, d.n); touch([d.n.id]);
   } else if (d.kind === 'marquee') {
     const r = R.cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     const x1 = Math.min(x, d.sx), y1 = Math.min(y, d.sy), w = Math.abs(x - d.sx), hh = Math.abs(y - d.sy);
@@ -575,7 +608,8 @@ function onMove(e) {
 function onUp(e) {
   const d = A.drag; if (!d || d.pid !== e.pointerId) return;
   A.drag = null;
-  R.cv.classList.remove('panning', 'dragging', 'wiring');
+  R.cv.classList.remove('panning', 'dragging', 'wiring', 'sizing');
+  if (d.kind === 'size') { if (d.moved) changed(); return; }
   if (d.kind === 'pan' && !d.moved) { if (A.sel.size || A.selEdge) { A.sel.clear(); A.selEdge = null; paintSel(); } }
   else if (d.kind === 'move' && d.moved) changed();
   else if (d.kind === 'marquee') { R.marquee.hidden = true; A.selEdge = null; paintSel(); }
@@ -719,8 +753,14 @@ function field(n, f) {
   } else {
     input = el('input', { type: 'text', value: cur ?? '', placeholder: f.placeholder || '', spellcheck: false }); input.oninput = () => set(input.value);
   }
-  // campo de caminho: o botão abre o seletor do Windows (arquivo, pasta, onde gravar ou um programa)
   let control = input;
+  // biblioteca de sons: o botão toca o escolhido
+  if (f.preview === 'sound') {
+    const b = el('button.icon-btn.am-browse', { type: 'button', title: 'Ouvir', html: IC.play });
+    b.onclick = () => { const v = input.value; if (!v || v === 'custom') return bs.toast(v ? 'Escolha o arquivo no campo de baixo.' : 'Sem som.'); A.audio?.pause(); A.audio = new Audio('/api/automator/sound?name=' + encodeURIComponent(v)); A.audio.play().catch(() => bs.toast('Não deu para tocar esse som.', 'err')); };
+    control = el('div.am-browse-line', input, b);
+  }
+  // campo de caminho: o botão abre o seletor do Windows (arquivo, pasta, onde gravar ou um programa)
   if (f.pick) {
     const go = guard(async (kind) => {
       const r = await bs.api('automator/pick', { kind, start: /\{\{/.test(input.value) ? '' : input.value, title: f.label }, { method: 'POST' });
@@ -1032,7 +1072,7 @@ function mount(pane) {
     const b = e.target.closest('[data-a]');
     if (b && acts[b.dataset.a]) { const r = b.getBoundingClientRect(); acts[b.dataset.a]({ currentTarget: b, target: b, clientX: r.left, clientY: r.bottom + 4, preventDefault() {}, stopPropagation() {} }); return; }
     const plus = e.target.closest('.am-plus');
-    if (plus) { const id = plus.closest('.am-node').dataset.id, r = plus.getBoundingClientRect(), n = node(id); openPicker(r.right + 8, r.top - 12, (s) => addNode(s.type, [n.position[0] + NODE_W + 60, n.position[1]], { node: id, port: plus.dataset.plus, dir: 'out' }), 'inputs'); }
+    if (plus) { const id = plus.closest('.am-node').dataset.id, r = plus.getBoundingClientRect(), n = node(id); openPicker(r.right + 8, r.top - 12, (s) => addNode(s.type, [n.position[0] + widthOf(n) + 60, n.position[1]], { node: id, port: plus.dataset.plus, dir: 'out' }), 'inputs'); }
   };
   pane.addEventListener('click', onClick); R.side.addEventListener('click', onClick);
   pane.addEventListener('pointerdown', (e) => { if (picker && !picker.contains(e.target) && !e.target.closest('[data-a=add], .am-plus')) closePicker(); });
@@ -1045,6 +1085,8 @@ function mount(pane) {
   R.cv.addEventListener('wheel', onWheel, { passive: false });
   R.cv.addEventListener('contextmenu', onContext);
   R.cv.addEventListener('dblclick', (e) => {
+    const grip = e.target.closest('.am-grip');
+    if (grip && A.flow) { const n = node(grip.closest('.am-node').dataset.id); if (!n || !n.size) return; if (nodeLocked(n.id)) return denied(flowLocked() ? '' : 'node'); commit(); delete n.size; refreshNode(n.id); changed(); return; }
     if (!A.flow || e.target.closest('.am-node, .am-zoom, .am-add, .am-pick')) { if (e.target.closest('.am-node')) R.insp.querySelector('.am-field textarea, .am-field input')?.focus(); return; }
     if (e.target.closest('.am-edge')) return removeEdge(e.target.closest('.am-edge').dataset.id);
     const at = toWorld(e.clientX, e.clientY); openPicker(e.clientX, e.clientY, (s) => addNode(s.type, [at[0] - NODE_W / 2, at[1] - HEAD / 2]));

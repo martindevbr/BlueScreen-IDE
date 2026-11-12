@@ -31,6 +31,7 @@ No quadro:
 | duplicar | `Ctrl+D` (ou `Ctrl+C` e `Ctrl+V`) |
 | desfazer e refazer | `Ctrl+Z` e `Ctrl+Shift+Z` |
 | salvar | `Ctrl+S` |
+| redimensionar um nó | arraste o canto de baixo, à direita (duplo clique nele volta ao tamanho padrão) |
 | arrumar em colunas | botão **Organizar** na barra |
 
 O botão direito num nó desliga, duplica ou exclui. Um nó desligado é pulado na execução.
@@ -113,6 +114,7 @@ A paleta (**Adicionar nó**) agrupa os nós por categoria. Nos campos de caminho
 | Abrir | Abre um arquivo, uma pasta ou um site no programa padrão. |
 | Área de transferência | Lê o texto copiado, ou copia um texto. |
 | Notificação | Mostra um aviso do Windows. |
+| Alarme | Abre um alerta no canto da tela, por cima de tudo e sem tirar o foco de onde você está, com um som da biblioteca do Windows (o botão ao lado toca o escolhido) ou um `.wav` seu. Dá para escolher o tipo e a cor, tocar uma vez ou sem parar, fechar sozinho depois de um tempo, um ou dois botões, o canto da tela, a largura, o fundo, a opacidade e a borda piscando. Com **Espera o alarme fechar**, o nó entrega `closed`: o botão clicado, ou `timeout`. |
 | Saúde do PC | Entrega o uso de CPU e de memória, o espaço nos discos e há quantas horas o PC está ligado. |
 | Programa está rodando? | Segue por **sim** ou por **não**. |
 

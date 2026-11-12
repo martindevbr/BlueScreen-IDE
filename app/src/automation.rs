@@ -45,6 +45,9 @@ struct Node {
     /// nó trancado no editor (não move, não edita, não exclui); a execução não muda
     #[serde(default)]
     locked: bool,
+    /// tamanho que o usuário deu ao nó no quadro: [largura, altura]; altura 0 = a do conteúdo
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size: Option<[f32; 2]>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Edge {
@@ -485,6 +488,127 @@ fn ops_catalog() -> Value {
          "params":{"name":""},"fields":[{"name":"name","label":"Nome do programa","kind":"text","placeholder":"chrome, node, nginx"}]}
     ])
 }
+/// Sons do Windows (C:\Windows\Media\*.wav): a biblioteca do nó Alarme.
+fn system_sounds() -> Vec<String> {
+    let dir = std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into())).join("Media");
+    let mut v: Vec<String> = std::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.to_lowercase().ends_with(".wav")).collect();
+    // os de alarme e de toque primeiro: são os que fazem sentido aqui
+    v.sort_by_key(|n| { let l = n.to_lowercase(); (if l.starts_with("alarm") { 0 } else if l.starts_with("ring") { 1 } else { 2 }, l) });
+    v
+}
+fn alarm_catalog() -> Value {
+    let mut sounds = vec![json!({"value":"","label":"Sem som"})];
+    sounds.extend(system_sounds().into_iter().map(|n| json!({"label": n.trim_end_matches(".wav").trim_end_matches(".WAV"), "value": n})));
+    sounds.push(json!({"value":"custom","label":"Outro arquivo…"}));
+    json!([
+        {"type":"windows.alarm","name":"Alarme","category":"Windows","desc":"Abre um alerta no canto da tela, por cima de tudo, com som.","inputs":["in"],"outputs":["out"],
+         "params":{"title":"Alarme","message":"{{input}}","level":"warn","sound":"Alarm01.wav","sound_file":"","repeat":"once","seconds":0,"wait":"no","button":"OK","button2":"",
+                   "position":"br","width":380,"theme":"dark","color":"","opacity":100,"blink":"yes"},
+         "fields":[
+            {"name":"title","label":"Título","kind":"text"},
+            {"name":"message","label":"Mensagem","kind":"area"},
+            {"name":"level","label":"Tipo","kind":"select","options":[{"value":"info","label":"Informação (azul)"},{"value":"ok","label":"Sucesso (verde)"},{"value":"warn","label":"Aviso (âmbar)"},{"value":"error","label":"Erro (vermelho)"}]},
+            {"name":"sound","label":"Som","kind":"select","options":sounds,"preview":"sound","help":"Os sons do Windows. O botão toca o escolhido."},
+            {"name":"sound_file","label":"Arquivo de som (.wav)","kind":"text","pick":"file","show":{"sound":["custom"]}},
+            {"name":"repeat","label":"Tocar","kind":"select","options":[{"value":"once","label":"Uma vez"},{"value":"loop","label":"Sem parar, até fechar"}]},
+            {"name":"seconds","label":"Fechar sozinho depois de (segundos)","kind":"number","min":0,"max":86400,"help":"Zero: fica até alguém fechar."},
+            {"name":"button","label":"Botão","kind":"text"},
+            {"name":"button2","label":"Segundo botão","kind":"text","placeholder":"vazio: sem segundo botão (ex.: Adiar)"},
+            {"name":"wait","label":"O fluxo","kind":"select","options":[{"value":"no","label":"Segue em frente"},{"value":"yes","label":"Espera o alarme fechar"}],"help":"Esperando, o nó entrega closed: o texto do botão clicado, ou timeout."},
+            {"name":"position","label":"Onde aparece","kind":"select","options":[{"value":"br","label":"Canto de baixo, à direita"},{"value":"bl","label":"Canto de baixo, à esquerda"},{"value":"tr","label":"Canto de cima, à direita"},{"value":"tl","label":"Canto de cima, à esquerda"},{"value":"center","label":"Centro da tela"}]},
+            {"name":"width","label":"Largura (px)","kind":"number","min":240,"max":900},
+            {"name":"theme","label":"Fundo","kind":"select","options":[{"value":"dark","label":"Escuro"},{"value":"light","label":"Claro"}]},
+            {"name":"color","label":"Cor de destaque","kind":"text","placeholder":"vazio: a do tipo (ex.: #E0685E)"},
+            {"name":"opacity","label":"Opacidade (%)","kind":"number","min":30,"max":100},
+            {"name":"blink","label":"Piscar a borda","kind":"select","options":[{"value":"yes","label":"Sim"},{"value":"no","label":"Não"}]}
+         ]}
+    ])
+}
+const ALARM_PS: &str = r#"$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+# janela que aparece sem tirar o foco de onde a pessoa está digitando
+Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition 'using System.Windows.Forms; public class BsAlarmForm : Form { protected override bool ShowWithoutActivation { get { return true; } } protected override CreateParams CreateParams { get { CreateParams p = base.CreateParams; p.ExStyle |= 0x08000008; return p; } } }'
+$c = $env:BS_ALARM | ConvertFrom-Json
+$col = { param($h) [System.Drawing.ColorTranslator]::FromHtml($h) }
+$dark = $c.theme -ne 'light'
+$bg = & $col $(if ($dark) { '#1C1F26' } else { '#FFFFFF' }); $fg = & $col $(if ($dark) { '#F2F4F8' } else { '#16181D' }); $muted = & $col $(if ($dark) { '#B4BAC6' } else { '#4A5160' })
+$accent = & $col $c.color
+$W = [int]$c.width; $pad = 16; $bar = 6
+$f = New-Object BsAlarmForm
+$f.FormBorderStyle = 'None'; $f.TopMost = $true; $f.ShowInTaskbar = $false; $f.StartPosition = 'Manual'; $f.BackColor = $accent; $f.Opacity = [double]$c.opacity / 100; $f.Padding = New-Object System.Windows.Forms.Padding 2
+$body = New-Object System.Windows.Forms.Panel; $body.Dock = 'Fill'; $body.BackColor = $bg; $f.Controls.Add($body)
+$stripe = New-Object System.Windows.Forms.Panel; $stripe.BackColor = $accent; $stripe.SetBounds(0, 0, $bar, 2000); $body.Controls.Add($stripe)
+$inner = $W - 4 - $bar - $pad * 2
+$t = New-Object System.Windows.Forms.Label; $t.Text = $c.title; $t.ForeColor = $fg; $t.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 11.5); $t.AutoSize = $true; $t.MaximumSize = New-Object System.Drawing.Size $inner, 0; $t.Location = New-Object System.Drawing.Point ($bar + $pad), 14; $t.UseMnemonic = $false; $body.Controls.Add($t)
+$y = $t.Bottom + 6
+if ($c.message) {
+  $m = New-Object System.Windows.Forms.Label; $m.Text = $c.message; $m.ForeColor = $muted; $m.Font = New-Object System.Drawing.Font('Segoe UI', 9.75); $m.AutoSize = $true; $m.MaximumSize = New-Object System.Drawing.Size $inner, 420; $m.Location = New-Object System.Drawing.Point ($bar + $pad), $y; $m.UseMnemonic = $false; $body.Controls.Add($m)
+  $y = $m.Bottom + 6
+}
+$script:closed = 'timeout'
+$x = $W - 4 - $pad
+# o botão principal fica na ponta direita; o segundo, à esquerda dele
+foreach ($name in @($c.button, $c.button2)) {
+  if (-not $name) { continue }
+  $b = New-Object System.Windows.Forms.Button; $b.Text = $name; $b.FlatStyle = 'Flat'; $b.AutoSize = $true; $b.AutoSizeMode = 'GrowAndShrink'; $b.Padding = New-Object System.Windows.Forms.Padding 10, 3, 10, 3; $b.Font = New-Object System.Drawing.Font('Segoe UI', 9.25); $b.UseMnemonic = $false; $b.Cursor = 'Hand'
+  if ($name -eq $c.button) { $b.BackColor = $accent; $b.ForeColor = [System.Drawing.Color]::White; $b.FlatAppearance.BorderSize = 0 } else { $b.BackColor = $bg; $b.ForeColor = $fg; $b.FlatAppearance.BorderColor = $muted }
+  $body.Controls.Add($b); $x -= $b.PreferredSize.Width; $b.Location = New-Object System.Drawing.Point $x, ($y + 8); $x -= 8
+  $b.Tag = $name; $b.Add_Click({ $script:closed = $this.Tag; $f.Close() })
+  $bottom = $b.Bottom
+}
+$H = $(if ($bottom) { $bottom + 14 } else { $y + 12 }) + 4
+$f.Size = New-Object System.Drawing.Size $W, $H
+$wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea; $gap = 16
+$px = $(if ($c.position -in 'bl', 'tl') { $wa.Left + $gap } elseif ($c.position -eq 'center') { $wa.Left + ($wa.Width - $W) / 2 } else { $wa.Right - $W - $gap })
+$py = $(if ($c.position -in 'tr', 'tl') { $wa.Top + $gap } elseif ($c.position -eq 'center') { $wa.Top + ($wa.Height - $H) / 2 } else { $wa.Bottom - $H - $gap })
+$f.Location = New-Object System.Drawing.Point ([int]$px), ([int]$py)
+$player = $null
+if ($c.sound_path) { try { $player = New-Object System.Media.SoundPlayer $c.sound_path; if ($c.repeat -eq 'loop') { $player.PlayLooping() } else { $player.Play() } } catch { $player = $null } }
+if ([int]$c.seconds -gt 0) { $end = New-Object System.Windows.Forms.Timer; $end.Interval = [int]$c.seconds * 1000; $end.Add_Tick({ $end.Stop(); $f.Close() }); $end.Start() }
+if ($c.blink -eq 'yes') { $script:on = $true; $bl = New-Object System.Windows.Forms.Timer; $bl.Interval = 550; $bl.Add_Tick({ $script:on = -not $script:on; $f.BackColor = $(if ($script:on) { $accent } else { $bg }) }); $bl.Start() }
+[System.Windows.Forms.Application]::Run($f)
+if ($player) { $player.Stop() }
+Write-Output (@{ closed = $script:closed } | ConvertTo-Json -Compress)
+"#;
+/// Nó Alarme: uma janela do PowerShell (WinForms), por cima de tudo, no canto escolhido.
+async fn alarm_node(p: &Value, input: &Value) -> ApiResult<Value> {
+    let sound = text_of(p, "sound");
+    let sound_path = match sound.as_str() {
+        "" => String::new(),
+        "custom" => { let f = path_of(p, "sound_file").map_err(|_| fail("escolha o arquivo de som", 400))?; if !f.is_file() { return Err(fail(format!("arquivo de som não encontrado: {}", f.display()), 404)); } f.to_string_lossy().into_owned() }
+        name => { if !system_sounds().iter().any(|s| s == name) { return Err(fail(format!("som do Windows não encontrado: {name}"), 404)); }
+            std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into())).join("Media").join(name).to_string_lossy().into_owned() }
+    };
+    let custom = text_of(p, "color");
+    let custom = custom.trim();
+    let color = if custom.len() == 7 && custom.starts_with('#') && custom[1..].chars().all(|c| c.is_ascii_hexdigit()) { custom.to_string() }
+        else if !custom.is_empty() { return Err(fail("a cor de destaque é no formato #RRGGBB", 400)); }
+        else { match p["level"].as_str().unwrap_or("warn") { "info" => "#3B82F6", "ok" => "#2EA66B", "error" => "#E0483F", _ => "#E3A63A" }.to_string() };
+    let seconds = p["seconds"].as_u64().unwrap_or(0).min(86400);
+    let title = text_of(p, "title");
+    let button = text_of(p, "button");
+    let cfg = json!({
+        "title": if title.trim().is_empty() { "Alarme".to_string() } else { title.chars().take(200).collect() }, "message": text_of(p, "message").chars().take(2000).collect::<String>(),
+        "color": color, "theme": p["theme"].as_str().unwrap_or("dark"), "opacity": p["opacity"].as_u64().unwrap_or(100).clamp(30, 100), "width": p["width"].as_u64().unwrap_or(380).clamp(240, 900),
+        "position": p["position"].as_str().unwrap_or("br"), "sound_path": sound_path, "repeat": p["repeat"].as_str().unwrap_or("once"), "seconds": seconds, "blink": p["blink"].as_str().unwrap_or("yes"),
+        // sem botão nenhum e sem tempo, ninguém conseguiria fechar
+        "button": if button.trim().is_empty() && seconds == 0 { "OK".to_string() } else { button.trim().chars().take(40).collect() }, "button2": text_of(p, "button2").trim().chars().take(40).collect::<String>(),
+    });
+    let env = json!({"BS_ALARM": cfg.to_string()});
+    if p["wait"] == "yes" {
+        let timeout = if seconds > 0 { seconds * 1000 + 20_000 } else { 3_600_000 };
+        let r = run_ps(ALARM_PS, &Value::Null, &json!(timeout), env).await.map_err(|e| fail(e.msg.replace("o programa falhou: ", "o alarme não abriu: "), e.status))?;
+        let v: Value = serde_json::from_str(r.as_str().unwrap_or("").lines().last().unwrap_or("").trim()).unwrap_or(json!({"closed":"timeout"}));
+        return Ok(json!({"closed": v["closed"], "title": cfg["title"]}));
+    }
+    // sem esperar: o script fica num arquivo fixo (o processo ainda o usa depois que o nó termina)
+    let file = std::env::temp_dir().join("bluescreen-alarme.ps1");
+    let mut body = vec![0xEF, 0xBB, 0xBF];
+    body.extend(ALARM_PS.as_bytes());
+    if std::fs::read(&file).ok().as_deref() != Some(body.as_slice()) { std::fs::write(&file, body)?; }
+    service("automator", "plugin/proc", json!({"action":"start","program":"powershell","args":["-NoProfile","-ExecutionPolicy","Bypass","-File",file.to_string_lossy()],"env":env,"label":"Alarme"})).await?;
+    Ok(input.clone())
+}
 /// Nós que os plugins ligados acrescentam. O plugin põe um `automator.json` na pasta dele:
 /// `{ "nodes": [{ "type", "name", "category", "desc", "inputs", "outputs", "params", "fields", "run": { "program", "args", "timeout" } }] }`.
 /// O tipo vira `plugin.<id do plugin>.<type>` e quem roda é o programa do plugin (ver `run_plugin_node`).
@@ -514,6 +638,7 @@ pub fn catalog() -> Value {
     all.extend(more().as_array().cloned().unwrap_or_default());
     all.extend(media().as_array().cloned().unwrap_or_default());
     all.extend(ops_catalog().as_array().cloned().unwrap_or_default());
+    all.extend(alarm_catalog().as_array().cloned().unwrap_or_default());
     all.extend(plugin_nodes());
     // a paleta mostra um grupo por categoria, nesta ordem; as categorias dos plugins vêm depois, na ordem em que chegam
     const ORDER: [&str; 14] = ["Gatilhos", "Lógica", "Texto", "Dados", "Arquivos", "Windows", "Rede", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
@@ -1745,6 +1870,7 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
             if script.trim().is_empty() { return Err(fail("o script está vazio", 400)); }
             run_ps(&script, &p["cwd"], &p["timeout"], json!({"BS_INPUT": stringify(&input)})).await?
         }
+        "windows.alarm" => alarm_node(&p, &input).await?,
         "text.case" => {
             let t = text_of(&p, "text");
             match p["mode"].as_str().unwrap_or("trim") {
@@ -1946,7 +2072,7 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
         let prompt=format!("Monte um fluxo de automação Windows do BlueScreen, com o mesmo documento de nós do HexLab. Retorne SOMENTE JSON: {{\"name\":\"Nome\",\"description\":\"Descrição\",\"nodes\":[{{\"id\":\"n1\",\"type\":\"trigger.manual\",\"params\":{{\"sample\":\"\"}},\"position\":[60,100]}}],\"edges\":[{{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"}}]}}. Use somente os tipos e portas deste catálogo: {}. Inclua um gatilho, conexões sem ciclos e parâmetros do catálogo. Referências: {{{{input}}}}, {{{{input.campo}}}} e {{{{nodes.ID.out}}}}. Não embuta tokens: use referências do cofre {{{{vault:nome}}}}. Não execute nada nem altere arquivos. Não adicione modelos locais, runtimes de LLM nem provedores fora de Claude Code, Codex, MCP e OpenRouter. Pedido do usuário: {request}",catalog());
         let provider=b["provider"].as_str().unwrap_or("codex");
         let response=match provider {
-            "openrouter"=>execute_node(&Node{id:String::new(),kind:"ai.openrouter".into(),title:None,params:Value::Null,position:[0.,0.],disabled:false,locked:false},json!({"prompt":prompt,"model":b["model"],"secret":"openrouter","max_tokens":8192}),Value::Null).await?["out"].clone(),
+            "openrouter"=>execute_node(&Node{id:String::new(),kind:"ai.openrouter".into(),title:None,params:Value::Null,position:[0.,0.],disabled:false,locked:false,size:None},json!({"prompt":prompt,"model":b["model"],"secret":"openrouter","max_tokens":8192}),Value::Null).await?["out"].clone(),
             _=>{let v=cli("automator",provider,&prompt,&b["cwd"],&Value::Null).await?;if v["ok"]!=true{return Err(fail(format!("CLI falhou: {}",v["err"]),422));}v["out"].clone()},
         };
         let out=response.as_str().ok_or_else(||fail("IA respondeu sem texto",422))?;
@@ -2146,6 +2272,17 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
                 return err(code, if code < 500 { failed.and_then(|x| x["error"].as_str()).unwrap_or("recusado") } else { "o fluxo falhou: veja o histórico no Automator" });
             }
             reply(200, "application/json; charset=utf-8", json!({"ok": true, "run": run_id}).to_string())
+        }),
+    );
+    // GET ?name=Alarm01.wav -> o som do Windows (para ouvir antes de escolher, no nó Alarme)
+    m.insert(
+        "automator/sound".into(),
+        route_fn(|r| async move {
+            r.local_only()?;
+            let name = r.require("name")?.to_string();
+            if !system_sounds().iter().any(|s| *s == name) { return Err(fail("som não encontrado", 404)); }
+            let bytes = std::fs::read(std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into())).join("Media").join(&name))?;
+            Ok(Reply::Raw(axum::http::Response::builder().header("content-type", "audio/wav").header("cache-control", "max-age=3600").body(axum::body::Body::from(bytes)).map_err(|e| fail(e.to_string(), 500))?))
         }),
     );
     // POST ?kind=file|folder|save|program&start=&title= -> { path } (null: a pessoa cancelou). Seletor nativo do Windows.
@@ -2394,7 +2531,7 @@ mod tests {
         let kinds: Vec<&str> = all.as_array().unwrap().iter().filter_map(|s| s["type"].as_str()).collect();
         let unique: HashSet<&str> = kinds.iter().copied().collect();
         assert_eq!(kinds.len(), unique.len());
-        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table"] { assert!(unique.contains(k), "{k}"); }
+        for k in ["trigger.file", "file.write", "windows.powershell", "text.extract", "image.resize", "audio.convert", "video.trim", "text.join", "trigger.webhook", "sec.token", "audit.tls", "dynatrace.problems", "data.table", "windows.alarm"] { assert!(unique.contains(k), "{k}"); }
         // RFC 4231, caso 2
         assert_eq!(hmac_sha256_hex(b"Jefe", b"what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
         assert!(same_secret("abc", "abc") && !same_secret("abc", "abd") && !same_secret("abc", "abcd"));
@@ -2447,6 +2584,7 @@ mod tests {
             position: [0., 0.],
             disabled: false,
             locked: false,
+            size: None,
         });
         f.edges.push(Edge {
             id: String::new(),
@@ -2567,6 +2705,7 @@ mod tests {
             position: [0., 0.],
             disabled: false,
             locked: false,
+            size: None,
         };
         let out = execute_node(&n, json!({"value":1,"equals":2}), json!("x"))
             .await
