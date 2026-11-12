@@ -1,6 +1,6 @@
 'use strict';
 // ===== Agentes de IA (programas de linha de comando) =====
-// O Automator e o Conselho de agentes chamam o Codex, o Claude Code e os programas que o usuário cadastrar aqui (um
+// O Automator chama o Codex, o Claude Code e os programas que o usuário cadastrar aqui (um
 // OpenClaude, por exemplo). Cada agente tem programa, modelo, esforço e opções a mais; a lista fica no núcleo
 // (rota agents/clis, automation.rs). bs.aiClis.open(id) abre esta janela; ao gravar, roda o gancho 'aiclis:change'.
 (function () {
@@ -25,7 +25,7 @@
     const c = cur, fixed = factory(c.id);
     // já aberta (trocar de aba, salvar, testar): o conteúdo muda no lugar, sem a animação de entrada, que piscava
     const live = document.getElementById('aiClis'), still = !!live && !live.hidden, tall = still ? live.querySelector('.dlg-box').offsetHeight : 0;
-    dialog('aiClis', `<div class="dlg-hd"><div><h3>Agentes de IA</h3><p>Os programas que o Automator e o Conselho de agentes chamam, cada um com o seu modelo e o seu esforço.</p></div></div>
+    dialog('aiClis', `<div class="dlg-hd"><div><h3>Agentes de IA</h3><p>Os programas de IA que o Automator chama, cada um com o seu modelo e o seu esforço.</p></div></div>
       <div class="aic-tabs" role="tablist">${list.map(x => `<button class="chip${x.id === c.id ? ' on' : ''}" data-id="${esc(x.id)}" role="tab">${esc(x.name)}</button>`).join('')}<button class="chip${c.id ? '' : ' on'}" data-new role="tab">+ Novo</button></div>
       <label class="fld">Nome<input id="aicName" maxlength="60" autocomplete="off" placeholder="OpenClaude"></label>
       <label class="fld"${fixed ? ' hidden' : ''}>Fala como<select id="aicKind">${KIND.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>

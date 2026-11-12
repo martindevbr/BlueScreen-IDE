@@ -8,14 +8,6 @@
   "order": 40,
   "settings": [
     {
-      "key": "reviewBeforeApply", "label": "Revisar com o Conselho de agentes antes de aplicar", "type": "bool", "default": false,
-      "help": "Desligado, o plugin carrega assim que a IA termina. Ligado, cada aplicação espera os revisores (até 3 minutos, com o uso da sua conta de cada um) e só carrega se todos aprovarem; as correções voltam ao agente principal. Precisa do plugin Conselho de agentes ligado."
-    },
-    {
-      "key": "reviewProvider", "label": "Agentes revisores", "type": "select", "default": "both",
-      "options": [{"value":"both","label":"Codex e Claude Code"},{"value":"codex","label":"Codex"},{"value":"claude","label":"Claude Code"}]
-    },
-    {
       "key": "provider",
       "label": "IA",
       "type": "select",

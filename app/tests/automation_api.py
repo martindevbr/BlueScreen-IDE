@@ -148,14 +148,6 @@ def run():
             api("automator/run", {"flow_id": router["id"]})
             assert "cofre" in wait_run(router["id"], "failed")["error"].lower()
 
-            review = api("agents/reviews", {"proposal": "Revisão de teste", "providers": ["codex", "claude"], "cwd": str(tmp)})
-            assert review["approved"] and len(review["reviews"]) == 2
-            (tmp / "claude.json").write_text(json.dumps({"verdict": "revise", "reason": "Corrija primeiro"}))
-            assert not api("agents/reviews", {"proposal": "Teste de divergência", "cwd": str(tmp)})["approved"]
-            (tmp / "codex.json").write_text("resposta inválida")
-            assert not api("agents/reviews", {"proposal": "Teste inválido", "providers": ["codex"], "cwd": str(tmp)})["approved"]
-            api("agents/reviews", {"proposal": "Teste", "providers": ["gemini"]}, 400)
-
             # Uma IA propõe JSON; o núcleo valida e não salva/ativa automaticamente.
             generated = {"name": "Gerado", "active": True, "nodes": [node("t", "trigger.manual"), node("out", "util.output")], "edges": [edge("t", "out")]}
             (tmp / "codex.json").write_text(json.dumps(generated))
@@ -217,9 +209,9 @@ def run():
             else:
                 raise AssertionError("execução interrompida não foi recuperada")
             stored = json.loads((tmp / "automation.json").read_text(encoding="utf-8"))
-            assert len(stored["flows"]) >= 5 and len(stored["reviews"]) == 3
+            assert len(stored["flows"]) >= 5
             assert next(e for e in stored["events"] if e["id"] == queued_event["id"])["notified"]
-            print("OK: grafo, portas, ciclos, ramos, comandos, cancelamento, MCP, cofre, revisão, geração, agenda, fila e recuperação")
+            print("OK: grafo, portas, ciclos, ramos, comandos, cancelamento, MCP, cofre, geração, agenda, fila e recuperação")
         finally:
             proc.terminate()
             proc.wait(timeout=10)

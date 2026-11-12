@@ -589,33 +589,6 @@ async function apply() {
   if (!M.id || M.applying) return;
   M.applying = true; M.pending = false; $('#iam-apply').hidden = true;
   const id = M.id, was = entry(id), fresh = !was || !was.loaded;
-  // revisão opcional pelo Conselho de agentes (configurações do IAMaker): só carrega se todos aprovarem
-  if ((M.cfg || {}).reviewBeforeApply === true) {
-    const held = (text) => { M.applying = false; M.pending = true; $('#iam-apply').hidden = false; push({ role: 'err', text }); return saveConv(); };
-    if (!bs.plugins.list.some(p => p.id === 'agents' && p.enabled)) return held('A revisão antes de aplicar está ligada, mas o plugin Conselho de agentes está desligado. Ligue o plugin ou desmarque a revisão nas configurações do IAMaker.');
-    const who = (M.cfg || {}).reviewProvider;
-    let decision, err = null;
-    busy(true); bs.bubble.badge('iamaker', 'busy');
-    try {
-      const before = await stamp(pdir(id));
-      push({ role: 'sys', text: 'Conselho de agentes: revisando o plugin antes de carregar…' });
-      decision = await api('agents/reviews', {}, { method: 'POST', body: JSON.stringify({
-        proposal: `Avalie se o plugin ${id} está pronto para carregar no BlueScreen. Leia plugin.json, ui.js e os arquivos do plugin nesta pasta. Verifique o pedido, erros, integridade dos dados e efeitos inesperados. Pedido mais recente: ${M.conv.msgs.filter(m => m.role === 'user').at(-1)?.text || ''}`,
-        cwd: pdir(id), providers: who === 'codex' ? ['codex'] : who === 'claude' ? ['claude'] : ['codex', 'claude'],
-      }) });
-      if (id !== M.id || changed(before, await stamp(pdir(id)))) err = 'O plugin mudou durante a revisão. Aplique de novo para revisar a versão atual.';
-    } catch (e) { err = e.message; }
-    // o estado de "ocupado" termina aqui, antes de devolver as correções ao agente principal (que liga o dele)
-    busy(false); bs.bubble.badge('iamaker', null);
-    if (err) return held('Carregamento bloqueado pela revisão: ' + err);
-    if (!decision.approved) {
-      const problems = decision.reviews.map(v => `${v.provider}: ${v.error || v.result.reason}`);
-      if (decision.reviews.some(v => v.error)) return held('Um revisor não conseguiu responder. Resolva e aplique de novo.\n' + problems.join('\n'));
-      M.applying = false;
-      return broken(problems);
-    }
-    push({ role: 'ok', text: 'Conselho de agentes: aprovado. Carregando o plugin.' });
-  }
   // erro que o plugin novo lançar logo depois de carregar (num setTimeout, num evento) também conta
   const late = [];
   const onErr = (e) => { if (e.filename && e.filename.includes('/plugins/' + encodeURIComponent(id) + '.js')) late.push(e.message); };

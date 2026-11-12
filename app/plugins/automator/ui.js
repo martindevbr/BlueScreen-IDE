@@ -20,6 +20,9 @@ const IC = {
   ok: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
   err: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.1"/>'),
   x: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  folder: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+  folderPlus: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/>'),
+  chev: svg('<path d="M9 6l6 6-6 6"/>'),
   trash: svg('<path d="M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13"/>'),
   copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'),
   key: svg('<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>'),
@@ -117,7 +120,11 @@ function el(tag, attrs, ...kids) {
 // ---------- estado ----------
 const A = {
   specs: [], byType: new Map(), flows: [], flow: null, saved: '', runs: [], runSig: '',
-  sel: new Set(), selEdge: null, cam: { x: 40, y: 40, z: 1 }, undo: [], redo: [], clip: null, drag: null, loaded: false, pane: null, creds: [],
+  sel: new Set(), selEdge: null, cam: { x: 40, y: 40, z: 1 }, undo: [], redo: [], clip: null, drag: null, loaded: false, pane: null, creds: [], folders: [], folderColors: {}, keepRuns: 100,
+  // salvar sozinho: cada alteração é gravada logo depois que a pessoa para de mexer
+  autoSave: (() => { try { return localStorage.getItem('bs.automator.autoSave') === '1'; } catch { return false; } })(),
+  // a lista de execuções só é buscada e desenhada quando a pessoa pede (fica mais leve)
+  showRuns: (() => { try { return localStorage.getItem('bs.automator.showRuns') === '1'; } catch { return false; } })(),
 };
 let root, R = {}, nodeEls = new Map(), edgeEls = new Map(), timers = [], picker = null, busyRun = false;
 const spec = (t) => A.byType.get(t);
@@ -207,7 +214,7 @@ function open(f, fresh = false) {
 }
 async function pick(f) { bs.pages.open('automator'); if (f && f.id === A.flow?.id) return; if (await leave()) open(f); }
 async function create(make) { bs.pages.open('automator'); if (!(await leave())) return; open(make(), true); if (A.flow.nodes.length > 1) requestAnimationFrame(() => { arrange(false); fit(); }); R.name.focus(); R.name.select(); }
-async function refreshFlows() { A.flows = await bs.api('automator/flows'); paintList(); const me = A.flows.find(f => f.id === A.flow?.id); if (me && A.flow) { A.flow.next_run = me.next_run; paintBar(); } }
+async function refreshFlows() { [A.flows, A.folders] = await Promise.all([bs.api('automator/flows'), bs.api('automator/folders').catch(() => A.folders)]); paintList(); const me = A.flows.find(f => f.id === A.flow?.id); if (me && A.flow) { A.flow.next_run = me.next_run; paintBar(); } }
 async function save() {
   if (!A.flow) return null;
   if (!A.flow.name.trim()) { R.name.focus(); bs.toast('Dê um nome ao fluxo antes de salvar.', 'err'); return null; }
@@ -236,14 +243,61 @@ async function removeFlow(f = A.flow) {
   A.flow = null; A.saved = '';
   await refreshFlows(); open(A.flows[0] || null);
 }
-function exportFlow(flow = A.flow) {
-  if (!flow) return;
+/** Exporta um JSON: abre o "Salvar como" do Windows para a pessoa escolher onde gravar. Devolve o caminho, ou
+    null se ela desistiu. */
+async function saveJson(name, data) {
+  const r = await post('automator/export', { name, content: JSON.stringify(data, null, 2) });
+  return r.path || null;
+}
+const exportFlow = guard(async (flow = A.flow) => {
+  if (!flow || !flow.nodes) return;
   const { next_run, updated_at, ...f } = flow;
-  const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(f, null, 2)], { type: 'application/json' })), download: (flow.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'fluxo') + '.json' });
-  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  const path = await saveJson(flow.name || 'fluxo', f);
+  if (path) bs.toast('Fluxo exportado para ' + path, 'ok');
+});
+/** Vários fluxos num arquivo só, com as pastas, as cores e a ordem. `folder`: só os dessa pasta. As credenciais
+    não vão: o arquivo leva só os nomes delas ({{cred:nome}}). */
+const exportFlows = guard(async (folder) => {
+  const list = A.flows.filter(f => folder == null || within(folder, f.folder || ''));
+  if (!list.length) return bs.toast(folder == null ? 'Ainda não há fluxos salvos para exportar.' : 'Esta pasta não tem fluxos.');
+  const folders = A.folders.filter(g => list.some(f => within(g, f.folder || '')));
+  const path = await saveJson(folder == null ? 'fluxos do Automator' : leafOf(folder), {
+    bluescreen: 'automator-flows', version: 1, exported_at: new Date().toISOString(), folders,
+    folder_colors: Object.fromEntries(folders.filter(g => A.folderColors[g]).map(g => [g, A.folderColors[g]])),
+    flows: list.map(({ next_run, updated_at, ...f }) => f),
+  });
+  if (path) bs.toast(`${list.length} ${list.length === 1 ? 'fluxo exportado' : 'fluxos exportados'} para ${path}. As senhas não vão no arquivo: só os nomes das credenciais.`, 'ok');
+});
+/** Importa o arquivo de vários fluxos: cada um entra desligado, na pasta em que estava; quem chamava outro fluxo do
+    mesmo arquivo passa a chamar a cópia importada. */
+async function importFlows(pack) {
+  const flows = pack.flows.filter(f => f && Array.isArray(f.nodes) && Array.isArray(f.edges));
+  if (!flows.length) throw new Error('o arquivo não tem nenhum fluxo');
+  const unknown = [...new Set(flows.flatMap(f => f.nodes).filter(n => !spec(n.type)).map(n => n.type))];
+  if (unknown.length) throw new Error('o arquivo usa nós que o Automator não tem: ' + unknown.join(', '));
+  if (!(await ask(`Importar ${flows.length} ${flows.length === 1 ? 'fluxo' : 'fluxos'}?`, 'Eles entram desligados, nas pastas em que estavam. Os fluxos que você já tem não mudam.', [{ label: 'Cancelar', value: false }, { label: 'Importar', value: true, cls: 'primary' }]))) return;
+  const ids = new Map(), saved = [];
+  for (const f of flows) {
+    const got = await post('automator/flows', { flow: { ...f, id: '', active: false, locked: false, next_run: null, name: f.name || 'Fluxo importado' } });
+    if (f.id) ids.set(f.id, got.id);
+    saved.push(got);
+  }
+  // nó Chamar fluxo: o id antigo vira o do fluxo que acabou de entrar
+  for (const g of saved) {
+    let touched = false;
+    for (const n of g.nodes) if (n.type === 'flow.call' && ids.has(n.params?.flow)) { n.params.flow = ids.get(n.params.flow); touched = true; }
+    if (touched) await post('automator/flows', { flow: g });
+  }
+  for (const [name, color] of Object.entries(pack.folder_colors || {})) {
+    if (A.folderColors[name]) continue;
+    try { await post('automator/folders', { action: 'color', name, color }); A.folderColors[name] = color; } catch { /* cor estranha: a pasta fica com a padrão */ }
+  }
+  await refreshFlows();
+  bs.toast(`${saved.length} ${saved.length === 1 ? 'fluxo importado' : 'fluxos importados'}, desligados. Confira as credenciais que eles usam.`, 'ok');
 }
 async function importFlow(file) {
   const f = JSON.parse(await file.text());
+  if (f && Array.isArray(f.flows)) return importFlows(f);
   if (!f || !Array.isArray(f.nodes) || !Array.isArray(f.edges)) throw new Error('o arquivo não é um fluxo (faltam os nós e as conexões)');
   const unknown = [...new Set(f.nodes.filter(n => !spec(n.type)).map(n => n.type))];
   if (unknown.length) throw new Error('este fluxo usa nós que o Automator não tem: ' + unknown.join(', '));
@@ -335,6 +389,7 @@ function summary(n) {
       const d = (p.days || []).slice().sort((a, b) => (a || 7) - (b || 7));
       return `${p.time || '--:--'} · ${!d.length || d.length === 7 ? 'todo dia' : d.join() === '1,2,3,4,5' ? 'dias úteis' : d.map(i => DAYS[i]).join(', ')}`;
     }
+    case 'flow.call': return A.flows.find(x => x.id === p.flow || x.name === p.flow)?.name || (p.flow ? 'fluxo que não existe mais' : 'escolha o fluxo');
     case 'logic.if': { const o = spec(n.type).fields.find(f => f.name === 'op').options.find(x => x.value === (p.op || 'eq')); return `${one(p.value)} ${o?.label || ''}${['empty', 'not_empty', 'true'].includes(p.op) ? '' : ' ' + one(p.equals)}`; }
     case 'util.delay': return `${p.seconds} s`;
     case 'windows.command': return one([p.program, ...(Array.isArray(p.args) ? p.args : [])].join(' '));
@@ -343,7 +398,6 @@ function summary(n) {
     case 'mcp.call': return one(p.tool) || one(p.url);
     case 'agent.cli': return `${cliName(p.provider)}${p.model ? ' (' + one(p.model) + ')' : ''} · ${one(p.prompt)}`;
     case 'ai.openrouter': return one(p.model) || 'escolha o modelo';
-    case 'agent.review': return (p.providers || []).map(cliName).join(', ');
     case 'util.text': return one(p.text);
     case 'trigger.file': case 'file.read': case 'file.write': case 'file.list': case 'file.exists': return one(p.path);
     case 'file.manage': return `${{ copy: 'copiar', move: 'mover', trash: 'Lixeira' }[p.op] || ''} ${one(p.from)}`;
@@ -452,6 +506,32 @@ function paintSel() {
 }
 /** Depois de qualquer mudança no documento: indicadores de "não salvo" e botões. `full`: redesenha o painel da direita. */
 function changed(full = false) { paintBar(); if (full) renderInspector(); }
+// ---------- salvar sozinho ----------
+let autoTimer = 0, autoBusy = false, autoFailed = '';
+/** Marca uma gravação para daqui a pouco, se o salvar sozinho está ligado e há o que gravar. Cada alteração empurra
+    a hora para frente, então digitar ou arrastar não dispara uma gravação por tecla. */
+function autosaveSoon() {
+  clearTimeout(autoTimer);
+  if (!A.autoSave || !A.flow || flowLocked() || !isDirty()) return;
+  autoTimer = setTimeout(async () => {
+    if (!A.autoSave || !A.flow || flowLocked() || !isDirty()) return;
+    // no meio de um arrasto, com outra gravação andando ou sem nome: tenta de novo logo depois
+    if (A.drag || autoBusy) return autosaveSoon();
+    if (!A.flow.name.trim()) return;
+    const now = doc();
+    if (now === autoFailed) return;   // o mesmo conteúdo que o núcleo já recusou: espera a pessoa mexer
+    autoBusy = true; paintBar();
+    try { await save(); autoFailed = ''; }
+    catch (e) { autoFailed = now; bs.toast('Salvar sozinho não conseguiu gravar: ' + e.message, 'err'); }
+    finally { autoBusy = false; paintBar(); }
+  }, 900);
+}
+function toggleAutoSave() {
+  A.autoSave = !A.autoSave; autoFailed = '';
+  try { localStorage.setItem('bs.automator.autoSave', A.autoSave ? '1' : '0'); } catch { /* vale só agora */ }
+  bs.toast(A.autoSave ? 'Salvar sozinho ligado: cada alteração é gravada em seguida.' : 'Salvar sozinho desligado: use Salvar ou Ctrl+S.', 'ok');
+  paintBar();
+}
 function freeSpot(x, y) {
   x = Math.round(x / GRID) * GRID; y = Math.round(y / GRID) * GRID;
   const hits = () => A.flow.nodes.some(n => Math.abs(n.position[0] - x) < NODE_W + 12 && Math.abs(n.position[1] - y) < 84);
@@ -818,6 +898,16 @@ function field(n, f) {
   if (f.kind === 'select') {
     input = el('select', {}, f.options.map(o => el('option', { value: String(o.value ?? o), selected: String(o.value ?? o) === String(cur) }, o.label ?? o)));
     input.onchange = () => { set(input.value); renderInspector(); };
+  } else if (f.kind === 'flow') {
+    // um fluxo salvo (fora este), agrupado pelas pastas da lista
+    const others = A.flows.filter(x => x.id && x.id !== A.flow?.id), hit = others.find(x => x.id === cur || x.name === cur);
+    const opt = (x) => el('option', { value: x.id, selected: x === hit }, x.name || 'Fluxo sem nome');
+    input = el('select', {}, el('option', { value: '' }, others.length ? 'Escolha um fluxo…' : 'Nenhum outro fluxo salvo ainda'),
+      cur && !hit && el('option', { value: cur, selected: true }, 'Fluxo que não existe mais'),
+      ...others.filter(x => !x.folder).map(opt),
+      ...A.folders.filter(g => others.some(x => x.folder === g)).map(g => el('optgroup', { label: pathLabel(g) }, ...others.filter(x => x.folder === g).map(opt))));
+    input.onchange = () => { set(input.value); renderInspector(); };
+    if (hit) extra = el('button.am-link', { type: 'button', title: 'Abrir o fluxo chamado no quadro', onclick: () => pick(hit) }, 'abrir');
   } else if (f.kind === 'checks') {
     const on = new Set(Array.isArray(cur) ? cur : []);
     input = el('div.am-checks', {}, f.options.map(o => { const c = el('input', { type: 'checkbox', checked: on.has(o.value) }); c.onchange = () => { c.checked ? on.add(o.value) : on.delete(o.value); set(f.options.map(x => x.value).filter(v => on.has(v))); }; return el('label', c, el('span', o.label)); }));
@@ -971,6 +1061,25 @@ function runBlock(id) {
     r.error ? el('pre.am-out.err', r.error) : r.status === 'completed' ? (isQa(out) ? [qaView(out), el('details.am-io-ex', el('summary', 'Ver o JSON completo'), el('pre.am-out', show(out)))] : el('pre.am-out', show(out) || '(vazio)')) : null,
     r.status === 'completed' && !nodeLocked(id) ? treatRow(id, r) : null);
 }
+/** Execuções do fluxo: ocultas até a pessoa pedir. Aberta, traz a lista, a retenção e o botão de limpar. */
+function runsSection() {
+  const toggle = el('button.am-link', { type: 'button', 'aria-pressed': String(A.showRuns), title: A.showRuns ? 'Parar de buscar e mostrar a lista' : 'Buscar e mostrar as últimas execuções',
+    onclick: () => { A.showRuns = !A.showRuns; try { localStorage.setItem('bs.automator.showRuns', A.showRuns ? '1' : '0'); } catch { /* vale só agora */ } A.runSig = ''; renderInspector(); pollRuns(); } }, A.showRuns ? 'ocultar' : 'mostrar');
+  if (!A.showRuns) return el('section.am-sec', el('h4', 'Execuções', toggle), el('p.am-hint', 'Ocultas, para a tela ficar leve. O resultado da última continua em cada nó.'));
+  const keep = el('input', { type: 'number', min: 5, max: 1000, value: A.keepRuns, 'aria-label': 'Quantas execuções guardar' }), note = el('small.am-ferr', { hidden: true });
+  keep.onchange = async () => {
+    const n = Number(keep.value);
+    if (!Number.isInteger(n) || n < 5 || n > 1000) { note.hidden = false; note.textContent = 'Use um número de 5 a 1000.'; return; }
+    note.hidden = true;
+    try { A.keepRuns = (await post('automator/settings', { keep_runs: n })).keep_runs; A.runSig = ''; pollRuns(); bs.toast(`O histórico guarda as ${A.keepRuns} execuções mais recentes.`, 'ok'); } catch (e) { note.hidden = false; note.textContent = e.message; }
+  };
+  const clear = el('button.am-link', { type: 'button', title: 'Apagar as execuções terminadas deste fluxo', onclick: guard(async () => {
+    if (!A.flow?.id || !(await ask('Limpar o histórico deste fluxo?', 'As execuções terminadas deste fluxo saem do histórico. Os fluxos e os nós não mudam.', [{ label: 'Cancelar', value: false }, { label: 'Limpar', value: true, cls: 'primary' }]))) return;
+    await post('automator/settings', { action: 'clear_runs', flow: A.flow.id }); A.runSig = ''; await pollRuns(); renderInspector();
+  }) }, 'limpar');
+  return el('section.am-sec', el('h4', 'Execuções', toggle), runsBlock(),
+    el('div.am-keep', el('span', 'Guardar no máximo'), keep, el('span', 'execuções, somando todos os fluxos'), A.runs.length ? clear : null), note);
+}
 function runsBlock() {
   const box = el('div.am-runs');
   if (!A.runs.length) { box.append(el('p.am-hint', A.flow?.id ? 'Nenhuma execução ainda. Clique em Executar.' : 'As execuções aparecem aqui depois de salvar e executar.')); return box; }
@@ -1041,7 +1150,7 @@ function renderInspectorInner() {
   R.insp.replaceChildren(
     el('div.am-ibody',
       el('label.am-field', el('span.am-flabel', el('span', 'Descrição')), desc),
-      el('section.am-sec', el('h4', 'Execuções'), runsBlock()),
+      runsSection(),
       el('section.am-sec.am-tips', el('h4', 'Como montar'),
         el('p', 'Arraste da bolinha de um nó até a bolinha de outro para ligar. Solte no vazio para escolher o próximo nó.'),
         el('p', 'Duplo clique no fundo adiciona um nó. Clique num fio e Delete para remover.'),
@@ -1076,7 +1185,8 @@ function paintRuns() {
 async function pollRuns() {
   if (!A.flow?.id) { if (A.runs.length) { A.runs = []; A.runSig = ''; paintRuns(); renderInspector(); } return; }
   const id = A.flow.id;
-  let runs; try { runs = await bs.api('automator/runs', { flow: id, limit: 20 }, { quiet: true }); } catch { return; }
+  // com a lista oculta, basta a execução mais recente (o estado dos nós no quadro)
+  let runs; try { runs = await bs.api('automator/runs', { flow: id, limit: A.showRuns ? 20 : 2 }, { quiet: true }); } catch { return; }
   if (A.flow?.id !== id) return;
   const sig = runs.map(r => r.id + r.status + (r.nodes || []).map(n => n.status).join('')).join('|');
   if (sig === A.runSig) return;
@@ -1109,6 +1219,10 @@ function paintBar() {
   if (R.name.value !== (f?.name || '') && document.activeElement !== R.name) R.name.value = f?.name || '';
   R.dirty.hidden = !dirty; bs.pages.dirty('automator', dirty);
   R.save.disabled = !f || !dirty;
+  R.save.textContent = !A.autoSave ? 'Salvar' : autoBusy ? 'Salvando…' : dirty ? 'Salvar' : 'Salvo';
+  R.save.title = A.autoSave ? 'Salvar sozinho está ligado: cada alteração é gravada em seguida (desligue no menu ⋯)' : 'Salvar (Ctrl+S)';
+  R.save.classList.toggle('auto', A.autoSave);
+  autosaveSoon();
   const locked = flowLocked();
   R.undo.disabled = locked || !A.undo.length; R.redo.disabled = locked || !A.redo.length;
   root.classList.toggle('ro', locked); R.name.disabled = locked;
@@ -1150,25 +1264,237 @@ function flowMenu(e, f) {
       await refreshFlows(); bs.toast(saved.active ? `"${f.name}" ligado${saved.next_run ? ': próxima execução ' + fmtWhen(saved.next_run) : ''}.` : `"${f.name}" desligado.`, 'ok');
     }) }] : []),
     '-',
+    ...(() => { const sib = siblings(f), i = sib.findIndex(x => x.id === f.id); return [
+      ...(i > 0 ? [{ label: 'Mover para cima', icon: IC.up, action: () => moveFlow(f.id, f.folder || '', { before: sib[i - 1].id }) }] : []),
+      ...(i >= 0 && i < sib.length - 1 ? [{ label: 'Mover para baixo', action: () => moveFlow(f.id, f.folder || '', { after: sib[i + 1].id }) }] : []),
+    ]; })(),
+    { label: 'Mover para uma pasta…', icon: IC.folder, action: () => bs.showMenu(e, [
+      ...A.folders.filter(g => g !== (f.folder || '')).map(g => ({ label: '\u2003'.repeat(g.split('/').length - 1) + leafOf(g), icon: dot(folderColor(g)), action: () => moveFlow(f.id, g) })),
+      ...(A.folders.some(g => g !== (f.folder || '')) ? ['-'] : []),
+      { label: 'Nova pasta…', icon: IC.folderPlus, action: () => newFolder(f.id) },
+      ...(f.folder ? [{ label: 'Tirar da pasta', action: () => moveFlow(f.id, '') }] : []),
+    ], 'Mover "' + (f.name || 'fluxo') + '"') },
     { label: 'Renomear', action: async () => { if (f.locked) return denied(); await pick(f); if (A.flow?.id === f.id) { R.name.focus(); R.name.select(); } } },
     { label: 'Duplicar', icon: IC.copy, action: () => create(() => ({ ...clone(f), id: '', active: false, next_run: null, name: f.name + ' (cópia)' })) },
-    { label: 'Exportar', action: () => exportFlow(cur ? A.flow : f) },
+    { label: 'Exportar…', action: () => exportFlow(cur ? A.flow : f) },
     '-',
     { label: 'Excluir…', icon: IC.trash, action: guard(() => f.locked ? denied() : removeFlow(cur ? A.flow : f)) },
   ], f.name);
 }
+// ---------- lista de fluxos, com pastas e subpastas ----------
+// O nome de uma pasta é o caminho dela: "Financeiro/Mensal". A.folders traz todos os caminhos, na ordem da pessoa.
+const FOLD_KEY = 'bs.automator.folds';
+const folds = (() => { try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')); } catch { return new Set(); } })();   // pastas fechadas
+const keepFolds = () => { try { localStorage.setItem(FOLD_KEY, JSON.stringify([...folds])); } catch { /* só não lembra da próxima vez */ } };
+const leafOf = (p) => p.slice(p.lastIndexOf('/') + 1);
+const parentOf = (p) => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+const within = (p, x) => x === p || x.startsWith(p + '/');   // x é a pasta p, ou está dentro dela
+const kidsOf = (p) => A.folders.filter(g => parentOf(g) === p);
+const pathLabel = (p) => p.split('/').join(' › ');
+const FOLDER_COLORS = [['Âmbar', '#e3a63a'], ['Azul', '#5b9df9'], ['Verde', '#3fc98a'], ['Roxo', '#a78bfa'], ['Rosa', '#e879b9'], ['Vermelho', '#ef6b6b'], ['Ciano', '#38bdf8'], ['Cinza', '#9aa4b2']];
+/** A cor da pasta: a dela ou, sem uma, a da pasta de cima. */
+const folderColor = (name) => { for (let p = name; p; p = parentOf(p)) if (A.folderColors[p]) return A.folderColors[p]; return FOLDER_COLORS[0][1]; };
+const dot = (c) => `<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="${c}"/></svg>`;
+/** Uma pergunta de uma linha (nome de pasta). Devolve o texto, ou null se a pessoa desistiu. */
+function askText(title, text, label, value = '', okLabel = 'Salvar') {
+  return new Promise((resolve) => {
+    let done = false;
+    const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.folder}</div><div><h3>${esc(title)}</h3><p>${esc(text)}</p></div></div>
+      <label class="fld">${esc(label)}<input id="amAskIn" value="${esc(value)}" maxlength="60" spellcheck="false"></label>
+      <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amAskOk">${esc(okLabel)}</button></div>`;
+    const box = dialog('amAskText', html, () => {});
+    const input = box.querySelector('#amAskIn'), clean = () => input.value.replace(/[\\/]+/g, '-').trim() || null, finish = (v) => { if (done) return; done = true; box.hidden = true; resolve(v); };
+    box.querySelector('#amAskOk').onclick = () => finish(clean());
+    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); finish(clean()); } };
+    new MutationObserver(() => { if (box.hidden) finish(null); }).observe(box, { attributes: true, attributeFilter: ['hidden'] });
+    input.focus(); input.select();
+  });
+}
+/** Põe o fluxo numa pasta ('' = fora) e, com `near` ({ before: id } ou { after: id }), ao lado de outro fluxo. */
+const moveFlow = guard(async (id, folder, near = {}) => {
+  A.folders = await post('automator/folders', { action: 'move', id, folder, ...near });
+  if (A.flow?.id === id) A.flow.folder = folder;
+  for (let p = folder; p; p = parentOf(p)) folds.delete(p);
+  keepFolds();
+  await refreshFlows();
+});
+/** Cria uma pasta (dentro de `parent`, se vier); com `flowId`, o fluxo já vai para dentro dela. */
+const newFolder = guard(async (flowId, parent = '') => {
+  const typed = await askText(parent ? 'Nova subpasta' : 'Nova pasta', parent ? `Fica dentro de "${pathLabel(parent)}".` : 'Pastas organizam a lista de fluxos. Arraste um fluxo ou outra pasta para dentro, ou use o menu.', 'Nome da pasta', '', 'Criar');
+  if (!typed) return;
+  const name = (parent ? parent + '/' : '') + typed;
+  A.folders = await post('automator/folders', { action: 'create', name });
+  for (let p = name; p; p = parentOf(p)) folds.delete(p);
+  keepFolds();
+  if (typeof flowId === 'string' && flowId) return moveFlow(flowId, name);
+  paintList();
+});
+/** Troca o caminho de uma pasta (renomear, ou mover para dentro de outra): o que a tela lembra dela vai junto. */
+async function repathFolder(from, to) {
+  if (from === to) return;
+  A.folders = await post('automator/folders', { action: 'rename', name: from, to });
+  const swap = (x) => to + x.slice(from.length);
+  for (const g of [...folds]) if (within(from, g)) { folds.delete(g); folds.add(swap(g)); }
+  for (let p = parentOf(to); p; p = parentOf(p)) folds.delete(p);
+  keepFolds();
+  for (const k of Object.keys(A.folderColors)) if (within(from, k)) { A.folderColors[swap(k)] = A.folderColors[k]; delete A.folderColors[k]; }
+  if (A.flow?.folder && within(from, A.flow.folder)) A.flow.folder = swap(A.flow.folder);
+  await refreshFlows();
+}
+/** Leva a pasta para dentro de `parent` ('' = para fora de todas). */
+const moveFolder = guard((name, parent) => within(name, parent) ? bs.toast('Uma pasta não cabe dentro dela mesma.') : repathFolder(name, (parent ? parent + '/' : '') + leafOf(name)));
+const orderFolders = guard(async (names) => { A.folders = await post('automator/folders', { action: 'order', names }); paintList(); });
+/** Os vizinhos do fluxo na lista: os da mesma pasta (ou os soltos), na ordem em que aparecem. */
+const siblings = (f) => A.flows.filter(x => (x.folder || '') === (f.folder || ''));
+/** O menu de organizar a lista: pastas, recolher e expandir, ordem de A a Z, exportar e importar. */
+function listMenu(e) {
+  const anyOpen = A.folders.some(g => !folds.has(g));
+  const sort = (what) => guard(async () => { A.folders = await post('automator/folders', { action: 'sort', what }); await refreshFlows(); });
+  bs.showMenu(e, [
+    { label: 'Nova pasta…', icon: IC.folderPlus, action: () => newFolder() },
+    ...(A.folders.length ? [{ label: anyOpen ? 'Recolher todas as pastas' : 'Expandir todas as pastas', action: () => { anyOpen ? A.folders.forEach(g => folds.add(g)) : folds.clear(); keepFolds(); paintList(); } }] : []),
+    '-',
+    { label: 'Ordenar os fluxos de A a Z', action: sort('flows') },
+    ...(A.folders.length > 1 ? [{ label: 'Ordenar as pastas de A a Z', action: sort('folders') }] : []),
+    '-',
+    { label: 'Exportar todos os fluxos…', action: () => exportFlows() },
+    { label: 'Importar fluxos…', action: () => R.file.click() },
+  ], 'Organizar a lista');
+}
+function folderMenu(e, name) {
+  const inside = A.flows.filter(f => within(name, f.folder || '')), subs = A.folders.filter(g => g !== name && within(name, g));
+  const up = parentOf(name), sib = kidsOf(up), at = sib.indexOf(name);
+  const swap = (d) => { const l = [...A.folders], a = l.indexOf(name), b = l.indexOf(sib[at + d]); [l[a], l[b]] = [l[b], l[a]]; orderFolders(l); };
+  const targets = A.folders.filter(g => !within(name, g) && g !== up);
+  bs.showMenu(e, [
+    { label: 'Novo fluxo aqui', icon: IC.plus, action: () => { folds.delete(name); keepFolds(); create(() => ({ ...blank(), folder: name })); } },
+    { label: 'Nova subpasta…', icon: IC.folderPlus, action: () => newFolder('', name) },
+    '-',
+    ...(at > 0 ? [{ label: 'Mover para cima', icon: IC.up, action: () => swap(-1) }] : []),
+    ...(at >= 0 && at < sib.length - 1 ? [{ label: 'Mover para baixo', action: () => swap(1) }] : []),
+    ...(targets.length || up ? [{ label: 'Mover para dentro de…', icon: IC.folder, action: () => bs.showMenu(e, [
+      ...(up ? [{ label: 'Fora de todas as pastas', action: () => moveFolder(name, '') }, '-'] : []),
+      ...targets.map(g => ({ label: '\u2003'.repeat(g.split('/').length - 1) + leafOf(g), icon: dot(folderColor(g)), action: () => moveFolder(name, g) })),
+    ], 'Mover "' + leafOf(name) + '"') }] : []),
+    '-',
+    { label: 'Cor da pasta…', icon: dot(folderColor(name)), action: () => bs.showMenu(e, FOLDER_COLORS.map(([label, c], k) => ({ label: ((A.folderColors[name] || (k === 0 && !A.folderColors[name] && folderColor(name) === c ? c : '')) === c ? '✓ ' : '') + label, icon: dot(c), action: guard(async () => {
+      await post('automator/folders', { action: 'color', name, color: c });
+      A.folderColors[name] = c;
+      paintList();
+    }) })), 'Cor de "' + leafOf(name) + '"') },
+    { label: 'Renomear…', action: guard(async () => {
+      const typed = await askText('Renomear a pasta', 'Os fluxos e as subpastas continuam dentro dela.', 'Nome da pasta', leafOf(name));
+      if (typed) await repathFolder(name, (up ? up + '/' : '') + typed);
+    }) },
+    { label: 'Exportar a pasta…', action: () => exportFlows(name) },
+    '-',
+    { label: 'Excluir a pasta…', icon: IC.trash, action: guard(async () => {
+      if (inside.length || subs.length) {
+        const what = [inside.length ? (inside.length === 1 ? 'O fluxo de dentro vai' : 'Os ' + inside.length + ' fluxos de dentro vão') + (up ? ` para "${pathLabel(up)}"` : ' para fora de pasta') + '. Nenhum fluxo é apagado.' : '', subs.length ? (subs.length === 1 ? 'A subpasta dela também sai.' : 'As ' + subs.length + ' subpastas dela também saem.') : ''].filter(Boolean).join(' ');
+        if (!(await ask(`Excluir a pasta "${leafOf(name)}"?`, what, [{ label: 'Cancelar', value: false }, { label: 'Excluir a pasta', value: true, cls: 'primary' }]))) return;
+      }
+      A.folders = await post('automator/folders', { action: 'delete', name });
+      for (const g of [...folds]) if (within(name, g)) folds.delete(g);
+      keepFolds();
+      for (const k of Object.keys(A.folderColors)) if (within(name, k)) delete A.folderColors[k];
+      if (A.flow?.folder && within(name, A.flow.folder)) A.flow.folder = up;
+      await refreshFlows();
+    }) },
+  ], pathLabel(name));
+}
 function paintList() {
   if (!R.list) return;
   const q = R.search.value.trim().toLowerCase();
-  const items = A.flows.filter(f => !q || f.name.toLowerCase().includes(q));
+  const clearMarks = () => { R.list.querySelectorAll('.drop, .drop-before, .drop-after').forEach(x => x.classList.remove('drop', 'drop-before', 'drop-after')); R.list.classList.remove('drop'); };
+  // alvo que recebe um fluxo ou uma pasta inteiros (o miolo de uma pasta, a seção "Sem pasta", o espaço livre)
+  const drop = (target, folder) => {
+    target.ondragover = (e) => { if (!A.dragFlow && !(A.dragFolder && !within(A.dragFolder, folder))) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; target.classList.add('drop'); };
+    target.ondragleave = () => target.classList.remove('drop');
+    target.ondrop = (e) => {
+      e.preventDefault(); e.stopPropagation(); target.classList.remove('drop');
+      if (A.dragFolder) { const from = A.dragFolder; A.dragFolder = null; if (parentOf(from) !== folder) moveFolder(from, folder); return; }
+      const id = A.dragFlow; A.dragFlow = null; const f = A.flows.find(x => x.id === id); if (f && (f.folder || '') !== folder) moveFlow(id, folder);
+    };
+  };
+  const row = (f) => {
+    const cur = f === A.flow || (f.id && f.id === A.flow?.id), running = cur && isRunning();
+    const state = !f.id ? 'rascunho, ainda não salvo' : f.active && f.next_run ? 'agenda · ' + fmtWhen(f.next_run) : hasSchedule(f) ? (f.active ? 'ligado' : 'desligado') : 'manual';
+    // na busca a lista é corrida, então a pasta aparece ao lado do estado
+    const meta = q && f.folder ? pathLabel(f.folder) + ' · ' + state : state;
+    const tone = running ? '.run' : !f.id ? '.draft' : f.active ? '.live' : '';
+    const b = el('button.am-flow' + (cur ? '.current' : ''), { type: 'button', draggable: !!f.id, onclick: () => f.id && pick(A.flows.find(x => x.id === f.id)), oncontextmenu: (e) => { e.preventDefault(); if (f.id) flowMenu(e, A.flows.find(x => x.id === f.id) || f); } },
+      el('i.am-fdot' + tone, { title: running ? 'Executando' : f.active ? 'Ligado: roda sozinho' : '' }),
+      el('span.am-ftx', el('span.am-fname', el('span', f.name || 'Fluxo sem nome'), f.locked && el('span.am-flock', { html: IC.lock, title: 'Trancado: só visualização' }), el('i.am-fdirty', { hidden: !(cur && isDirty()), title: 'Alterações não salvas' })), el('span.am-fmeta' + (f.active ? '.live' : ''), meta)));
+    b.ondragstart = (e) => { e.stopPropagation(); A.dragFlow = f.id; A.dragFolder = null; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', f.name || ''); b.classList.add('dragging'); };
+    b.ondragend = () => { A.dragFlow = null; b.classList.remove('dragging'); clearMarks(); };
+    // soltar sobre outro fluxo: fica antes ou depois dele (metade de cima ou de baixo), na pasta dele
+    if (f.id) {
+      const half = (e) => { const r = b.getBoundingClientRect(); return e.clientY < r.top + r.height / 2 ? 'before' : 'after'; };
+      b.ondragover = (e) => { if (!A.dragFlow || A.dragFlow === f.id) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; const h = half(e); b.classList.toggle('drop-before', h === 'before'); b.classList.toggle('drop-after', h === 'after'); };
+      b.ondragleave = () => b.classList.remove('drop-before', 'drop-after');
+      b.ondrop = (e) => { if (!A.dragFlow || A.dragFlow === f.id) return; e.preventDefault(); e.stopPropagation(); const h = half(e), id = A.dragFlow; A.dragFlow = null; b.classList.remove('drop-before', 'drop-after'); moveFlow(id, f.folder || '', { [h]: f.id }); };
+    }
+    return b;
+  };
   const draft = A.flow && !A.flow.id ? [A.flow] : [];
-  R.list.replaceChildren(...[...draft, ...items].map(f => {
-    const cur = f === A.flow || (f.id && f.id === A.flow?.id);
-    const meta = !f.id ? 'rascunho, ainda não salvo' : f.active && f.next_run ? 'agenda · ' + fmtWhen(f.next_run) : hasSchedule(f) ? (f.active ? 'ligado' : 'desligado') : 'manual';
-    return el('button.am-flow' + (cur ? '.current' : ''), { type: 'button', onclick: () => f.id && pick(A.flows.find(x => x.id === f.id)), oncontextmenu: (e) => { e.preventDefault(); if (f.id) flowMenu(e, A.flows.find(x => x.id === f.id) || f); } },
-      el('span.am-fname', el('span', f.name || 'Fluxo sem nome'), f.locked && el('span.am-flock', { html: IC.lock, title: 'Trancado: só visualização' }), el('i.am-fdirty', { hidden: !(cur && isDirty()), title: 'Alterações não salvas' })), el('span.am-fmeta' + (f.active ? '.live' : ''), meta));
-  }));
-  if (!R.list.childElementCount) R.list.append(el('p.am-hint', q ? 'Nenhum fluxo com esse nome.' : 'Nenhum fluxo ainda.'));
+  if (q) {
+    const hits = [...draft, ...A.flows].filter(f => (f.name || '').toLowerCase().includes(q) || (f.folder || '').toLowerCase().includes(q));
+    R.list.replaceChildren(...hits.map(row));
+    if (!hits.length) R.list.append(el('p.am-hint', 'Nenhum fluxo ou pasta com esse nome.'));
+    return;
+  }
+  const all = [...draft, ...A.flows];
+  const isCur = (f) => f === A.flow || (f.id && f.id === A.flow?.id);
+  const folder = (name) => {
+    const own = all.filter(f => f.folder === name), total = all.filter(f => within(name, f.folder || '')).length, subs = kidsOf(name);
+    const shut = folds.has(name), hasCur = all.some(f => isCur(f) && within(name, f.folder || ''));
+    const act = (title, icon, fn) => el('span.am-fd-act', { role: 'button', tabIndex: -1, title, html: icon, onclick: (e) => { e.stopPropagation(); fn(e); } });
+    const head = el('button.am-folder' + (shut ? '' : '.open') + (shut && hasCur ? '.has-cur' : ''), { type: 'button', draggable: true, title: shut ? 'Abrir a pasta' : 'Fechar a pasta', 'aria-expanded': String(!shut),
+      onclick: () => { shut ? folds.delete(name) : folds.add(name); keepFolds(); paintList(); }, oncontextmenu: (e) => { e.preventDefault(); folderMenu(e, name); } },
+      el('span.am-chev', { html: IC.chev }), el('span.am-fd-ic', { html: IC.folder }), el('span.am-fd-name', leafOf(name)), el('small', String(total)),
+      el('span.am-fd-acts', act('Novo fluxo nesta pasta', IC.plus, () => { folds.delete(name); keepFolds(); create(() => ({ ...blank(), folder: name })); }), act('Subpasta, cor, mover, renomear, excluir', IC.more, (e) => folderMenu(e, name))));
+    // uma pasta recebe um fluxo (entra nela) e outra pasta: no meio entra nela; nas bordas, fica antes ou depois
+    const zone = (e) => { const r = head.getBoundingClientRect(), y = (e.clientY - r.top) / r.height; return y < 0.28 ? 'before' : y > 0.72 ? 'after' : 'in'; };
+    const mark = (z) => { head.classList.toggle('drop-before', z === 'before'); head.classList.toggle('drop-after', z === 'after'); head.classList.toggle('drop', z === 'in'); };
+    head.ondragstart = (e) => { e.stopPropagation(); A.dragFolder = name; A.dragFlow = null; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', leafOf(name)); head.classList.add('dragging'); };
+    head.ondragend = () => { A.dragFolder = null; head.classList.remove('dragging'); clearMarks(); };
+    head.ondragover = (e) => {
+      if (A.dragFlow) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; return mark('in'); }
+      if (!A.dragFolder || within(A.dragFolder, name)) return;
+      e.preventDefault(); e.stopPropagation(); mark(zone(e));
+    };
+    head.ondragleave = () => mark('');
+    head.ondrop = guard(async (e) => {
+      e.preventDefault(); e.stopPropagation(); mark('');
+      if (A.dragFlow) { const id = A.dragFlow; A.dragFlow = null; const f = A.flows.find(x => x.id === id); if (f && (f.folder || '') !== name) moveFlow(id, name); return; }
+      const from = A.dragFolder, z = zone(e); A.dragFolder = null;
+      if (!from || within(from, name)) return;
+      if (z === 'in') return moveFolder(from, name);
+      // ao lado desta: mesma pasta de cima que ela, na posição escolhida
+      const up = parentOf(name), moved = (up ? up + '/' : '') + leafOf(from);
+      if (parentOf(from) !== up) await repathFolder(from, moved);
+      const l = A.folders.filter(x => x !== moved); l.splice(l.indexOf(name) + (z === 'after' ? 1 : 0), 0, moved); orderFolders(l);
+    });
+    const group = el('div.am-fgroup' + (shut ? '' : '.open'), { style: { '--fd': folderColor(name) } }, head);
+    if (!shut) {
+      const kids = el('div.am-fkids', {}, subs.length || own.length ? [...subs.map(folder), ...own.map(row)] : [el('p.am-folder-empty', 'Vazia. Arraste um fluxo ou uma pasta para cá.')]);
+      drop(kids, name);
+      group.append(kids);
+    }
+    return group;
+  };
+  const out = kidsOf('').map(folder);
+  const loose = all.filter(f => !f.folder || !A.folders.includes(f.folder));
+  if (A.folders.length && (loose.length || A.flows.length)) {
+    const label = el('div.am-loose', el('span', 'Sem pasta'), el('small', String(loose.length)));
+    drop(label, '');
+    out.push(label);
+  }
+  out.push(...loose.map(row));
+  R.list.replaceChildren(...out);
+  // soltar no espaço livre da lista tira o fluxo (ou a pasta) de dentro das pastas
+  drop(R.list, '');
+  if (!R.list.childElementCount) R.list.append(el('div.am-list-empty', el('span', { html: IC.app }), el('b', 'Nenhum fluxo ainda'), el('small', 'Crie um em "Novo fluxo", comece de um modelo ou peça à IA.')));
 }
 
 // ---------- credenciais do Automator: senhas e tokens que os fluxos usam como {{cred:nome}} ----------
@@ -1179,7 +1505,7 @@ function takeCreds(d) { A.creds = d.entries || []; CR.log = d.audit || []; CR.fi
 async function loadCreds() { try { takeCreds(await bs.api('automator/creds', {}, { quiet: true })); } catch { /* fica a lista que já tinha */ } }
 /** Abre a janela do BlueScreen (fora da página) para digitar o usuário e a senha ou token. */
 async function credEnter(name, label) { takeCreds(await post('automator/creds', { action: 'enter', name, ...(label != null ? { label } : {}) })); }
-const credSlug = (t) => t.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const credSlug = (t) => t.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 const credAgo = (t) => (bs.ago ? bs.ago(t) : '') || 'agora';
 function credCard(c) {
   const flows = c.flows || [], ref = (t) => `<button type="button" class="vt-chip am-cr-copy" data-copy="${esc(t)}" title="Copiar para colar num campo">${esc(t)}</button>`;
@@ -1247,26 +1573,69 @@ function credsDialog(keep) {
   $('#amCrName').onkeydown = (e) => { if (e.key === 'Enter') $('#amCrAdd').click(); };
 }
 
-// ---------- IA: quem escreve, e o que ela deixou para conferir ----------
-const WHO_KEY = 'bs.automator.aiWho';
+// ---------- IA: agente, modelo e esforço; a espera com etapa, tempo e cancelar ----------
+const WHO_KEY = 'bs.automator.ai';
+const whoSaved = () => { try { const v = JSON.parse(localStorage.getItem(WHO_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
 function whoHtml(id) {
-  let last = ''; try { last = localStorage.getItem(WHO_KEY) || ''; } catch { /* sem armazenamento: usa o padrão */ }
-  const [who, model] = last.split('|');
+  const saved = whoSaved();
   const opts = [...(spec('agent.cli')?.fields.find(f => f.name === 'provider')?.options || []).map(o => [o.value, o.label]), ['openrouter', 'OpenRouter']];
-  const cur = opts.some(o => o[0] === who) ? who : opts.some(o => o[0] === 'claude') ? 'claude' : opts[0][0];
-  return `<label class="fld">Quem escreve<select id="${id}Who">${opts.map(o => `<option value="${esc(o[0])}"${o[0] === cur ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label>
-    <label class="fld" id="${id}ModelBox"${cur === 'openrouter' ? '' : ' hidden'}>Modelo do OpenRouter<input id="${id}Model" placeholder="provedor/modelo" spellcheck="false" value="${esc(model || '')}"></label>`;
+  const cur = opts.some(o => o[0] === saved.last) ? saved.last : opts.some(o => o[0] === 'claude') ? 'claude' : opts[0][0];
+  const efforts = spec('agent.cli')?.fields.find(f => f.name === 'effort')?.options || [];
+  return `<div class="am-who" id="${id}Who">
+    <label class="fld">Agente<select data-w="provider">${opts.map(o => `<option value="${esc(o[0])}"${o[0] === cur ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label>
+    <label class="fld">Modelo<input data-w="model" list="${id}Models" spellcheck="false" autocomplete="off"><datalist id="${id}Models"></datalist></label>
+    <label class="fld" data-w="effortBox">Esforço<select data-w="effort">${efforts.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select></label>
+    <button type="button" class="am-link am-who-cfg" title="Programas, modelo e esforço padrão de cada agente">Agentes…</button></div>`;
 }
-/** Liga o seletor de `whoHtml`; devolve a função que lê a escolha (e reclama se faltar o modelo). */
+/** Liga os campos de `whoHtml`; devolve a função que lê a escolha (e reclama se faltar o modelo do OpenRouter). */
 function whoBind(box, id) {
-  const $ = (q) => box.querySelector(q);
-  $(`#${id}Who`).onchange = (e) => { $(`#${id}ModelBox`).hidden = e.target.value !== 'openrouter'; };
-  return () => {
-    const provider = $(`#${id}Who`).value, model = $(`#${id}Model`).value.trim();
-    if (provider === 'openrouter' && !model) { $(`#${id}Model`).focus(); throw new Error('informe o modelo do OpenRouter.'); }
-    try { localStorage.setItem(WHO_KEY, provider + '|' + model); } catch { /* só não lembra da próxima vez */ }
-    return { provider, model, cwd: bs.S.project?.path || '' };
+  const root = box.querySelector(`#${id}Who`), $ = (k) => root.querySelector(`[data-w=${k}]`), saved = whoSaved();
+  let clis = [];
+  const hints = () => {
+    const p = $('provider').value, cli = clis.find(c => c.id === p), or = p === 'openrouter';
+    $('model').placeholder = or ? 'provedor/modelo' : cli?.model ? `o do agente: ${cli.model}` : 'o do agente';
+    $('effortBox').hidden = or;
+    const first = $('effort').options[0]; if (first) first.textContent = cli?.effort ? `O do agente (${cli.effort})` : 'O do agente';
+    root.querySelector('datalist').innerHTML = ((cli?.kind || p) === 'claude' ? ['opus', 'sonnet', 'haiku'] : []).map(m => `<option value="${m}">`).join('');
   };
+  const load = () => { const mine = saved[$('provider').value] || {}; $('model').value = mine.model || ''; $('effort').value = mine.effort || ''; hints(); };
+  $('provider').onchange = load; load();
+  root.querySelector('.am-who-cfg').onclick = () => bs.aiClis.open($('provider').value === 'openrouter' ? undefined : $('provider').value);
+  bs.api('agents/clis', {}, { quiet: true }).then(l => { clis = Array.isArray(l) ? l : []; hints(); }).catch(() => {});
+  return () => {
+    const provider = $('provider').value, model = $('model').value.trim(), effort = provider === 'openrouter' ? '' : $('effort').value;
+    if (provider === 'openrouter' && !model) { $('model').focus(); throw new Error('informe o modelo do OpenRouter, no formato provedor/modelo.'); }
+    try { localStorage.setItem(WHO_KEY, JSON.stringify({ ...saved, last: provider, [provider]: { model, effort } })); } catch { /* só não lembra da próxima vez */ }
+    return { provider, model, effort, cwd: bs.S.project?.path || '' };
+  };
+}
+const fmtClock = (ms) => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+/** Manda o pedido à IA e troca o miolo da janela pela espera: a etapa vem do núcleo, o tempo corre e dá para
+    cancelar (o agente é encerrado). Fechar a janela também cancela. Devolve a resposta, ou lança o erro. */
+async function aiRun(box, route, body, steps) {
+  const job = uid('j'), began = Date.now(), scroll = box.querySelector('.dlg-scroll');
+  const stage = el('b.am-wait-stage', 'Preparando o pedido'), clock = el('span.am-wait-time', '0:00');
+  const list = el('ol.am-wait-steps', {}, steps.map((t, i) => el('li' + (i === 0 ? '.on' : ''), el('i'), el('span', t))));
+  const stop = el('button.chip', { type: 'button' }, 'Cancelar');
+  const wait = el('div.am-wait', { role: 'status', 'aria-live': 'polite' }, el('div.am-wait-art', el('i'), el('i'), el('i')), stage, clock, list, stop, el('small.am-hint', 'Pode levar alguns minutos. Esforço mais alto demora mais.'));
+  let cancelled = false;
+  const cancel = () => { if (cancelled) return; cancelled = true; stop.disabled = true; stage.textContent = 'Cancelando…'; post('automator/generate', { action: 'cancel', job }).catch(() => {}); };
+  stop.onclick = cancel;
+  scroll.append(wait); box.classList.add('am-busy');
+  const timer = setInterval(async () => {
+    clock.textContent = fmtClock(Date.now() - began);
+    if (box.hidden) return cancel();
+    if (cancelled) return;
+    try {
+      const st = await bs.api('automator/generate', { job }, { quiet: true });
+      if (!st.running || cancelled) return;
+      stage.textContent = st.stage;
+      [...list.children].forEach((li, i) => { li.classList.toggle('done', i < st.step); li.classList.toggle('on', i === st.step); });
+    } catch { /* a próxima volta tenta de novo */ }
+  }, 1000);
+  try { return await post(route, { ...body, job }); }
+  catch (e) { throw cancelled ? new Error('cancelado') : e; }
+  finally { clearInterval(timer); wait.remove(); box.classList.remove('am-busy'); }
 }
 /** O que aconteceu com as senhas do pedido, em frases: [tom, texto]. */
 function secretLines(res) {
@@ -1305,55 +1674,84 @@ function applyAi(flow) {
   renderAll(); changed(true);
   if (added) requestAnimationFrame(() => { arrange(false); fit(); });
 }
+const AI_NOTE = `<p class="am-gen-note">${IC.key}<span>Pode escrever senha ou token no pedido, de preferência entre aspas. O valor vai para o cofre do Automator e a IA recebe só o nome.</span></p>`;
+const AI_STEPS = ['A IA escreve o fluxo', 'O BlueScreen confere', 'A IA corrige o que foi achado', 'Credenciais e resultado'];
+/** Criar com IA: um fluxo novo a partir de uma descrição. */
 function generate() {
-  const canEdit = !!A.flow && A.flow.nodes.length > 1 && !flowLocked();
-  const EX = ['Todo dia útil às 9h, rodar git pull na pasta do projeto e me avisar se der erro.', 'Quando chegar um PDF na pasta Downloads, mover para Documentos\\Notas e mostrar uma notificação.', 'A cada 10 minutos, testar se https://meusite.com.br responde em menos de 2 segundos e me avisar quando falhar.'];
-  const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>Fluxo com IA</h3><p>Descreva o que você quer. O resultado abre no quadro para conferir antes de salvar.</p></div></div>
-    ${canEdit ? `<div class="am-seg" id="amGenMode"><button type="button" data-m="edit" class="on">Ajustar o fluxo aberto</button><button type="button" data-m="new">Criar um fluxo novo</button></div>` : ''}
-    <label class="fld"><span id="amGenLabel"></span><textarea id="amGenReq" rows="5"></textarea></label>
-    <div class="am-ex" id="amGenEx">${EX.map((t, i) => `<button type="button" data-ex="${i}" title="Usar este exemplo">${esc(t)}</button>`).join('')}</div>
-    <p class="am-gen-note">${IC.key}<span>Pode escrever senha ou token no pedido. O valor vai para Credenciais e a IA recebe só o nome.</span></p>
+  const EX = [
+    ['Rotina com horário', 'Todo dia útil às 9h, rodar git pull na pasta do projeto e me avisar se der erro.'],
+    ['Pasta vigiada', 'Quando chegar um PDF na pasta Downloads, mover para Documentos\\Notas e mostrar uma notificação.'],
+    ['Site no ar', 'A cada 10 minutos, testar se https://meusite.com.br responde em menos de 2 segundos e me avisar quando falhar.'],
+    ['Login e leitura', 'Entrar em https://portal.exemplo.com com o usuário ana e a senha "troque-aqui", ler o saldo da tela e me mostrar.'],
+  ];
+  const html = `<div class="dlg-hd"><div class="dlg-ic am-ai-ic">${IC.spark}</div><div><h3>Criar fluxo com IA</h3><p>Descreva a automação com as suas palavras. A IA monta, o BlueScreen confere e o resultado abre no quadro para você revisar antes de salvar.</p></div></div>
+    <label class="fld">O que o fluxo deve fazer<textarea id="amGenReq" rows="5" placeholder="Conte quando o fluxo começa, o que ele faz e o que você quer ver no final."></textarea></label>
+    <div class="am-ex-h">Ideias para começar</div>
+    <div class="am-ex" id="amGenEx">${EX.map((x, i) => `<button type="button" data-ex="${i}"><b>${esc(x[0])}</b><span>${esc(x[1])}</span></button>`).join('')}</div>
     ${whoHtml('amGen')}
+    ${AI_NOTE}
     <p class="am-gen-st" id="amGenSt" aria-live="polite"></p>
-    <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amGenGo"></button></div>`;
-  dialog('amGen', html, (box) => {
-    const $ = (q) => box.querySelector(q), go = $('#amGenGo'), st = $('#amGenSt'), req = $('#amGenReq'), who = whoBind(box, 'amGen');
-    let mode = canEdit ? 'edit' : 'new';
-    const paint = () => {
-      box.querySelectorAll('#amGenMode button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
-      $('#amGenLabel').textContent = mode === 'edit' ? `O que mudar em "${A.flow.name || 'este fluxo'}"` : 'O que o fluxo deve fazer';
-      req.placeholder = mode === 'edit' ? 'Depois de baixar, mandar também uma mensagem no Slack. E trocar o horário para 8h.' : 'Conte quando o fluxo começa, o que ele faz e o que você quer ver no final.';
-      $('#amGenEx').hidden = mode === 'edit';
-      go.textContent = mode === 'edit' ? 'Ajustar o fluxo' : 'Gerar proposta';
-    };
-    box.querySelectorAll('#amGenMode button').forEach(b => b.onclick = () => { mode = b.dataset.m; paint(); req.focus(); });
-    box.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => { req.value = EX[+b.dataset.ex]; req.focus(); });
-    paint(); req.focus();
-    go.onclick = async () => {
-      const request = req.value.trim();
-      if (!request) { st.textContent = mode === 'edit' ? 'Diga o que mudar no fluxo.' : 'Descreva o que o fluxo deve fazer.'; return req.focus(); }
-      let body;
-      try { body = { request, ...who() }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
-      if (mode === 'edit') body.flow = { name: A.flow.name, description: A.flow.description || '', nodes: A.flow.nodes, edges: A.flow.edges };
-      const target = mode === 'edit' ? A.flow : null;
-      go.disabled = true; st.textContent = (mode === 'edit' ? 'Ajustando o fluxo' : 'Montando a proposta') + '… a IA monta, o BlueScreen confere e ela corrige. Pode levar alguns minutos.';
-      try {
-        const res = await post('automator/generate', body);
-        loadCreds();
-        const flow = { ...res }; for (const k of ['warnings', 'notes', 'secrets', 'missing_creds', 'rounds']) delete flow[k];
-        box.hidden = true;
-        if (mode === 'edit') {
-          if (A.flow !== target) return bs.toast('O fluxo aberto mudou enquanto a IA trabalhava; o ajuste não foi aplicado.', 'err');
-          applyAi(flow);
-        } else {
-          if (!(await leave())) return;
-          open(flow, true); requestAnimationFrame(() => { arrange(false); fit(); });
-        }
-        if (!aiDone(mode === 'edit' ? 'Fluxo ajustado' : 'Proposta pronta', res)) bs.toast(mode === 'edit' ? 'Fluxo ajustado e conferido. Ctrl+Z desfaz.' : 'Proposta pronta e conferida. Veja os nós e salve.', 'ok');
-        else if (mode === 'edit') bs.toast('Fluxo ajustado. Ctrl+Z desfaz.', 'ok');
-      } catch (e) { st.textContent = 'Não deu: ' + e.message; } finally { go.disabled = false; }
-    };
-  });
+    <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amGenGo">${IC.spark}<span>Gerar fluxo</span></button></div>`;
+  const box = dialog('amGen', html, () => {});
+  box.querySelector('.dlg-box').classList.add('am-ai-box');
+  const $ = (q) => box.querySelector(q), go = $('#amGenGo'), st = $('#amGenSt'), req = $('#amGenReq'), who = whoBind(box, 'amGen');
+  box.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => { req.value = EX[+b.dataset.ex][1]; req.focus(); });
+  req.focus();
+  go.onclick = async () => {
+    const request = req.value.trim();
+    st.classList.remove('bad');
+    if (!request) { st.textContent = 'Descreva o que o fluxo deve fazer.'; return req.focus(); }
+    let body;
+    try { body = { request, ...who() }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
+    st.textContent = '';
+    try {
+      const res = await aiRun(box, 'automator/generate', body, AI_STEPS);
+      loadCreds();
+      const flow = { ...res }; for (const k of ['warnings', 'notes', 'secrets', 'missing_creds', 'rounds']) delete flow[k];
+      box.hidden = true;
+      if (!(await leave())) return;
+      open(flow, true); requestAnimationFrame(() => { arrange(false); fit(); });
+      if (!aiDone('Fluxo criado', res)) bs.toast('Fluxo criado e conferido. Veja os nós e salve.', 'ok');
+    } catch (e) { st.textContent = e.message === 'cancelado' ? 'Cancelado. Nada foi criado.' : 'Não deu: ' + e.message; st.classList.toggle('bad', e.message !== 'cancelado'); }
+  };
+}
+/** Ajustar com IA: muda o fluxo que está aberto. Fica na barra do fluxo, separado de criar um novo. */
+function adjustAi() {
+  if (!A.flow) return;
+  if (flowLocked()) return denied();
+  const f = A.flow, trig = f.nodes.find(n => n.type.startsWith('trigger.'));
+  const QUICK = ['Avisar quando der erro', 'Rodar todo dia às 8h', 'Guardar o resultado num arquivo', 'Dar nomes claros aos passos'];
+  const html = `<div class="dlg-hd"><div class="dlg-ic am-ai-ic">${IC.spark}</div><div><h3>Ajustar com IA</h3><p>Diga o que mudar neste fluxo. Os nós que não mudam ficam onde estão, nó trancado não é alterado e Ctrl+Z desfaz o ajuste inteiro.</p></div></div>
+    <div class="am-ai-flow"><span class="am-ai-flow-ic">${IC.app}</span><div><b>${esc(f.name || 'Fluxo sem nome')}</b><small>${f.nodes.length} ${f.nodes.length === 1 ? 'nó' : 'nós'}${trig ? ' · começa por ' + esc(titleOf(trig)) : ' · sem gatilho'}${isDirty() ? ' · com alterações não salvas' : ''}</small></div></div>
+    <label class="fld">O que mudar<textarea id="amAdjReq" rows="4" placeholder="Depois de baixar, mandar também uma mensagem no Slack. E trocar o horário para 8h."></textarea></label>
+    <div class="am-quick" id="amAdjQuick">${QUICK.map(t => `<button type="button">${esc(t)}</button>`).join('')}</div>
+    ${whoHtml('amAdj')}
+    ${AI_NOTE}
+    <p class="am-gen-st" id="amAdjSt" aria-live="polite"></p>
+    <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="amAdjGo">${IC.spark}<span>Ajustar fluxo</span></button></div>`;
+  const box = dialog('amAdj', html, () => {});
+  box.querySelector('.dlg-box').classList.add('am-ai-box');
+  const $ = (q) => box.querySelector(q), go = $('#amAdjGo'), st = $('#amAdjSt'), req = $('#amAdjReq'), who = whoBind(box, 'amAdj');
+  box.querySelectorAll('#amAdjQuick button').forEach(b => b.onclick = () => { const t = req.value.trim(); req.value = (t ? t.replace(/[.;]?$/, '. ') : '') + b.textContent + '.'; req.focus(); });
+  req.focus();
+  go.onclick = async () => {
+    const request = req.value.trim();
+    st.classList.remove('bad');
+    if (!request) { st.textContent = 'Diga o que mudar no fluxo.'; return req.focus(); }
+    let body;
+    try { body = { request, ...who(), flow: { name: f.name, description: f.description || '', nodes: f.nodes, edges: f.edges } }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
+    st.textContent = '';
+    try {
+      const res = await aiRun(box, 'automator/generate', body, ['A IA altera o fluxo', ...AI_STEPS.slice(1)]);
+      loadCreds();
+      const flow = { ...res }; for (const k of ['warnings', 'notes', 'secrets', 'missing_creds', 'rounds']) delete flow[k];
+      box.hidden = true;
+      if (A.flow !== f) return bs.toast('O fluxo aberto mudou enquanto a IA trabalhava; o ajuste não foi aplicado.', 'err');
+      applyAi(flow);
+      aiDone('Fluxo ajustado', res);
+      bs.toast('Fluxo ajustado. Ctrl+Z desfaz.', 'ok');
+    } catch (e) { st.textContent = e.message === 'cancelado' ? 'Cancelado. O fluxo ficou como estava.' : 'Não deu: ' + e.message; st.classList.toggle('bad', e.message !== 'cancelado'); }
+  };
 }
 
 // ---------- script com IA: escreve ou altera o script do nó e mostra a mudança antes de aplicar ----------
@@ -1388,9 +1786,9 @@ function scriptAi(n, f, input, set) {
       if (!request) { st.textContent = 'Escreva o pedido.'; return req.focus(); }
       let body;
       try { body = { type: n.type, field: f.name, script: proposal ?? original, request, input: incoming(n) ?? null, error: $('#amScErr')?.checked ? lastErr : '', ...who() }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
-      go.disabled = use.disabled = true; st.textContent = 'Escrevendo… pode levar alguns minutos.';
+      go.disabled = use.disabled = true; st.textContent = '';
       try {
-        const res = await post('automator/script', body);
+        const res = await aiRun(box, 'automator/script', body, ['A IA escreve o script', 'O BlueScreen confere']);
         loadCreds();
         proposal = res.script;
         const diff = lineDiff(original, proposal), plus = diff.filter(d => d[0] === '+').length, minus = diff.filter(d => d[0] === '-').length;
@@ -1403,7 +1801,7 @@ function scriptAi(n, f, input, set) {
         $('#amScLabel').textContent = 'Quer mudar mais alguma coisa?'; req.value = ''; req.placeholder = 'Opcional: o que ajustar na proposta abaixo.';
         const e = $('#amScErr'); if (e) { e.checked = false; e.closest('label').hidden = true; }
         st.textContent = '';
-      } catch (e) { st.textContent = 'Não deu: ' + e.message; } finally { go.disabled = use.disabled = false; }
+      } catch (e) { st.textContent = e.message === 'cancelado' ? 'Cancelado.' : 'Não deu: ' + e.message; } finally { go.disabled = use.disabled = false; }
     };
     use.onclick = () => {
       if (proposal == null || !node(n.id)) return;
@@ -1420,7 +1818,7 @@ function mount(pane) {
     <aside class="am-side">
       <div class="am-side-hd"><button class="chip primary am-grow" data-a="new" type="button">${IC.plus}<span>Novo fluxo</span></button></div>
       <div class="am-side-row"><button class="chip am-grow" data-a="tpl" type="button">Modelos</button><button class="chip am-grow" data-a="ai" type="button">${IC.spark}<span>Criar com IA</span></button></div>
-      <input class="am-search" type="search" placeholder="Buscar fluxo" aria-label="Buscar fluxo" spellcheck="false">
+      <div class="am-side-row am-search-row"><input class="am-search" type="search" placeholder="Buscar fluxo ou pasta" aria-label="Buscar fluxo ou pasta" spellcheck="false"><button class="icon-btn" data-a="folder" type="button" title="Nova pasta">${IC.folderPlus}</button><button class="icon-btn" data-a="listmenu" type="button" title="Organizar a lista: recolher, expandir, ordenar">${IC.list}</button></div>
       <div class="am-list"></div>
       <button class="am-creds-btn" data-a="creds" type="button" title="Senhas e tokens que os fluxos usam sem mostrar">${IC.key}<span>Credenciais</span><small></small></button>
     </aside>
@@ -1430,6 +1828,7 @@ function mount(pane) {
         <i class="am-dirty" hidden title="Alterações não salvas"></i>
         <span class="am-sp"></span>
         <label class="am-sched" hidden title="Ligado, o fluxo roda sozinho (na hora marcada, ao abrir o BlueScreen, quando o arquivo mudar ou quando chamam o endpoint) enquanto o BlueScreen estiver aberto, inclusive na bandeja"><input type="checkbox" class="am-active"><span class="am-switch"></span><span>Ligado</span><small class="am-next"></small></label>
+        <button class="chip am-aibtn" data-a="aiedit" type="button" title="Dizer à IA o que mudar neste fluxo">${IC.spark}<span>Ajustar com IA</span></button>
         <button class="icon-btn am-lockbtn" data-a="lock" type="button"></button><span class="am-group"><button class="icon-btn" data-a="undo" type="button" title="Desfazer (Ctrl+Z)">${IC.undo}</button><button class="icon-btn" data-a="redo" type="button" title="Refazer (Ctrl+Shift+Z)">${IC.redo}</button><button class="icon-btn" data-a="tidy" type="button" title="Organizar em colunas">${IC.tidy}</button><button class="icon-btn" data-a="more" type="button" title="Importar, exportar, excluir">${IC.more}</button></span>
         <button class="chip am-save" data-a="save" type="button" title="Salvar (Ctrl+S)">Salvar</button>
         <button class="chip primary am-runbtn" data-a="run" type="button"></button>
@@ -1456,18 +1855,23 @@ function mount(pane) {
   const acts = {
     new: () => create(() => blank()),
     tpl: (e) => bs.showMenu(e, TEMPLATES.filter(t => !t.need || spec(t.need)).map(t => ({ label: t.label, k: t.hint, action: () => create(t.make) }))),
-    ai: generate, creds: () => credsDialog(), save: guard(save), run, lock: () => toggleLock(),
+    ai: generate, aiedit: adjustAi, folder: () => newFolder(), listmenu: listMenu, creds: () => credsDialog(), save: guard(save), run, lock: () => toggleLock(),
     undo: () => travel(A.undo, A.redo), redo: () => travel(A.redo, A.undo),
     tidy: () => { arrange(); fit(); }, fit, zin: () => zoomBy(1.25), zout: () => zoomBy(0.8), z100: () => zoomBy(1 / A.cam.z),
     add: (e) => { const r = e.currentTarget.getBoundingClientRect(); openPicker(r.left, r.bottom + 6, (s) => addNode(s.type)); },
     more: (e) => bs.showMenu(e, [
-      { label: 'Importar fluxo…', action: () => R.file.click() },
+      { label: (A.autoSave ? '✓ ' : '') + 'Salvar sozinho a cada alteração', action: toggleAutoSave },
+      '-',
+      { label: 'Importar fluxo ou fluxos…', action: () => R.file.click() },
+      { label: 'Exportar todos os fluxos…', action: () => exportFlows() },
+      ...(A.flow && !flowLocked() ? [{ label: 'Ajustar com IA…', icon: IC.spark, action: adjustAi }] : []),
       { label: 'Agentes de IA…', icon: IC.spark, action: () => bs.aiClis.open() },
-      ...(A.flow ? [{ label: 'Exportar fluxo', action: exportFlow }, { label: 'Duplicar fluxo', icon: IC.copy, action: () => { const f = clone(A.flow); create(() => ({ ...f, id: '', active: false, next_run: null, name: f.name + ' (cópia)' })); } }, '-', { label: 'Excluir fluxo…', icon: IC.trash, action: guard(() => flowLocked() ? denied() : removeFlow()) }] : [])]),
+      ...(A.flow ? [{ label: 'Exportar fluxo…', action: () => exportFlow() }, { label: 'Duplicar fluxo', icon: IC.copy, action: () => { const f = clone(A.flow); create(() => ({ ...f, id: '', active: false, next_run: null, name: f.name + ' (cópia)' })); } }, '-', { label: 'Excluir fluxo…', icon: IC.trash, action: guard(() => flowLocked() ? denied() : removeFlow()) }] : [])]),
   };
   // a lista de fluxos mora no painel da esquerda da IDE (no lugar do painel de arquivos), fora da aba
   R.side.remove();
   loadCreds();
+  bs.api('automator/settings', {}, { quiet: true }).then(v => { A.keepRuns = v.keep_runs || 100; A.folderColors = v.folder_colors || {}; paintList(); }).catch(() => {});
   const onClick = (e) => {
     const b = e.target.closest('[data-a]');
     if (b && acts[b.dataset.a]) { const r = b.getBoundingClientRect(); acts[b.dataset.a]({ currentTarget: b, target: b, clientX: r.left, clientY: r.bottom + 4, preventDefault() {}, stopPropagation() {} }); return; }

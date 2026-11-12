@@ -1,4 +1,4 @@
-# Automator, Agenda, Conselho de agentes e Biblioteca
+# Automator, Agenda e Biblioteca
 
 Quatro plugins que vêm com o BlueScreen.
 
@@ -41,6 +41,40 @@ O botão direito num fluxo da lista executa, liga ou desliga, renomeia, duplica,
 Sem nenhum nó selecionado, o painel da direita mostra as execuções do fluxo. Abra uma para ver o que cada nó entregou.
 
 A aba do Automator funciona como a de um arquivo: o ponto nela avisa que o fluxo tem alterações, `Ctrl+S` e **Salvar tudo** gravam, e fechar a aba (ou sair do BlueScreen) com alterações pergunta antes. O salvamento automático da IDE não grava fluxos: um fluxo só muda quando você salva.
+
+### Organize a lista em pastas
+
+A lista de fluxos aceita pastas, e a ordem é a que você arrumar.
+
+- **Criar:** o botão de pasta ao lado da busca, ou **Mover para uma pasta… › Nova pasta** no menu do fluxo.
+- **Subpastas:** no menu da pasta, **Nova subpasta…** cria uma dentro dela, e **Mover para dentro de…** leva a pasta inteira (com as subpastas e os fluxos) para dentro de outra, ou para fora de todas. Arrastando: soltar uma pasta no meio de outra põe dentro; soltar na borda de cima ou de baixo deixa ao lado, antes ou depois. Vai até seis níveis. A cor de uma pasta vale para as subpastas que não têm cor própria, e o número ao lado do nome conta os fluxos dela e das subpastas.
+- **Mover:** arraste o fluxo para cima da pasta. Soltar sobre outro fluxo põe antes ou depois dele (a linha azul mostra onde); soltar em **Sem pasta** tira da pasta. O menu do fluxo tem **Mover para cima**, **Mover para baixo** e **Mover para uma pasta…**. Fluxo trancado também muda de pasta.
+- **Pastas:** clique para abrir e fechar. Arraste uma pasta sobre outra para trocar de lugar. Ao passar o mouse aparecem **+** (novo fluxo dentro dela) e **⋯**: mover, cor, renomear, exportar e excluir. Excluir a pasta não apaga fluxo nenhum: eles sobem para a pasta de cima (ou para **Sem pasta**); as subpastas dela saem junto.
+- **Cor:** cada pasta pode ter uma de oito cores, que pinta o ícone e a guia dos fluxos dentro dela.
+- **Organizar** (o botão de linhas ao lado da busca): recolher ou expandir todas, ordenar os fluxos ou as pastas de A a Z, exportar tudo e importar.
+- A bolinha de cada fluxo diz o estado: verde, ligado e rodando sozinho; azul piscando, executando; vazia, manual.
+
+### Exporte e importe vários fluxos
+
+**Exportar todos os fluxos** (em Organizar, ou no menu ⋯ do fluxo) e **Exportar a pasta** (no menu da pasta) abrem a janela **Salvar como** do Windows, para você escolher onde gravar, e gravam um arquivo só, com os fluxos, as pastas (e subpastas), as cores e a ordem. **Exportar** no menu de um fluxo faz o mesmo para ele sozinho. **Importar** aceita esse arquivo ou o de um fluxo só. Os fluxos importados entram desligados, nas pastas em que estavam, e os que você já tem não mudam. Um nó **Chamar fluxo** que apontava para outro fluxo do mesmo arquivo passa a apontar para a cópia importada. As senhas não vão no arquivo: ele leva só os nomes das credenciais (`{{cred:nome}}`), que você guarda de novo no outro PC.
+
+### Salve sozinho
+
+No menu **⋯** da barra do fluxo, **Salvar sozinho a cada alteração** grava o fluxo cerca de um segundo depois de você parar de mexer. O botão passa a mostrar **Salvando…** e **Salvo**. Se o núcleo recusar (um horário de agenda inválido, por exemplo), um aviso aparece uma vez e a gravação volta a ser tentada quando você mexer de novo. Fluxo trancado não é gravado.
+
+### Chame um fluxo dentro de outro
+
+O nó **Chamar fluxo** (categoria Lógica) roda outro fluxo salvo, do começo ao fim, e continua com o resultado dele. Serve para ter um fluxo "Entrar no portal" ou "Avisar o time" pronto e usá-lo em vários outros.
+
+- **Fluxo:** escolha na lista, agrupada pelas pastas. **abrir** leva ao fluxo chamado.
+- **O que entregar a ele:** chega no primeiro nó do fluxo chamado, no lugar do que o gatilho dele entregaria. Lá dentro é o `{{input}}` depois do gatilho. Em branco, o gatilho dele decide.
+- **O que volta:** o que chegou no nó **Resultado** do fluxo chamado ou, se ele não tem esse nó, a saída do último nó que rodou.
+- A execução do fluxo chamado ganha uma entrada própria no histórico dele. Se ele falhar, o fluxo de fora para naquele nó com o motivo. Parar o fluxo de fora para também o de dentro.
+- Um fluxo que acabaria chamando a si mesmo é barrado, e a profundidade vai até oito níveis.
+
+### Execuções: ocultas até você pedir
+
+No painel do fluxo, **Execuções** começa oculta, para a tela ficar leve: com ela oculta o Automator busca só a execução mais recente, que é a que pinta os nós no quadro. **mostrar** traz a lista. Aberta, ela tem **Guardar no máximo N execuções** (de 5 a 1000, somando todos os fluxos; o padrão é 100), que já corta o histórico ao mudar, e **limpar**, que apaga as execuções terminadas do fluxo aberto.
 
 ### Tranque um fluxo ou um nó
 
@@ -196,7 +230,6 @@ Quando a saída de um nó é JSON, o painel dele mostra atalhos em **Última exe
 |---|---|
 | Agente de IA | Roda o Codex, o Claude Code ou outro agente numa pasta. Veja [Agentes de IA](#agentes-de-ia). |
 | OpenRouter | Envia um pedido a um modelo do OpenRouter, com o token do Cofre. |
-| Revisar decisão | Só continua se os agentes escolhidos aprovarem. Precisa do plugin **Conselho de agentes** ligado. |
 
 **Imagem** (png, jpg, bmp e gif)
 
@@ -317,14 +350,14 @@ O nó **Agente de IA** roda um agente de linha de comando numa pasta:
 
 **Tudo, sem perguntar** deixa o agente rodar qualquer comando no seu PC, sem confirmação. Use só com pedidos seus (não com texto vindo de um endpoint ou de um site) e numa pasta que possa ser refeita.
 
-A janela **Agentes de IA** guarda o programa, o modelo e o esforço de cada agente. Ela abre pelo **configurar** ao lado do campo Agente, pelo menu **⋯** do fluxo, pela engrenagem do Conselho de agentes ou pelo **Buscar em tudo** ("Agentes de IA").
+A janela **Agentes de IA** guarda o programa, o modelo e o esforço de cada agente. Ela abre pelo **configurar** ao lado do campo Agente, pelo menu **⋯** do fluxo ou pelo **Buscar em tudo** ("Agentes de IA").
 
 - **Codex** e **Claude Code** sempre existem. Dá para trocar o modelo, o esforço, o programa e acrescentar opções.
 - **+ Novo** cadastra outro programa. Se ele aceita as mesmas opções do Claude Code (o OpenClaude, por exemplo) ou do Codex, escolha isso em **Fala como** e informe só o comando: a IDE passa o pedido, o modelo, o esforço e o modo de leitura do jeito que esse tipo espera.
 - Em **Outro programa**, você escreve os argumentos, um por linha: `{prompt}` vira o pedido, `{model}` o modelo, `{effort}` o esforço e `{access}` o acesso (`read`, `edit` ou `full`). Sem `{prompt}`, o pedido vai pela entrada padrão. A IDE não consegue limitar um programa desses a só leitura.
 - **Testar** grava e faz uma pergunta curta ao agente, para você ver se ele responde.
 
-Os agentes cadastrados aparecem no nó **Agente de IA**, no **Revisar decisão**, no **Criar com IA** e no Conselho de agentes. O esforço vai de mínimo a máximo; cada programa aceita os níveis dele e recusa os outros com a própria mensagem.
+Os agentes cadastrados aparecem no nó **Agente de IA** e nas janelas **Criar com IA**, **Ajustar com IA** e **Script com IA**. O esforço vai de mínimo a máximo; cada programa aceita os níveis dele e recusa os outros com a própria mensagem.
 
 ### Teste e automatize um site
 
@@ -403,11 +436,15 @@ let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
 
 Dá para pedir um nó desses ao **IAMaker** sem sair do Automator: no fim da paleta, **Criar um nó novo com IA** (ou **Criar o nó "…" com IA**, quando a busca não acha nada) abre o IAMaker num plugin novo com o pedido já começado. O guia do IAMaker ensina a IA a escrever o `automator.json`, o programa e a parte de Recebe/Devolve. Quando o plugin fica pronto, o nó aparece na paleta na próxima vez que ela abrir.
 
-O núcleo roda até quatro coisas ao mesmo tempo (fluxos, revisões e propostas de IA). Um disparo automático sem vaga espera na fila; **Parar** tira da fila ou interrompe a execução.
+O núcleo roda até quatro coisas ao mesmo tempo (fluxos e pedidos à IA). Um disparo automático sem vaga espera na fila; **Parar** tira da fila ou interrompe a execução.
 
 ### Crie e ajuste com IA
 
-**Criar com IA**, na lista de fluxos, monta um fluxo a partir de uma frase. Com um fluxo aberto, a mesma janela oferece **Ajustar o fluxo aberto**: você diz o que mudar ("avise também no Slack", "troque o horário para 8h") e a IA devolve o fluxo alterado. Os nós que já existiam ficam onde estavam, nó trancado não muda e `Ctrl+Z` desfaz o ajuste inteiro.
+**Criar com IA**, na lista de fluxos, monta um fluxo novo a partir de uma descrição. A janela traz ideias prontas para começar.
+
+**Ajustar com IA**, na barra do fluxo aberto (e no menu de três pontos), é outra janela: você diz o que mudar ("avise também no Slack", "troque o horário para 8h") e a IA devolve o fluxo alterado. Os nós que já existiam ficam onde estavam, nó trancado não muda e `Ctrl+Z` desfaz o ajuste inteiro.
+
+Nas duas, e no script com IA, você escolhe o **agente**, o **modelo** e o **esforço**. Em branco, valem os do agente (os de **Agentes…**). A escolha fica lembrada por agente. Enquanto a IA trabalha, a janela mostra a etapa em que o pedido está (a IA escreve, o BlueScreen confere, a IA corrige, credenciais e resultado), o tempo corrido e **Cancelar**, que encerra o agente. Fechar a janela também cancela. O agente tem dez minutos para responder.
 
 A IA recebe um guia dos nós escrito para ela (o que cada um faz, o formato que recebe e devolve, as portas, os parâmetros com os valores aceitos e os campos da saída), um exemplo de fluxo bem montado e os nomes das credenciais que já existem. Antes de mostrar o resultado, o BlueScreen confere o fluxo:
 
@@ -491,21 +528,6 @@ Fechar a janela principal esconde o BlueScreen na área de notificação, para a
 
 Janelas abertas com `--doc` continuam fechando normalmente. Nos modos `--web` e `--no-open` não há ícone nem aviso do Windows: os eventos ficam só no log.
 
-## Conselho de agentes
-
-Antes de decidir, os agentes escolhidos (Codex, Claude Code e os que você cadastrou em Agentes de IA) revisam a proposta, cada um sozinho e só com leitura.
-
-- **Foco:** Geral, Segurança, Qualidade e testes, Custo e risco ou Quem usa. Muda o que os revisores olham primeiro.
-- **Aprova quando:** com três ou mais revisores dá para escolher entre todos aprovarem ou a maioria. Com um ou dois, valem todos. Agente que falha conta como não aprovou.
-- **Parecer:** cada agente dá o veredito, o motivo e os pontos que achou, com o tempo que levou. O cartão mostra quantos aprovaram.
-- **Histórico:** em cada revisão, os botões revisam de novo (a proposta volta para o campo, pronta para ajustar), copiam os pareceres ou tiram do histórico. **Limpar** apaga todas.
-
-No Automator, o nó **Revisar decisão** tem o mesmo foco e a mesma regra.
-
-### No IAMaker
-
-A revisão antes de aplicar um plugin é opcional e vem **desligada**. Para ligar, abra as configurações do IAMaker e marque **Revisar com o Conselho de agentes antes de aplicar**; escolha os revisores no campo ao lado. Ligada, cada aplicação espera os revisores e usa a sua conta de cada um. Se eles pedem correções, elas voltam ao agente principal. Se um revisor não responde, o plugin fica sem carregar até você aplicar de novo.
-
 ## Biblioteca de plugins
 
 A Biblioteca mostra em cartões o catálogo dos servidores de plugins, os mesmos da aba **Plugins** (`Alt+7`), com busca e os filtros **Todos**, **Favoritos** e **Instalados**.
@@ -518,7 +540,7 @@ Download, conferência de versão e de hash são os do núcleo. Para hospedar o 
 
 ## Dados e testes
 
-Fluxos, fila, compromissos, execuções e revisões ficam em `~/.bluescreen/automation.json`. O histórico guarda as cem últimas execuções; saídas muito grandes entram cortadas. Depois de uma queda do processo, o que estava rodando aparece como `interrompido`. Os tokens ficam no Cofre; as credenciais do Automator, em `automator-credentials.json`, na mesma pasta. Essas rotas só respondem pelo PC local.
+Fluxos, fila, compromissos e execuções ficam em `~/.bluescreen/automation.json`. O histórico guarda as últimas execuções até o limite que você escolher (cem, de fábrica); saídas muito grandes entram cortadas. Depois de uma queda do processo, o que estava rodando aparece como `interrompido`. Os tokens ficam no Cofre; as credenciais do Automator, em `automator-credentials.json`, na mesma pasta. Essas rotas só respondem pelo PC local.
 
 `BLUESCREEN_AUTOMATION_FILE` aponta outro arquivo de dados (os testes usam uma pasta temporária).
 
@@ -528,7 +550,6 @@ Na pasta `app`:
 cargo test -p bluescreen --offline
 cargo build -p bluescreen --offline
 python tests/automation_api.py
-node tests/iamaker-review.cjs
 ```
 
 A suíte usa programas e servidor MCP simulados: não chama modelos nem gasta tokens.
