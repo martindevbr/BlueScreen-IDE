@@ -29,13 +29,29 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         static WIN: Mutex<Option<std::process::Child>> = Mutex::new(None);
         static ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         use std::sync::atomic::Ordering::Relaxed;
-        if !r.is_post() { return ok(json!({ "focus": ASKED.load(Relaxed) })); }
+        static GOTO: Mutex<String> = Mutex::new(String::new());
+        if !r.is_post() { return ok(json!({ "focus": ASKED.load(Relaxed), "app": std::mem::take(&mut *GOTO.lock()) })); }
+        // { "app": "automator" }: abre direto naquele plugin
+        let goto = serde_json::from_slice::<Value>(&r.body).ok().and_then(|v| v["app"].as_str().map(String::from)).filter(|a| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
         if UI.get().is_none() { return Err(fail("sem janela: abra o Estúdio pelo navegador", 409)); }
         let mut win = WIN.lock();
-        if let Some(c) = win.as_mut() && matches!(c.try_wait(), Ok(None)) { ASKED.fetch_add(1, Relaxed); return ok(json!({ "ok": true, "already": true })); }
+        if let Some(c) = win.as_mut() && matches!(c.try_wait(), Ok(None)) { if let Some(a) = &goto { *GOTO.lock() = a.clone(); } ASKED.fetch_add(1, Relaxed); return ok(json!({ "ok": true, "already": true })); }
         let exe = std::env::current_exe().map_err(|e| fail(format!("não achei o executável: {e}"), 500))?;
-        let child = std::process::Command::new(exe).arg("--studio").env("BLUESCREEN_PORT", app().port.to_string()).spawn().map_err(|e| fail(format!("não deu para abrir o Estúdio: {e}"), 500))?;
+        let child = std::process::Command::new(exe).arg("--studio").args(goto.iter()).env("BLUESCREEN_PORT", app().port.to_string()).spawn().map_err(|e| fail(format!("não deu para abrir o Estúdio: {e}"), 500))?;
         *win = Some(child);
+        ok(json!({ "ok": true }))
+    }));
+    // O Estúdio pede para a IDE abrir um projeto: POST guarda o pedido e traz a janela da IDE para a frente;
+    // GET é a página da IDE buscando o pedido (ele some ao ser lido).
+    add("ide/open", route_fn(|r| async move {
+        r.local_only()?;
+        static ASK: Mutex<Option<Value>> = Mutex::new(None);
+        if !r.is_post() { return ok(ASK.lock().take().unwrap_or(json!({}))); }
+        let b: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
+        let path = b["path"].as_str().unwrap_or("").trim().to_string();
+        if !path.is_empty() && !Path::new(&path).is_dir() { return Err(fail(format!("A pasta não existe mais: {path}"), 404)); }
+        *ASK.lock() = Some(json!({ "path": path, "pick": b["pick"] == true }));
+        if let Some(f) = UI.get() { f(UiEvent::Activate); }
         ok(json!({ "ok": true }))
     }));
     add("quit", route_fn(|r| async move {

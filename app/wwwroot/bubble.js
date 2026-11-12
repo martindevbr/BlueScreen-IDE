@@ -350,7 +350,7 @@
   const remembered = store.get('bbOpen', {}) || {};
   BS.bubble = {
     // as janelas registradas, na ordem do menu: [{ id, title, icon }]
-    list: () => [...D.values()].sort((a, b) => (a.order ?? 100) - (b.order ?? 100)).map(d => ({ id: d.id, title: d.title, icon: d.icon })),
+    list: () => [...D.values()].sort((a, b) => (a.order ?? 100) - (b.order ?? 100)).map(d => ({ id: d.id, title: d.title, icon: d.icon, footer: !!d.footer })),
     register(def) {
       if (!def || !def.id || !def.title) throw new Error('janela do balão precisa de id e title');
       if (BS.plugins.current && !def.plugin) def.plugin = BS.plugins.current;

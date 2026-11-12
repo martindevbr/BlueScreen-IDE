@@ -36,6 +36,7 @@ window.addEventListener('error', (e) => { try { toast('Erro na interface: ' + (e
 window.addEventListener('unhandledrejection', (e) => { const m = e.reason && e.reason.message; if (m && m !== 'login' && m !== 'Canceled') try { toast('Erro na interface: ' + m, 'err'); } catch {} });
 const DOC = new URLSearchParams(location.search).get('doc'); // janela de documento (docMode)
 const STUDIO = new URLSearchParams(location.search).has('studio'); // janela do Estúdio (studioMode)
+const SD = { home: true }; // Estúdio: no início (a vitrine dos plugins) ou dentro de um plugin
 const store = { get: (k, d) => { try { return JSON.parse(localStorage.getItem('bs.' + k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem('bs.' + k, JSON.stringify(v)); } catch {} } };
 
 const S = {
@@ -244,15 +245,52 @@ async function start() {
 function studioMode() {
   document.body.classList.add('studio-mode');
   S.showProjects = false; S.tool = null;
+  // o início cobre a área toda (abas inclusive): quem está num plugin volta para ele pelo cartão, que fica marcado "aberto"
+  $('#editor').appendChild($('#bare'));
+  $('#projChip').insertAdjacentHTML('afterend', `<button class="sd-home" id="sdHome" title="Voltar para o início do Estúdio (Alt+Home)"><svg class="i back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg><b>Estúdio</b></button><span class="sd-crumb" id="sdCrumb"></span>`);
+  $('#sdHome').onclick = () => studioHome();
+  document.addEventListener('keydown', (e) => { if (e.altKey && e.key === 'Home') { e.preventDefault(); studioHome(); } });
   renderStrip();
-  $('#projName').textContent = 'Estúdio'; $('#app').classList.add('no-tool');
+  $('#app').classList.add('no-tool');
   welcomeMode(false); btnState(); renderTool(); renderDashboard(); syncUnsaved();
   window.BS_DOC_CLOSE = () => S.tabs.some(losesWork) ? askClose(S.tabs.slice()) : desktop({ type: 'close' });
   // a IDE pediu o Estúdio de novo com esta janela já aberta: ela vem para a frente
   let seen = null;
-  setInterval(async () => { try { const r = await api('studio', {}, { quiet: true }); if (seen != null && r.focus !== seen) desktop({ type: 'focus' }); seen = r.focus; } catch { /* a IDE fechou */ } }, 2000);
+  setInterval(async () => { try { const r = await api('studio', {}, { quiet: true }); if (seen != null && r.focus !== seen) desktop({ type: 'focus' }); seen = r.focus; if (r.app) studioOpen(r.app); } catch { /* a IDE fechou */ } }, 2000);
+  // /?studio=automator: já abre naquele plugin
+  const first = new URLSearchParams(location.search).get('studio');
+  if (first && first !== '1') studioOpen(first);
 }
-const openIde = () => fetch('/api/activate', { method: 'POST', headers: { 'X-BlueScreen': 'takeover' } }).catch(() => toast('A IDE não respondeu.', 'err'));
+const SD_HOME = '<svg class="i" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7M6 10v9h4v-5h4v5h4v-9"/></svg>';
+/** Volta para o início do Estúdio. O que está aberto continua aberto, só sai da frente. */
+function studioHome() { SD.home = true; renderBare(); }
+/** Abre um plugin do Estúdio pelo id (tela, janela ou painel). Se a tela dele já está aberta, só volta para ela. */
+function studioOpen(id) {
+  const it = studioItems().find(x => x.id === id), t = BS.tools.get(id);
+  if (it && it.big) {
+    SD.home = false;
+    if (t && BS.pages.isActive(t.page)) { $('#app').classList.remove('no-tool'); S.tool = id; btnState(); renderTool(); } else it.go();
+  } else if (it) it.go();
+  else if (t) setTool(id);
+  renderBare();
+}
+/** O Estúdio pede para a IDE abrir um projeto (path), o seletor de pasta (pick) ou só vir para a frente. */
+const openIde = (ask = {}) => api('ide/open', {}, { method: 'POST', body: JSON.stringify(ask) }).catch((e) => toast(e.message || 'A IDE não respondeu.', 'err'));
+// a IDE busca o pedido quando a janela volta para a frente (e, por garantia, de tempos em tempos)
+async function ideInbox() {
+  if (DOC || STUDIO || !S.started) return;
+  try { const r = await api('ide/open', {}, { quiet: true }); if (r.pick) openProjectDialog(); else if (r.path) openProject(r.path); } catch { /* fica para a próxima */ }
+}
+window.addEventListener('focus', ideInbox); document.addEventListener('visibilitychange', () => { if (!document.hidden) ideInbox(); }); setInterval(ideInbox, 3000);
+// Rodapé: um plugin deixa um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso), sem ocupar a barra lateral
+const FOOTER = {
+  set(id, { icon = '', text = '', title = '', run } = {}) {
+    let el = document.querySelector(`#status [data-foot="${CSS.escape(id)}"]`);
+    if (!el) { el = document.createElement('span'); el.className = 's foot'; el.dataset.foot = id; el.setAttribute('role', 'button'); el.tabIndex = 0; ($('#stNet') || $('#status').firstChild).after(el); }
+    el.innerHTML = icon + `<span>${esc(text)}</span>`; el.title = title; el.onclick = run || null; el.onkeydown = (e) => { if (e.key === 'Enter' && run) run(); };
+  },
+  remove(id) { document.querySelector(`#status [data-foot="${CSS.escape(id)}"]`)?.remove(); },
+};
 function docMode(file) {
   document.body.classList.add('doc-mode');
   const i = file.search(/[\\/][^\\/]*$/), name = file.slice(i + 1);
@@ -662,37 +700,51 @@ function studioItems() {
   const brief = (d) => { d = String(d || '').replace(/\s*\([^)]*\)/g, '').trim(); const m = d.match(/^.*?[.:;](\s|$)/); return (m ? m[0] : d).replace(/[.:;]\s*$/, ''); };
   return [
     ...BS.tools.list().filter(t => t.page).map(t => ({ id: t.id, icon: t.icon, title: t.title, desc: brief(about(t.plugin || t.id)), big: true, go: () => setTool(t.id) })),
-    ...(BS.bubble && BS.bubble.list ? BS.bubble.list().map(w => ({ id: w.id, icon: w.icon, title: w.title, desc: brief(about(w.plugin || w.id)), go: () => BS.bubble.open(w.id) })) : []),
+    ...(BS.bubble && BS.bubble.list ? BS.bubble.list().filter(w => !w.footer).map(w => ({ id: w.id, icon: w.icon, title: w.title, desc: brief(about(w.plugin || w.id)), go: () => BS.bubble.open(w.id) })) : []),
   ].map((it, i) => ({ ...it, hue: STUDIO_HUES[i % STUDIO_HUES.length] }));
 }
-async function enterBare() {
+async function enterBare(app) {
   // no navegador (--web) não há janela para abrir: o Estúdio vai para outra aba
-  if (!window.BS_DESKTOP) { window.open('/?studio=1', '_blank'); return; }
-  try { await api('studio', {}, { method: 'POST' }); if (document.body.classList.contains('welcome')) desktop({ type: 'hide' }); }
+  if (!window.BS_DESKTOP) { window.open('/?studio=' + encodeURIComponent(app || '1'), '_blank'); return; }
+  try { await api('studio', {}, { method: 'POST', body: JSON.stringify({ app: app || '' }) }); if (document.body.classList.contains('welcome')) desktop({ type: 'hide' }); }
   catch (e) { toast('Não deu para abrir o Estúdio: ' + e.message, 'err'); }
 }
 function renderBare() {
   const el = $('#bare'); if (!el) return;
-  const on = STUDIO && !S.active;
-  el.hidden = !on; if (!on) return;
+  if (STUDIO && !S.active) SD.home = true; // fechou a última tela: volta para o início
+  const on = STUDIO && SD.home;
+  el.hidden = !on;
+  if (STUDIO) {
+    const pageTool = !!BS.tools.get(S.tool)?.page;
+    document.body.classList.toggle('sd-at-home', on); document.body.classList.toggle('sd-hide-tool', on && pageTool);
+    if ($('#sdCrumb')) $('#sdCrumb').textContent = on ? '' : (S.active && (S.active.title || S.active.name)) || document.querySelector('#tabs .tab.on')?.textContent.trim() || '';
+    $('#sdStripHome')?.classList.toggle('on', on);
+  }
+  if (!on) return;
   const items = studioItems(), h = new Date().getHours();
   const hello = h < 5 ? 'Boa noite' : h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  // a saudação, um cartão por plugin e os projetos recentes, que abrem na janela da IDE
+  const today = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const recents = store.get('recents', []).slice(0, 5);
+  const base = (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
   el.innerHTML = `<div class="sd">
-    <header class="sd-hero"><div class="sd-glow" aria-hidden="true"></div>
-      <span class="sd-k">Estúdio</span>
-      <h1>${hello}. O que vamos fazer?</h1>
-      <p>Automações, agenda e agentes de IA rodam daqui, sem abrir um projeto.</p>
-      <div class="sd-act"><button class="sd-btn primary" id="bareOpen">${I.open}Abrir a IDE</button><button class="sd-btn" id="barePlugins">${I.plug}Plugins</button></div>
-    </header>
-    ${items.length ? `<div class="sd-grid">${items.map((it, i) => `<button class="sd-card${it.big ? ' big' : ''}" data-i="${i}" style="--hue:${it.hue};--d:${i * 45}ms">
+    <header class="sd-top"><h1 class="sd-hello">${hello}</h1><p class="sd-date">${esc(today)}</p></header>
+    <section class="sd-sec"><h2 class="sd-h">Plugins</h2>
+    ${items.length ? `<div class="sd-grid">${items.map((it, i) => `<button class="sd-card" data-i="${i}" style="--hue:${it.hue};--d:${i * 40}ms">
       <span class="sd-ic">${it.icon || ''}</span>
-      <span class="sd-tx"><b>${esc(it.title)}</b>${it.desc ? `<span>${esc(it.desc)}</span>` : ''}</span>
-      <svg class="sd-go" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>`).join('')}</div>`
+      <span class="sd-tx"><b>${esc(it.title)}</b>${it.desc ? `<span>${esc(it.desc)}</span>` : ''}</span></button>`).join('')}</div>`
     : '<div class="sd-none">Nenhum plugin com tela própria está ligado. Ligue um em <a id="bareNone">Plugins</a>.</div>'}
+    </section>
+    <section class="sd-sec"><h2 class="sd-h">Projetos<small>abrem na janela da IDE</small></h2>
+      <div class="sd-projs">${recents.map((p, i) => `<button class="sd-proj" data-p="${i}" title="${esc(p)}" style="--d:${(items.length + i) * 40}ms"><span class="av" style="background:${welColor(base(p))}">${esc(welInitials(base(p)))}</span><b>${esc(base(p))}</b><span class="pa">${esc(p)}</span></button>`).join('')}
+        <button class="sd-proj ghost" id="sdPick">${I.open}<b>Abrir uma pasta…</b></button>
+        <button class="sd-proj ghost" id="sdAll">${I.open}<b>Ver todos os projetos</b></button></div>
+    </section>
   </div>`;
-  el.querySelectorAll('.sd-card').forEach(b => b.onclick = () => items[+b.dataset.i].go());
-  $('#bareOpen').onclick = openIde;
-  $('#barePlugins').onclick = () => openTool('plugins');
+  el.querySelectorAll('.sd-card').forEach(b => b.onclick = () => studioOpen(items[+b.dataset.i].id));
+  el.querySelectorAll('.sd-proj[data-p]').forEach(b => b.onclick = () => openIde({ path: recents[+b.dataset.p] }));
+  $('#sdPick').onclick = () => openIde({ pick: true });
+  $('#sdAll').onclick = () => openIde();
   if ($('#bareNone')) $('#bareNone').onclick = () => openTool('plugins');
 }
 function welcomeMode(on) {
@@ -715,7 +767,7 @@ function renderHome() {
   $('#welVer').textContent = BS.version || '';
   $('#welRootPath').textContent = S.root || 'nenhuma'; $('#welRootPath').title = S.root || '';
   $('#welNew').hidden = !!S.remote;
-  { const apps = studioItems(); $('#welApps').innerHTML = apps.slice(0, 5).map(a => `<i style="--hue:${a.hue}" title="${esc(a.title)}">${a.icon || ''}</i>`).join('') + (apps.length > 5 ? `<i class="more">+${apps.length - 5}</i>` : ''); }
+  { const apps = studioItems(); $('#welApps').innerHTML = apps.slice(0, 5).map(a => `<i data-app="${esc(a.id)}" style="--hue:${a.hue}" title="Abrir direto: ${esc(a.title)}">${a.icon || ''}</i>`).join('') + (apps.length > 5 ? `<i class="more">+${apps.length - 5}</i>` : ''); }
   const rec = store.get('recents', []); const pins = welPinned();
   const all = [...recentProjects(), ...S.projects.filter(p => !rec.includes(p.path))];
   const last = recentProjects()[0] || null;
@@ -801,7 +853,8 @@ $('#wel').addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#welQ').value) { e.stopPropagation(); $('#welQ').value = ''; renderHome(); $('#welList').focus(); return; }
   if (!inQ && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && !e.target.closest('input, textarea')) { $('#welQ').focus(); }
 });
-$('#welBare').onclick = () => enterBare();
+// clicar num ícone do cartão abre o Estúdio direto naquele plugin
+$('#welBare').onclick = (e) => enterBare(e.target.closest('[data-app]')?.dataset.app);
 $('#welNew').onclick = () => newProjectDialog();
 $('#welOpen').onclick = () => openProjectDialog();
 $('#welTheme').onclick = () => $('#btnTheme').click();
@@ -880,13 +933,14 @@ function renderStrip() {
   const eye = (t) => STRIP.on ? `<span class="hide-t" role="button" title="${hid.has(t.id) ? 'Mostrar na barra' : 'Ocultar da barra'}">${hid.has(t.id) ? I.eyeOff : I.eye}</span>` : '';
   const btn = (t) => item(`data-tool="${esc(t.id)}"${hid.has(t.id) ? ' data-hid="1"' : ''}`, t.icon, t.title, hid.has(t.id) ? '' : t.key, `<span class="badge" id="badge-${esc(t.id)}" hidden></span>${eye(t)}`);
   const shown = tools.filter(t => STRIP.on || !hid.has(t.id));
-  const top = shown.filter(t => !stripBottom(t)).map(btn).join('');
+  let top = shown.filter(t => !stripBottom(t)).map(btn).join('');
+  if (STUDIO) top = item('id="sdStripHome"', SD_HOME, 'Início', 'Alt+Home') + top + studioItems().filter(a => !a.big).map(a => item(`data-app="${esc(a.id)}"`, a.icon || '', a.title)).join('');
   const bottom = shown.filter(stripBottom).map(btn).join('') + item('id="btnRefresh"', I.refresh, 'Atualizar', 'F5');
   el.innerHTML = top + '<div class="grow"></div>' + bottom + (STRIP.on ? `<div class="arr-bar"><button class="chip" id="stripReset" title="Volta à ordem e aos atalhos de fábrica">Padrão</button><button class="chip primary" id="stripDone">Concluir</button></div>` : '');
   el.classList.toggle('arrange', STRIP.on);
   el.querySelectorAll('[data-hid]').forEach(b => b.classList.add('hid'));
   el.querySelectorAll('[data-tool]').forEach(b => {
-    b.onclick = (e) => { if (e.target.closest('.hide-t')) { stripHide(b.dataset.tool); return; } if (STRIP.on || STRIP.eat) { STRIP.eat = false; return; } setTool(b.dataset.tool); };
+    b.onclick = (e) => { if (e.target.closest('.hide-t')) { stripHide(b.dataset.tool); return; } if (STRIP.on || STRIP.eat) { STRIP.eat = false; return; } STUDIO ? studioOpen(b.dataset.tool) : setTool(b.dataset.tool); };
     b.onpointerdown = (e) => { if (!e.target.closest('.hide-t')) stripPress(e, b); };
     b.oncontextmenu = (e) => { e.preventDefault(); const d = BS.tools.get(b.dataset.tool); if (!d) return;
       // painel de plugin: de qual plugin ele é, para achar (e remover) quem o colocou na barra
@@ -896,6 +950,7 @@ function renderStrip() {
       showMenu(e, [{ label: 'Ocultar da barra', icon: I.eyeOff, action: () => stripHide(d.id, true) }, { label: 'Reorganizar a barra…', icon: I.grip, action: () => stripArrange(true) }, ...mine], d.title); };
   });
   $('#btnRefresh').onclick = refreshAll;
+  if (STUDIO) { $('#sdStripHome').onclick = () => studioHome(); el.querySelectorAll('[data-app]').forEach(b => b.onclick = () => studioOpen(b.dataset.app)); }
   if (STRIP.on) { $('#stripDone').onclick = () => stripArrange(false); $('#stripReset').onclick = () => { store.set('stripOrder', null); store.set('stripHidden', []); toolKeys(); renderStrip(); }; }
   btnState();
 }
@@ -1392,6 +1447,7 @@ function activate(tab) {
   $('#stLang').textContent = tab.lang;
   renderTabs(); renderCrumbs(); lintMarkers(tab); updateDiffInfo(); syncUnsaved();
   if (S.tool === 'changes') renderChanges();
+  if (STUDIO && SD.home) { SD.home = false; renderBare(); }
   BS.hooks.run('tab:activate', tab); // plugins decoram o editor (ex.: linhas com problemas apontados por um plugin)
 }
 function renderTabs() {
@@ -2271,6 +2327,7 @@ const BS = window.BS = {
 };
 BS.define = BS.plugins.define;
 BS.doc = DOC;
+BS.footer = FOOTER;
 
 // ----- o que cada plugin recebe em `plugin` (e em BS.plugin(id)): pasta de dados e serviços do núcleo -----
 // Sem servidor próprio, um plugin guarda atributos (data), tokens cifrados (secrets), configurações declaradas no

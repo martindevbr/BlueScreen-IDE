@@ -692,10 +692,18 @@ function onContext(e) {
 
 // ---------- seletor de nós ----------
 function closePicker() { if (picker) { picker.remove(); picker = null; } }
+const maker = () => bs.plugins.list.some(p => p.id === 'iamaker' && p.enabled);
+/** Abre o IAMaker num plugin novo, com o pedido de um nó para o Automator já começado. */
+function newNodeWithAi(want) {
+  bs.hooks.run('iamaker:compose', { text: `Crie um nó para o Automator${want ? ` chamado "${want}"` : ''}.\nO que ele faz: \nO que recebe: \nO que devolve: \nCampos que o usuário preenche: ` });
+}
+// nós de plugin criados (ou removidos) depois que a tela abriu: a lista se atualiza quando a paleta abre
+const syncCatalog = async () => { try { const sp = await bs.api('automator/catalog', {}, { quiet: true }); if (JSON.stringify(sp.map(s => s.type)) !== JSON.stringify(A.specs.map(s => s.type))) { A.specs = sp; A.byType = new Map(sp.map(s => [s.type, s])); if (A.flow) for (const n of A.flow.nodes) refreshNode(n.id); } } catch { /* fica a lista que já tinha */ } };
 /** `need`: só os nós que têm bolinha desse lado ('inputs' ou 'outputs'), para o fio solto no vazio. */
 function openPicker(cx, cy, onPick, need) {
   closePicker();
   if (flowLocked()) return denied();
+  syncCatalog();
   const list = A.specs.filter(s => !need || (s[need] || []).length);
   const input = el('input', { type: 'search', placeholder: 'Buscar nó', 'aria-label': 'Buscar nó', spellcheck: false });
   const body = el('div.am-pick-list');
@@ -714,6 +722,9 @@ function openPicker(cx, cy, onPick, need) {
         el('span.am-ico', { html: (CATS[s.category] || PLUG_CAT).i }), el('span.am-pick-tx', el('b', s.name), el('small', s.desc || ''), typeFlow(s))));
     });
     if (!items.length) body.append(el('p.am-hint', 'Nenhum nó com esse nome.'));
+    // não achou o que precisa: o IAMaker cria um plugin com o nó novo
+    if (maker()) body.append(el('button.am-pick-it.am-pick-new', { type: 'button', onclick: () => { const want = input.value.trim(); closePicker(); newNodeWithAi(want); } },
+      el('span.am-ico', { html: IC.spark }), el('span.am-pick-tx', el('b', q ? `Criar o nó "${input.value.trim()}" com IA` : 'Criar um nó novo com IA'), el('small', 'O IAMaker escreve um plugin com o nó; ele aparece aqui quando ficar pronto.'))));
   };
   input.oninput = () => { cur = 0; paint(); };
   input.onkeydown = (e) => {
@@ -1105,8 +1116,11 @@ function generate() {
         const flow = await post('automator/generate', { request, provider, model, cwd: bs.S.project?.path || '' });
         box.hidden = true;
         if (!(await leave())) return;
+        const warnings = flow.warnings || []; delete flow.warnings;
         open(flow, true); requestAnimationFrame(() => { arrange(false); fit(); });
-        bs.toast('Proposta pronta. Confira os nós e salve.', 'ok');
+        // o que a conferência ainda achou depois da correção: fica à vista para o usuário ajustar
+        if (warnings.length) dialog('amGenWarn', `<div class="dlg-hd"><div><h3>Proposta pronta, com ${warnings.length === 1 ? 'um ponto' : warnings.length + ' pontos'} para conferir</h3><p>O fluxo foi montado, mas a conferência achou isto. Ajuste antes de salvar.</p></div></div><ul class="am-warn">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul><div class="actions"><span class="spacer"></span><button class="chip primary" data-close>Entendi</button></div>`);
+        else bs.toast('Proposta pronta e conferida. Veja os nós e salve.', 'ok');
       } catch (e) { st.textContent = 'Não deu: ' + e.message; } finally { go.disabled = false; }
     };
   });

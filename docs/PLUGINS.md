@@ -31,6 +31,7 @@ Cada pasta tem:
 |---|---|
 | `plugin.json` | `{ "id", "name", "description", "version", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }` |
 | `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
+| `bs.footer.set(id, { icon, text, title, run })` | um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso); `bs.footer.remove(id)` tira. Janela registrada com `footer: true` em `bs.bubble.register` não ganha ícone nem cartão no Estúdio |
 | `icon.svg` ou `icon.png` (opcional) | o ícone na aba Plugins e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
 | `ui.js` (opcional) | roda na página dentro de `function (bs, plugin) { ... }` e enxerga tudo do núcleo (`S`, `api`, `$`, `esc`, `toast`, `store`, `I`, `TI`, `monaco`, `editor`, `openFile`, `openTool`...) |
 | `style.css` (opcional) | injetado junto com o `ui.js` |

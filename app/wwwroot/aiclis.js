@@ -23,6 +23,8 @@
   }
   function draw(note) {
     const c = cur, fixed = factory(c.id);
+    // já aberta (trocar de aba, salvar, testar): o conteúdo muda no lugar, sem a animação de entrada, que piscava
+    const live = document.getElementById('aiClis'), still = !!live && !live.hidden, tall = still ? live.querySelector('.dlg-box').offsetHeight : 0;
     dialog('aiClis', `<div class="dlg-hd"><div><h3>Agentes de IA</h3><p>Os programas que o Automator e o Conselho de agentes chamam, cada um com o seu modelo e o seu esforço.</p></div></div>
       <div class="aic-tabs" role="tablist">${list.map(x => `<button class="chip${x.id === c.id ? ' on' : ''}" data-id="${esc(x.id)}" role="tab">${esc(x.name)}</button>`).join('')}<button class="chip${c.id ? '' : ' on'}" data-new role="tab">+ Novo</button></div>
       <label class="fld">Nome<input id="aicName" maxlength="60" autocomplete="off" placeholder="OpenClaude"></label>
@@ -35,6 +37,9 @@
       <p class="err" id="aicErr"></p><pre class="aic-out" id="aicOut" hidden></pre>
       <div class="actions">${c.id ? `<button class="chip danger" id="aicDel">${fixed ? 'Voltar ao padrão' : 'Excluir'}</button>` : ''}<span class="spacer"></span><button class="chip" id="aicTest" title="Grava e faz uma pergunta curta ao agente">Testar</button><button class="chip primary" id="aicSave">Salvar</button></div>`, (box) => {
       const $ = (s) => box.querySelector(s), err = $('#aicErr'), out = $('#aicOut');
+      box.classList.toggle('still', still);
+      // a janela não encolhe ao passar por uma aba com menos campos
+      if (tall) $('.dlg-box').style.minHeight = Math.min(tall, innerHeight - 48) + 'px';
       $('#aicName').value = c.name; $('#aicKind').value = c.kind || 'claude'; $('#aicProg').value = c.program; $('#aicModel').value = c.model; $('#aicEffort').value = c.effort; $('#aicArgs').value = (c.args || []).join('\n');
       if (note) { out.hidden = false; out.textContent = note; }
       const kind = () => fixed ? c.id : $('#aicKind').value;

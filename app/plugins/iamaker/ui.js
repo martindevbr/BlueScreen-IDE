@@ -90,6 +90,8 @@ bs.keys.add('Alt+0', () => show());
 bs.actions.add([{ label: 'IAMaker: criar um plugin com IA', k: 'Alt+0', icon: ICO.spark, run: () => { show(true); pick(null); } }]);
 // "Editar com o IAMaker" no cartão e no botão direito de cada plugin, na aba Plugins
 const editWith = (id) => { show(true); pick(id); };
+// outro plugin começa um pedido aqui (o Automator, em "Criar um nó com IA"): plugin novo, com o texto já no campo
+bs.hooks.on('iamaker:compose', async ({ text } = {}) => { show(true); await pick(null); q.value = text || ''; q.dispatchEvent(new Event('input', { bubbles: true })); setTimeout(() => { q.focus(); const i = q.value.indexOf('O que ele faz: '); const at = i < 0 ? q.value.length : i + 15; q.setSelectionRange(at, at); }, 120); });
 bs.hooks.filter('plugin:buttons', (items, p) => p.id === plugin.id ? items : [...items, { label: 'Editar com o IAMaker', icon: ICO.spark, action: () => editWith(p.id) }]);
 
 // ----- pastas e plugins -----
@@ -407,7 +409,7 @@ async function prompt(text, ai, resumed, files) {
   return unmark(await rawPrompt(text, ai, resumed, files));
 }
 // os arquivos do plugin como estão agora (até 60 KB juntos), para a IA não precisar ler
-const SOURCES = ['plugin.json', 'ui.js', 'style.css', 'server.js', 'server.py'];
+const SOURCES = ['plugin.json', 'automator.json', 'ui.js', 'style.css', 'server.js', 'server.py'];
 async function sources(dir, files) {
   let left = 60000; const out = [];
   for (const f of SOURCES) {

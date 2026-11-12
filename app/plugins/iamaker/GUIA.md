@@ -165,6 +165,41 @@ bs.tools.register({ id: 'meu-lado', title: 'Meu painel', icon: ICON, order: 60, 
 } });
 ```
 
+## Nó para o Automator (`automator.json`)
+
+Quando o pedido é um **nó** (componente, bloco, passo) para o Automator, o plugin não precisa de `ui.js`: basta o `plugin.json`, um `automator.json` e o programa que roda. O nó aparece na paleta do Automator como `plugin.<id do plugin>.<type>`.
+
+```json
+{
+  "nodes": [{
+    "type": "maiusculas", "name": "Maiúsculas", "category": "Texto", "desc": "Passa o texto para maiúsculas.",
+    "inputs": ["in"], "outputs": ["out"],
+    "params": { "text": "{{input}}" },
+    "fields": [{ "name": "text", "label": "Texto", "kind": "area" }],
+    "takes": "text", "gives": "text",
+    "expects": "Um texto.", "returns": "O texto em maiúsculas.",
+    "run": { "program": "node", "args": ["maiusculas.js"], "timeout": 30000 }
+  }]
+}
+```
+
+```js
+// maiusculas.js: recebe um JSON pela entrada padrão e escreve a saída do nó na saída padrão
+let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
+  const { params, input } = JSON.parse(s);
+  process.stdout.write(JSON.stringify(String(params.text).toUpperCase()));
+});
+```
+
+- `type`: letras, números, `_` e `-`. `category`: uma das que existem (Gatilhos, Lógica, Texto, Dados, JSON, Arquivos, Windows, Rede, Segurança, Auditoria, Integrações, IA, Imagem, Áudio, Vídeo) ou um nome novo.
+- **Sempre** preencha `takes` e `gives` (o formato do que entra e do que sai: `text`, `object`, `list`, `number`, `image`, `audio`, `video`, `file`, `any`, `same`, `none`), `expects` e `returns` (uma frase simples para quem usa) e, quando a saída é um objeto, `sample` com um exemplo dela: é com isso que o painel mostra os campos e que a IA que monta fluxos entende o nó.
+- `params` são os valores padrão; `fields` são os campos do painel, um por parâmetro. `kind`: `text`, `area`, `number` (`min`, `max`), `select` (`options`: `[{ "value", "label" }]`), `checks`, `time`, `json`, `lines` (um item por linha) e `rows` (lista de linhas, com `columns`). Num `text`, `"pick": "file" | "folder" | "save" | "program" | "any"` põe o botão que abre o seletor do Windows. `show: { "campo": ["valor"] }` mostra o campo só quando outro tem um desses valores. `help` é a dica embaixo do campo.
+- **Entrada do programa** (stdin, JSON): `{ node, params, input, data, secrets }`. As expressões (`{{input}}`, `{{nodes.x.out}}`) já chegam resolvidas em `params`; `input` é o que chegou no nó; `data` é a pasta de dados do plugin.
+- **Saída**: o que o programa escreve na saída padrão, lido como JSON (ou como texto). Código de saída diferente de zero falha o nó com o que foi para a saída de erro: escreva lá uma frase que o usuário entenda. Com mais de uma saída em `outputs` (por exemplo `["true", "false"]`), responda `{ "port": "nome", "value": ... }`.
+- **Segredos**: o usuário escreve `{{vault:nome}}` no campo. O valor não vem no JSON: chega numa variável de ambiente, e `secrets` diz qual (`{ "{{vault:nome}}": "BS_SECRET_0" }`).
+- O programa roda na pasta do plugin. Prefira Node.js sem dependências (`fetch` já existe); um script por nó, pequeno. Não abra janelas nem peça nada pelo teclado.
+- Teste o programa antes de terminar: `echo {"params":{...},"input":null} | node arquivo.js` tem que escrever a saída esperada.
+
 ## Servidor (só se precisar)
 
 Crie `server.js` **apenas** quando o plugin precisar de: um gancho do núcleo (`hooks` no `plugin.json`), rotas que outros plugins chamam, ou trabalho que continua com a página fechada. Ele roda com o Node.js do usuário:

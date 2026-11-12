@@ -390,13 +390,13 @@ let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
 - **Segredos:** `{{vault:nome}}` num parâmetro não vai no JSON. O valor chega numa variável de ambiente, e `secrets` diz qual (`{ "{{vault:nome}}": "BS_SECRET_0" }`). O Cofre só entrega se o segredo estiver liberado para o plugin e para o programa.
 - O programa roda na pasta do plugin, com o Node.js, o Python ou o que estiver no PC. O plugin **Navegador** (`app/plugins/navegador`) é um exemplo completo.
 
-Dá para pedir um plugin desses ao **IAMaker**: descreva o nó e diga que ele vai num `automator.json`.
+Dá para pedir um nó desses ao **IAMaker** sem sair do Automator: no fim da paleta, **Criar um nó novo com IA** (ou **Criar o nó "…" com IA**, quando a busca não acha nada) abre o IAMaker num plugin novo com o pedido já começado. O guia do IAMaker ensina a IA a escrever o `automator.json`, o programa e a parte de Recebe/Devolve. Quando o plugin fica pronto, o nó aparece na paleta na próxima vez que ela abrir.
 
 O núcleo roda até quatro coisas ao mesmo tempo (fluxos, revisões e propostas de IA). Um disparo automático sem vaga espera na fila; **Parar** tira da fila ou interrompe a execução.
 
 ### Crie com IA
 
-**Criar com IA** pede a descrição da automação e quem monta (Claude Code, Codex, um agente que você cadastrou ou OpenRouter). A proposta abre no quadro, desligada e sem salvar, para você conferir. O Claude Code e o Codex precisam estar instalados e com login feito.
+**Criar com IA**, na lista de fluxos, monta uma proposta a partir de uma frase. A IA recebe um guia dos nós escrito para ela: o que cada um faz, o formato que recebe e devolve, as portas, os parâmetros com os valores aceitos e os campos da saída. Antes de mostrar a proposta, o BlueScreen confere o fluxo: parâmetro que o nó não tem, valor fora da lista, `{{nodes.x}}` apontando para nó que não existe ou que não vem antes, campo que a saída do nó anterior não tem e nó sem ninguém ligado nele. O que aparecer volta para a IA corrigir, uma vez; se ainda sobrar algo, a proposta abre com a lista dos pontos para você ajustar. Nada roda nem é salvo sem você conferir.
 
 ### OpenRouter e tokens
 
@@ -430,9 +430,13 @@ Os horários são conferidos a cada cinco segundos. Se o BlueScreen estava fecha
 
 ## Estúdio: os plugins sem a IDE
 
-Na tela inicial, o cartão **Estúdio** abre uma janela só dos plugins: Automator, Agenda, Agentes, Biblioteca e IAMaker, sem projeto, busca, Git, Build nem terminal. A janela da IDE sai da frente e continua na bandeja; **Abrir a IDE**, no Estúdio, traz ela de volta. A tela de entrada tem um cartão para cada plugin (o Automator, que tem tela inteira, ganha o cartão largo). Fechar o Estúdio não para a agenda nem os fluxos: quem roda é o BlueScreen, na bandeja. Clicar em **Estúdio** de novo com a janela já aberta só traz ela para a frente.
+Na tela inicial, o cartão **Estúdio** abre uma janela só dos plugins, sem projeto, busca, Git, Build nem terminal. A janela da IDE sai da frente e continua na bandeja. Fechar o Estúdio não para a agenda nem os fluxos.
 
-`BlueScreen.exe --studio` abre o Estúdio direto quando o BlueScreen já está aberto; sem ele, abre a IDE normal. No navegador (`--web`), o Estúdio abre em outra aba, em `/?studio=1`.
+- **Início:** a saudação, um cartão por plugin e os projetos recentes. Clicar num projeto abre ele na janela da IDE; **Abrir uma pasta…** e **Ver todos os projetos** também levam para lá.
+- **Dentro de um plugin:** a barra de cima mostra **‹ Estúdio › Automator**. Clicar em **Estúdio**, no ícone de casa da barra da esquerda ou Alt+Home volta para o início sem fechar nada; o cartão do plugin retorna de onde você parou.
+- **Barra da esquerda:** um ícone por plugin, para trocar com um clique.
+- **Rodapé:** a Agenda fica na barra de baixo, com o próximo compromisso de hoje ou quantos estão atrasados; um clique abre ela. O mesmo resumo aparece na barra de baixo da IDE.
+- **Direto num plugin:** na tela inicial da IDE, clicar num dos ícones do cartão Estúdio abre a janela já naquele plugin. `BlueScreen.exe --studio automator` faz o mesmo quando o BlueScreen já está aberto; sem ele, abre a IDE normal. No navegador (`--web`), o Estúdio abre em outra aba, em `/?studio=1`.
 
 ## Bandeja do Windows
 
@@ -446,11 +450,14 @@ Janelas abertas com `--doc` continuam fechando normalmente. Nos modos `--web` e 
 
 ## Conselho de agentes
 
-1. Abra **Agentes** e escreva a proposta: a decisão, o contexto e a solução.
-2. Confira a pasta que os agentes podem ler e escolha os revisores (Codex e Claude Code vêm marcados).
-3. **Pedir revisão** (ou `Ctrl+Enter`).
+Antes de decidir, os agentes escolhidos (Codex, Claude Code e os que você cadastrou em Agentes de IA) revisam a proposta, cada um sozinho e só com leitura.
 
-Cada agente analisa sozinho, só com leitura, usando o programa e o login deste PC. A engrenagem ao lado dos revisores abre os [Agentes de IA](#agentes-de-ia), para escolher o modelo e o esforço de cada um e cadastrar outros programas; os cadastrados aparecem como revisores (até quatro por revisão). A proposta só é aprovada quando todos aprovam. Pedido de ajuste, rejeição, resposta fora do formato, programa ausente e falha de login bloqueiam. Cada agente tem até três minutos. O histórico guarda as cem últimas revisões.
+- **Foco:** Geral, Segurança, Qualidade e testes, Custo e risco ou Quem usa. Muda o que os revisores olham primeiro.
+- **Aprova quando:** com três ou mais revisores dá para escolher entre todos aprovarem ou a maioria. Com um ou dois, valem todos. Agente que falha conta como não aprovou.
+- **Parecer:** cada agente dá o veredito, o motivo e os pontos que achou, com o tempo que levou. O cartão mostra quantos aprovaram.
+- **Histórico:** em cada revisão, os botões revisam de novo (a proposta volta para o campo, pronta para ajustar), copiam os pareceres ou tiram do histórico. **Limpar** apaga todas.
+
+No Automator, o nó **Revisar decisão** tem o mesmo foco e a mesma regra.
 
 ### No IAMaker
 

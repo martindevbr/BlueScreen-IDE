@@ -122,7 +122,9 @@ fn main() {
     let lan_port = env_port("BLUESCREEN_LAN_PORT", 4748);
     // --studio: a janela do Estúdio, que usa o BlueScreen já aberto nesta porta. Sem ele, segue e abre a IDE normal.
     if has("--studio") && std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(500)).is_ok() {
-        desktop::run(format!("http://127.0.0.1:{port}/?studio=1"), has("--devtools"), None, true)
+        // --studio automator: já abre naquele plugin, sem passar pelo início
+        let app = args.iter().position(|a| a == "--studio").and_then(|i| args.get(i + 1)).filter(|a| !a.starts_with("--") && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')).cloned();
+        desktop::run(format!("http://127.0.0.1:{port}/?studio={}", app.as_deref().unwrap_or("1")), has("--devtools"), None, true)
     }
     let headless = has("--no-open") || std::env::var("BLUESCREEN_NO_OPEN").is_ok_and(|v| !v.is_empty());
     let web = has("--web");

@@ -47,8 +47,20 @@ async function refresh() {
   G.events = await bs.api('agenda/events', {}, { quiet: true });
   // os fluxos só existem com o Automator ligado
   try { G.flows = bs.plugins.list.some(p => p.id === 'automator' && p.enabled) ? await bs.api('automator/flows', {}, { quiet: true }) : []; } catch { G.flows = []; }
-  G.loaded = true; paint();
+  G.loaded = true; paint(); footer();
 }
+// Rodapé: o próximo compromisso de hoje, ou quantos estão atrasados. Um clique abre a Agenda.
+function footer() {
+  const f = typeof BS !== 'undefined' && BS.footer; if (!f) return;
+  const now = Date.now(), late = overdue().length;
+  const next = eventsOn(new Date()).filter(x => x.at >= now && !x.e.done), day = new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
+  const text = late ? `${late} ${late === 1 ? 'atrasado' : 'atrasados'}${next[0] ? ` · ${hm(next[0].at)} ${next[0].e.title}` : ''}`
+    : next[0] ? `${hm(next[0].at)} ${next[0].e.title}${next.length > 1 ? ` (+${next.length - 1})` : ''}` : `${day} · nada marcado`;
+  f.set('agenda', { icon: IC.app, text, title: 'Agenda: ' + (next.length ? `${next.length} ${next.length === 1 ? 'compromisso' : 'compromissos'} ainda hoje` : 'sem compromissos para o resto do dia'), run: () => bs.bubble.open('agenda') });
+}
+const footerTick = async () => { try { G.events = await bs.api('agenda/events', {}, { quiet: true }); footer(); } catch { /* tenta de novo no próximo minuto */ } };
+footerTick(); const footerClock = setInterval(footerTick, 60000);
+plugin.onUnload(() => { clearInterval(footerClock); typeof BS !== 'undefined' && BS.footer && BS.footer.remove('agenda'); });
 const saveEvent = guard(async (e) => { await post({ event: e }); await refresh(); });
 
 function editor(ev) {
@@ -147,7 +159,7 @@ function mount(pane) {
   pane.addEventListener('click', (e) => { const b = e.target.closest('[data-a]'); if (b && acts[b.dataset.a]) acts[b.dataset.a](); });
   paint();
 }
-bs.bubble.register({ id: 'agenda', title: 'Agenda', icon: IC.app, order: 61, width: 960, height: 680, render: mount, show: guard(refresh) });
+bs.bubble.register({ id: 'agenda', title: 'Agenda', footer: true, icon: IC.app, order: 61, width: 960, height: 680, render: mount, show: guard(refresh) });
 bs.actions.add([{ label: 'Agenda: compromissos e lembretes', icon: IC.app, run: () => bs.bubble.open('agenda') }]);
 // um lembrete que disparou muda de estado sozinho: a janela aberta acompanha
 const timer = setInterval(() => { if (root?.isConnected && bs.bubble.isOpen('agenda') && document.getElementById('agEdit')?.hidden !== false) refresh().catch(() => {}); }, 15000);

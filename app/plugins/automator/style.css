@@ -277,3 +277,6 @@
 .am-tflow i { font-style: normal; color: var(--muted); font-size: 11px; }
 .am-cv.far .am-type { visibility: hidden; }
 .am-pl.out { justify-self: end; }
+
+.am-pick-new { margin-top: 6px; border-top: 1px solid var(--line); border-radius: 0 0 var(--r-sm) var(--r-sm); --cat: #E879B9; }
+.am-warn { margin: 0; padding: 4px 22px 4px 36px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); overflow-wrap: anywhere; }
