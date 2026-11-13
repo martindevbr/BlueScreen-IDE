@@ -422,7 +422,9 @@ async fn handle(req: Request<Body>, remote: bool) -> Response {
         });
         if path.starts_with("/api/") {
             if path == "/api/session" { return json_resp(200, &json!({ "remote": true, "authed": authed })); }
-            if !authed { return bad("login necessário", 401); }
+            // o Endpoint HTTP do Automator é chamado por outros programas e aparelhos, que não têm como digitar o PIN:
+            // a rota confere se o fluxo aceita a rede ("A rede local também") e os nós de Segurança fazem o resto
+            if !authed && path != "/api/automator/hook" { return bad("login necessário", 401); }
         }
     }
     // script de um plugin (ui.js + style.css num arquivo só)
@@ -443,7 +445,14 @@ async fn handle(req: Request<Body>, remote: bool) -> Response {
     // rota do núcleo ganha de rota anunciada por plugin (um plugin não troca file, plugins, vault...)
     let handler = host().core().get(&name).cloned().or_else(|| host().get().routes.get(&name).cloned());
     let Some(handler) = handler else { return bad("rota desconhecida", 404) };
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
+    if name == "automator/hook" {
+        // quem chamou e o endereço inteiro, para o fluxo: vão em cabeçalhos do próprio núcleo (o que vier de fora
+        // com esses nomes é trocado)
+        let ip = parts.extensions.get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip().to_string()).unwrap_or_else(|| "127.0.0.1".into());
+        let url = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
+        for (k, v) in [("x-bluescreen-ip", ip), ("x-bluescreen-url", url)] { if let Ok(v) = HeaderValue::from_str(&v) { parts.headers.insert(k, v); } else { parts.headers.remove(k); } }
+    }
     let body = match axum::body::to_bytes(body, 256 * 1024 * 1024).await { Ok(b) => b, Err(e) => return bad(&e.to_string(), 413) };
     let internal = !remote && parts.headers.get(bluescreen_sdk::plugin::H_TOKEN).and_then(|v| v.to_str().ok()) == Some(bluescreen_sdk::plugin::core().token());
     let r = Arc::new(Req { query: parse_query(parts.uri.query()), method: parts.method, headers: parts.headers, body, remote, internal });

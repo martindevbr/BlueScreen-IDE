@@ -103,6 +103,16 @@ fn log_panics() {
 }
 
 fn main() {
+    // Nós de SSH do Automator: o ssh chama este executável para perguntar a senha (SSH_ASKPASS) e lê a resposta na
+    // saída. A senha veio numa variável de ambiente só daquele ssh; aqui é responder e sair.
+    if let Ok(pass) = std::env::var("BLUESCREEN_ASKPASS") {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(pass.as_bytes());
+        let _ = out.write_all(b"\n");
+        let _ = out.flush();
+        return;
+    }
     #[cfg(windows)]
     unsafe { windows_sys::Win32::System::Console::AttachConsole(windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS); }
     log_panics();

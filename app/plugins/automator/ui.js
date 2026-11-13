@@ -49,6 +49,7 @@ const CATS = {
   'Segurança': { c: '#E0685E', i: svg('<path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6z"/><path d="M9 12l2.2 2.2L15 10.5"/>') },
   'Auditoria': { c: '#59B8C4', i: svg('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M8.5 11l1.8 1.8L13.5 9.5"/>') },
   'Integrações': { c: '#B58DF2', i: svg('<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>') },
+  'Conexões': { c: '#7FD1AE', i: svg('<path d="M8 12h8M5 8.5h2.5a3.5 3.5 0 0 1 0 7H5M19 8.5h-2.5a3.5 3.5 0 0 0 0 7H19"/><path d="M5 8.5v7M19 8.5v7"/>') },
   'Navegador': { c: '#4FB6E8', i: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.1M10 6.5h.1"/>') },
 };
 // formato do dado que entra e sai de cada nó: a etiqueta ao lado das bolinhas e na lista de nós
@@ -81,7 +82,30 @@ const PLUG_CAT = { c: 'var(--muted)', i: svg('<path d="M9 3h6v4h3a2 2 0 0 1 2 2v
 const AUTO = ['trigger.schedule', 'trigger.startup', 'trigger.file', 'trigger.webhook'];
 // endereço que chama um Endpoint HTTP
 const hookUrl = (name) => `${location.origin}/api/automator/hook?e=${encodeURIComponent(String(name || '').trim())}`;
-const PORT_LABEL = { in: 'entrada', out: 'saída', true: 'sim', false: 'não' };
+// Os endereços de um Endpoint HTTP: o deste PC e, se o nó aceita a rede local, os da rede (IP do PC na rede e a
+// porta do acesso pela rede, que é outra). A.lan vem do núcleo; enquanto não chega, só o deste PC aparece.
+function hookBlock(n) {
+  const q = `/api/automator/hook?e=${encodeURIComponent(String(n.params.name || '').trim())}`;
+  const row = (label, url) => el('div.am-hookrow', el('span.am-hooklab', label), el('div.am-hook', el('code', url), el('button.icon-btn', { type: 'button', title: 'Copiar o endereço', html: IC.copy, onclick: () => { bs.copyText(url); bs.toast('Endereço copiado', 'ok'); } })));
+  const box = el('div.am-hooks', row('Neste PC', location.origin + q));
+  if (n.params.who !== 'lan') { box.append(el('p.am-hint', 'Para chamar de outro aparelho da sua rede, escolha "A rede local também" em Quem pode chamar.')); return box; }
+  const draw = () => {
+    const lan = A.lan;
+    box.querySelectorAll('.am-lan').forEach(x => x.remove());
+    if (!lan) return;
+    if (lan.enabled && lan.urls.length) lan.urls.forEach(u => { const r = row('Na rede', u + q); r.classList.add('am-lan'); box.append(r); });
+    else box.append(el('div.am-lan', el('p.am-hint', lan.enabled ? 'Não achei o endereço deste PC na rede: confira se ele está conectado.' : 'O acesso pela rede local está desligado: sem ele, outros aparelhos não chegam neste endpoint.'),
+      !lan.enabled && el('button.chip.am-wide', { type: 'button', onclick: guard(async () => { A.lan = await post('automator/lan', { enable: true }); draw(); }) }, 'Ligar o acesso pela rede')));
+    if (lan.enabled) box.append(el('p.am-hint.am-lan', 'De outro aparelho, use o endereço "Na rede" (o do 127.0.0.1 só funciona neste PC). O fluxo precisa estar ligado. Se não responder, libere o BlueScreen no Firewall do Windows.'));
+  };
+  draw();
+  bs.api('automator/lan', {}, { quiet: true }).then(v => { A.lan = v; if (box.isConnected) draw(); }).catch(() => {});
+  return box;
+}
+const PORT_LABEL = { in: 'entrada', out: 'saída', true: 'sim', false: 'não', item: 'cada item', loop: 'repetir', done: 'fim', try: 'tentar', ok: 'deu certo', error: 'deu erro', other: 'outro' };
+// o nome de uma saída no quadro: em Escolher caminho, a saída leva o texto do caso dela
+const switchCases = (n) => (Array.isArray(n?.params?.cases) ? n.params.cases : String(n?.params?.cases || '').split('\n')).map(c => String(c ?? '').trim());
+const portName = (n, p) => n?.type === 'logic.switch' && /^[1-5]$/.test(p) ? (switchCases(n)[p - 1] || 'caso ' + p).slice(0, 18) : PORT_LABEL[p] || p;
 const STATUS = { running: 'executando', queued: 'na fila', completed: 'concluído', failed: 'falhou', cancelled: 'parado', interrupted: 'interrompido', skipped: 'pulado' };
 
 const esc = bs.esc;
@@ -322,7 +346,13 @@ const TEMPLATES = [
   { label: 'Alarme num horário', hint: 'alerta com som no canto da tela', make: () => chain('Alarme', 'Todo dia, no horário marcado, abre um alerta com som no canto da tela. Ajuste o horário e a mensagem e ligue o fluxo.', [T('trigger.schedule', { mode: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }), T('windows.alarm', { title: 'Reunião diária', message: 'Começa em 5 minutos.', level: 'warn', sound: 'Alarm01.wav', repeat: 'loop', button2: 'Adiar' })]) },
   { label: 'Avisar quando chegar arquivo', hint: 'vigia uma pasta', make: () => chain('Arquivo novo na pasta', 'Avisa quando um arquivo é criado ou alterado na pasta. Informe a pasta no primeiro nó e ligue o fluxo.', [T('trigger.file', { path: '' }), T('windows.notify', { title: 'Arquivo novo', message: '{{input.name}}' })]) },
   { label: 'Diário num arquivo', hint: 'data e hora, depois grava', make: () => chain('Diário num arquivo', 'Acrescenta uma linha com a data e a hora num arquivo de texto. Informe o arquivo no último nó.', [T('trigger.manual', { sample: 'anotação' }), T('data.datetime', { format: '%d/%m/%Y %H:%M' }), T('file.write', { path: '', content: '{{input}}', mode: 'append' })]) },
-  { label: 'Automatizar um site', hint: 'abrir, clicar, digitar, ler', need: 'plugin.navegador.site', make: () => chain('Automatizar um site', 'Abre o site, faz os passos e mostra o que leu. Troque o endereço e os passos pelos do seu site; senhas vão como {{cred:senha}}.', [T('trigger.manual', {}), T('plugin.navegador.site', { url: 'https://example.com', steps: [{ do: 'wait', on: 'h1', value: '' }, { do: 'read', on: 'h1', value: 'titulo' }], show: 'yes' }), T('util.output', {})]) },
+  { label: 'Automatizar um site', hint: 'abrir, clicar, digitar, ler', make: () => chain('Automatizar um site', 'Abre o site, faz os passos e mostra o que leu. Troque o endereço e clique em Gravar, no nó Navegador, para fazer os passos no próprio site; senhas vão como {{cred:senha}}.', [T('trigger.manual', {}), T('browser.run', { url: 'https://example.com', steps: [{ do: 'wait', on: 'h1', value: '' }, { do: 'read', on: 'h1', value: 'titulo' }], show: 'yes' }), T('util.output', {})]) },
+  { label: 'Repetir para cada arquivo', hint: 'um laço sobre uma lista', make: () => {
+    const t = T('trigger.manual', {}), l = T('file.list', { path: '', pattern: '*' }, 'Arquivos da pasta'), e = T('logic.each', { list: '{{input}}' }), n = T('windows.notify', { title: 'Arquivo', message: '{{input}}' }, 'Fazer algo com o arquivo'), o = T('util.output', {}, 'Depois de todos');
+    const f = chain('Para cada arquivo', 'Lista os arquivos de uma pasta e repete um trecho para cada um. Informe a pasta em "Arquivos da pasta" e troque a notificação pelo que quiser fazer com cada arquivo: o que sai de "cada item" roda uma vez por arquivo; o que sai de "fim", uma vez só.', [t, l, e]);
+    f.nodes.push(n, o); f.edges.push({ id: uid('e'), from: e.id, from_port: 'item', to: n.id, to_port: 'in' }, { id: uid('e'), from: e.id, from_port: 'done', to: o.id, to_port: 'in' });
+    return f;
+  } },
   { label: 'Endpoint com token', hint: 'recebe uma chamada e responde', make: () => {
     const t = T('trigger.webhook', { name: 'meu-endpoint', method: 'POST' }), s = T('sec.token', { got: '{{input.token}}', expected: '' }), l = T('sec.rate', { max: 30, per_s: 60, key: '{{input.token}}' }), q = T('sec.require', { value: '{{input.body}}', fields: ['nome'] });
     return chain('Endpoint com token', 'Recebe um POST com JSON, confere o token e os campos e responde. Preencha o token esperado no nó "Exigir token" (de preferência {{cred:nome}}) e ligue o fluxo.', [t, s, l, q, T('http.respond', { status: 200, type: 'json', body: '{"ok": true, "ola": "{{nodes.' + t.id + '.out.body.nome}}"}' })]);
@@ -372,7 +402,13 @@ function fit() {
 }
 
 // ---------- quadro: nós ----------
-function ports(n) { const s = spec(n.type); return { ins: s?.inputs || [], outs: s?.outputs || [] }; }
+function ports(n) {
+  const s = spec(n.type), outs = s?.outputs || [];
+  if (n.type !== 'logic.switch') return { ins: s?.inputs || [], outs };
+  // Escolher caminho: só as saídas dos casos preenchidos (e as que já têm fio), mais "outro"
+  const cases = switchCases(n), used = new Set((A.flow?.edges || []).filter(e => e.from === n.id).map(e => e.from_port));
+  return { ins: s?.inputs || [], outs: outs.filter(o => o === 'other' || used.has(o) || cases[o - 1] || o === '1') };
+}
 function portPos(id, dir, name) {
   const n = node(id); if (!n) return [0, 0];
   const p = ports(n), i = Math.max(0, (dir === 'in' ? p.ins : p.outs).indexOf(name));
@@ -406,6 +442,25 @@ function summary(n) {
     case 'flow.call': return A.flows.find(x => x.id === p.flow || x.name === p.flow)?.name || (p.flow ? 'fluxo que não existe mais' : 'escolha o fluxo');
     case 'logic.if': { const o = spec(n.type).fields.find(f => f.name === 'op').options.find(x => x.value === (p.op || 'eq')); return `${one(p.value)} ${o?.label || ''}${['empty', 'not_empty', 'true'].includes(p.op) ? '' : ' ' + one(p.equals)}`; }
     case 'util.delay': return `${p.seconds} s`;
+    case 'logic.each': return 'cada item de ' + (one(p.list) || 'uma lista');
+    case 'logic.repeat': return `${one(p.times) || 0} ${String(p.times) === '1' ? 'vez' : 'vezes'}`;
+    case 'logic.while': { const o = spec(n.type).fields.find(f => f.name === 'op').options.find(x => x.value === (p.op || 'not_empty')); return `enquanto ${one(p.value)} ${o?.label || ''}${['empty', 'not_empty', 'true'].includes(p.op) ? '' : ' ' + one(p.equals)}`; }
+    case 'logic.try': return +p.attempts > 1 ? `até ${p.attempts} tentativas` : 'se falhar, segue por "deu erro"';
+    case 'logic.switch': { const k = switchCases(n).filter(Boolean).length; return `${one(p.value)} · ${k} ${k === 1 ? 'caso' : 'casos'}`; }
+    case 'logic.all': { const k = (p.rules || []).length; return k ? `${k} ${k === 1 ? 'condição' : 'condições'} · ${p.mode === 'any' ? 'pelo menos uma' : 'todas'}` : 'sem condições ainda'; }
+    case 'logic.var': return `${{ set: 'guardar em', add: 'somar em', append: 'acrescentar a', get: 'ler', clear: 'esvaziar' }[p.op] || ''} ${one(p.name)}`;
+    case 'logic.break': case 'logic.next': return '';
+    case 'browser.run': { const k = (p.steps || []).length; return [one(p.url) || 'na página aberta', k ? k + (k === 1 ? ' passo' : ' passos') : 'sem passos ainda'].join(' · '); }
+    case 'ssh.run': return [one(p.host), one(p.command)].filter(Boolean).join(' · ');
+    case 'ssh.copy': return `${p.direction === 'download' ? 'baixar' : 'enviar'} ${one(p.direction === 'download' ? p.remote : p.local)}`;
+    case 'mail.send': { const to = Array.isArray(p.to) ? p.to : [p.to]; return [to.filter(Boolean).length ? 'para ' + one(to.filter(Boolean).join(', ')) : 'sem destinatário', one(p.subject)].filter(Boolean).join(' · '); }
+    case 'mail.read': return [one(p.user) || one(p.host), p.which === 'all' ? 'todas' : 'não lidas', one(p.subject) && 'assunto: ' + one(p.subject)].filter(Boolean).join(' · ');
+    case 'ftp.files': return `${{ list: 'listar', download: 'baixar', upload: 'enviar', delete: 'apagar' }[p.op] || ''} ${one(p.remote)}`;
+    case 'db.query': return one(p.sql);
+    case 'mqtt.publish': return [one(p.topic), one(p.message)].filter(Boolean).join(' · ');
+    case 'notify.telegram': return one(p.text);
+    case 'net.ping': return one(p.host);
+    case 'net.wol': return one(p.mac);
     case 'windows.command': return one([p.program, ...(Array.isArray(p.args) ? p.args : [])].join(' '));
     case 'windows.notify': return one(p.message) || one(p.title);
     case 'http.request': return `${p.method || 'GET'} ${one(p.url)}`;
@@ -453,9 +508,9 @@ function fillNode(e, n) {
     // rótulo só quando o lado tem mais de uma bolinha: "entrada" e "saída" sozinhas não dizem nada
     // ao lado de cada bolinha, o formato do dado: o que entra (esquerda) e o que sai (direita)
     const ta = a && typeOf(s, 'takes'), tb = b && typeOf(s, 'gives'), tint = (t) => TYPES[t]?.c ? { top, '--cat': TYPES[t].c } : { top };
-    body.append(...[el('div.am-row', el('span.am-pl', ins.length > 1 && a ? PORT_LABEL[a] || a : '', ta && typeChip(ta, 'takes')), el('span.am-pl.out', outs.length > 1 && b ? PORT_LABEL[b] || b : '', tb && typeChip(tb, 'gives'))),
+    body.append(...[el('div.am-row', el('span.am-pl', ins.length > 1 && a ? PORT_LABEL[a] || a : '', ta && typeChip(ta, 'takes')), el('span.am-pl.out', outs.length > 1 && b ? portName(n, b) : '', tb && typeChip(tb, 'gives'))),
       a && el('span.am-port.in', { dataset: { port: a, dir: 'in' }, style: tint(ta), title: 'Entrada: arraste até uma saída' }),
-      b && el('span.am-port.out', { dataset: { port: b, dir: 'out' }, style: tint(tb), title: `Saída${outs.length > 1 ? ' "' + (PORT_LABEL[b] || b) + '"' : ''}: arraste até a entrada de outro nó` }),
+      b && el('span.am-port.out', { dataset: { port: b, dir: 'out' }, style: tint(tb), title: `Saída${outs.length > 1 ? ' "' + (portName(n, b)) + '"' : ''}: arraste até a entrada de outro nó` }),
       b && !used.has(b) && el('button.am-plus', { type: 'button', dataset: { plus: b }, style: { top }, title: 'Continuar o fluxo a partir daqui', html: IC.plus })].filter(Boolean));
   }
   e.replaceChildren(
@@ -1022,7 +1077,7 @@ function field(n, f) {
     extra = el('button.am-link', { type: 'button', title: 'Usar o que veio de outro nó' }, '+ dado');
     extra.onclick = (e) => { const inside = pathsOf(incoming(n), 14); bs.showMenu(e, [
       { label: 'O que chegou neste nó', k: '{{input}}', action: () => insertAt(input, '{{input}}') },
-      ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Saída de ${titleOf(u)}${spec(u.type).outputs.length > 1 ? ' (' + (PORT_LABEL[p] || p) + ')' : ''}`, action: () => insertAt(input, `{{nodes.${u.id}.${p}}}`) }))),
+      ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Saída de ${titleOf(u)}${spec(u.type).outputs.length > 1 ? ' (' + (portName(u, p)) + ')' : ''}`, action: () => insertAt(input, `{{nodes.${u.id}.${p}}}`) }))),
       // os campos do JSON que chega aqui (da última execução, ou do exemplo do nó anterior)
       ...(inside.length ? ['-', ...pathItems(inside, (path) => insertAt(input, `{{input.${path}}}`))] : []),
       // senhas e tokens guardados no Automator: entra só o nome, o valor fica cifrado
@@ -1104,7 +1159,7 @@ function runsBlock() {
     for (const x of r.nodes || []) {
       if (x.status === 'skipped') continue;
       const n = node(x.id), out = x.output && Object.keys(x.output).length === 1 ? Object.values(x.output)[0] : x.output;
-      d.append(el('div.am-rnode', el('b', n ? titleOf(n) : 'nó removido'), el('span.am-tag.' + x.status, STATUS[x.status] + (x.ms != null ? ' · ' + fmtMs(x.ms) : ''))));
+      d.append(el('div.am-rnode' + (x.round ? '.in' : ''), el('b', n ? titleOf(n) : 'nó removido', x.round ? el('i.am-round', ' · volta ' + x.round) : '', x.rounds ? el('i.am-round', ' · ' + x.rounds) : ''), el('span.am-tag.' + x.status, STATUS[x.status] + (x.ms != null ? ' · ' + fmtMs(x.ms) : ''))));
       if (x.error) d.append(el('pre.am-out.err', x.error)); else if (x.status === 'completed' && show(out)) d.append(el('pre.am-out', show(out)));
     }
     box.append(d);
@@ -1151,7 +1206,7 @@ function renderInspectorInner() {
         el('label.am-field', el('span.am-flabel', el('span', 'Nome')), title),
         (s?.fields || []).filter(visible).map(f2 => field(n, f2)),
         n.type === 'ai.openrouter' && el('button.chip.am-wide', { type: 'button', onclick: () => plugin.vault.request('openrouter') }, el('span', { html: IC.key }), 'Guardar o token no Cofre'),
-        n.type === 'trigger.webhook' && el('div.am-hook', el('code', hookUrl(n.params.name)), el('button.icon-btn', { type: 'button', title: 'Copiar o endereço', html: IC.copy, onclick: () => { bs.copyText(hookUrl(n.params.name)); bs.toast('Endereço copiado', 'ok'); } })),
+        n.type === 'trigger.webhook' && hookBlock(n),
         AUTO.includes(n.type) && el('p.am-hint', f.active ? `Ligado${n.type === 'trigger.schedule' && f.next_run ? ': próxima execução ' + fmtWhen(f.next_run) : ''}.` : 'Este gatilho só dispara com o interruptor "Ligado" aceso, na barra de cima.'),
         runBlock(n.id),
         el('div.am-acts', el('button.chip', { type: 'button', onclick: () => toggleDisabled([n.id]) }, n.disabled ? 'Ligar nó' : 'Desligar nó'), el('button.chip.danger', { type: 'button', onclick: () => removeNodes([n.id]) }, 'Excluir nó'))));

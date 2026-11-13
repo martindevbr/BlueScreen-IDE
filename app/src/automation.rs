@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+mod browser;
+mod links;
+
 static STORE: Mutex<()> = Mutex::new(());
 static RUNNING: LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = LazyLock::new(Default::default);
 static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
@@ -438,9 +441,9 @@ fn ops_catalog() -> Value {
         {"type":"trigger.webhook","name":"Endpoint HTTP","category":"Gatilhos","desc":"Começa quando alguém chama o endereço do fluxo. O fluxo responde.","inputs":[],"outputs":["out"],
          "params":{"name":"meu-endpoint","method":"any","who":"local","wait_s":30},
          "fields":[
-            {"name":"name","label":"Nome do endpoint","kind":"text","help":"Letras, números e hífen. Entrega method, query, headers, body, raw e token (do Authorization: Bearer, do X-API-Key ou de ?token=)."},
+            {"name":"name","label":"Nome do endpoint","kind":"text","help":"Letras, números e hífen. O próximo nó recebe a chamada inteira em campos: method, url, query, headers, cookies, body, form, raw, token, ip, user_agent, time e outros (a lista está em Saída, acima)."},
             {"name":"method","label":"Método","kind":"select","options":[{"value":"any","label":"Qualquer um"},{"value":"GET","label":"GET"},{"value":"POST","label":"POST"},{"value":"PUT","label":"PUT"},{"value":"DELETE","label":"DELETE"}]},
-            {"name":"who","label":"Quem pode chamar","kind":"select","options":[{"value":"local","label":"Só este PC"},{"value":"lan","label":"A rede local também"}],"help":"Pela rede, só com o acesso pela rede local do BlueScreen ligado. Ponha um nó de Segurança logo depois."},
+            {"name":"who","label":"Quem pode chamar","kind":"select","options":[{"value":"local","label":"Só este PC"},{"value":"lan","label":"A rede local também"}],"help":"Para outro aparelho da sua rede chamar (celular, outro PC), o endereço é o da rede, mostrado abaixo: o que começa com 127.0.0.1 só funciona neste PC. Ligar o fluxo com esta opção liga o acesso pela rede local do BlueScreen. Quem chama o endpoint não precisa do PIN: ponha um nó de Segurança (Exigir token) logo depois."},
             {"name":"wait_s","label":"Esperar a resposta por até (segundos)","kind":"number","min":1,"max":300}
          ]},
         {"type":"http.respond","name":"Responder ao endpoint","category":"Rede","desc":"Define o que o Endpoint HTTP devolve a quem chamou.","inputs":["in"],"outputs":["out"],
@@ -738,8 +741,12 @@ fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
         "trigger.manual" => ("Nada: é o começo do fluxo.", "O texto do campo Entrada de exemplo (vazio se não preencher).", n),
         "trigger.schedule" | "trigger.startup" => ("Nada: é o começo do fluxo.", "Objeto com a hora do disparo, em milissegundos.", json!({"at": 1794485263000u64})),
         "trigger.file" => ("Nada: é o começo do fluxo.", "Objeto com o caminho vigiado.", json!({"path": "C:\\pasta\\arquivo.txt"})),
-        "trigger.webhook" => ("Nada: começa quando chamam o endereço.", "Objeto com a chamada: método, parâmetros da URL, cabeçalhos, corpo (já como JSON quando for) e o token enviado.",
-            json!({"method": "POST", "query": {"id": "42"}, "headers": {"content-type": "application/json"}, "body": {"campo": "valor"}, "raw": "{\"campo\":\"valor\"}", "token": ""})),
+        "trigger.webhook" => ("Nada: começa quando chamam o endereço.", "Objeto com a chamada inteira: método, endereço, parâmetros da URL, cabeçalhos, cookies, corpo (já como JSON quando for), formulário, token, quem chamou (ip, user_agent) e a hora.",
+            json!({"endpoint": "meu-endpoint", "method": "POST", "url": "/api/automator/hook?e=meu-endpoint&id=42", "path": "/api/automator/hook", "query_string": "e=meu-endpoint&id=42", "query": {"id": "42"},
+                "headers": {"content-type": "application/json", "user-agent": "curl/8.0"}, "cookies": {"sessao": "abc"}, "body": {"campo": "valor"}, "form": null, "raw": "{\"campo\":\"valor\"}",
+                "content_type": "application/json", "content_length": 17, "is_json": true, "token": "", "auth": {"scheme": "", "user": ""},
+                "ip": "192.168.0.25", "remote": true, "host": "192.168.0.10:4748", "user_agent": "curl/8.0", "referer": "", "origin": "", "language": "pt-BR",
+                "time": "2026-11-12T14:30:00-03:00", "timestamp": 1794504600000u64})),
         "logic.if" => ("Qualquer dado. O que se compara é o campo Valor.", "A mesma entrada, pela saída sim ou pela saída não.", n),
         "util.delay" | "windows.notify" | "windows.open" | "notify.chat" => ("Qualquer dado.", SAME, n),
         "logic.stop" => ("Qualquer dado.", "Nada: o fluxo para com a mensagem de erro.", n),
@@ -788,6 +795,14 @@ fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
         "media.info" => ("Nada em especial: o arquivo vem do campo.", "Objeto com duração, tamanho e formatos.", json!({"seconds": 93.4, "duration": "00:01:33", "size": 10485760, "format": "mov,mp4", "width": 1920, "height": 1080, "video": "h264", "audio": "aac"})),
         k if k.starts_with("image.") || k.starts_with("audio.") || k.starts_with("video.") => ("Nada em especial: o arquivo vem do campo (pode ser a saída de outro nó).", FILE, n),
         "time.window" => ("Qualquer dado: segue adiante sem mudar.", "A mesma entrada, pela saída sim (é dia e horário) ou não (fora do horário, ou dia de folga).", n),
+        "logic.each" => ("Uma lista (ou texto em JSON com uma lista).", "Pela saída item: um item por vez, que chega como {{input}} no trecho ligado ali ({{nodes.ID.index}} é a posição, {{nodes.ID.total}} o total). Pela saída done, uma vez no fim: a lista com o que o último nó do trecho entregou em cada volta.", n),
+        "logic.repeat" => ("Qualquer dado.", "Pela saída loop: a mesma entrada, uma vez por volta ({{nodes.ID.index}} é o número da volta). Pela saída done, no fim: a lista com o resultado de cada volta.", n),
+        "logic.while" => ("Qualquer dado.", "Pela saída loop: na primeira volta a entrada, depois o que a volta anterior entregou. Pela saída done, quando a condição deixa de valer: o último resultado.", n),
+        "logic.break" | "logic.next" => ("Qualquer dado.", "Nada: o laço termina (Sair do laço) ou passa para o próximo item (Próximo item).", n),
+        "logic.try" => ("Qualquer dado.", "Pela saída try: a mesma entrada, para o trecho protegido. Depois, pela saída ok: o que o último nó do trecho entregou; ou pela saída error: a mensagem do erro.", json!({"error": "Requisição HTTP: o servidor respondeu 500", "attempts": 3, "input": "o que tinha chegado"})),
+        "logic.switch" => ("Qualquer dado. O que se compara é o campo Valor.", "A mesma entrada, pela saída do primeiro caso que casar (1 a 5) ou por other.", n),
+        "logic.all" => ("Qualquer dado.", "A mesma entrada, pela saída sim ou pela saída não.", n),
+        "logic.var" => ("Qualquer dado, para usar no valor.", "O valor que ficou guardado na variável.", n),
         "time.now" => ("Nada em especial.", "A data e a hora de agora em campos.", json!({"date": "12/11/2026", "time": "14:30", "iso": "2026-11-12T14:30:00-03:00", "weekday": 4, "weekday_name": "quinta", "weekend": false, "day": 12, "month": 11, "year": 2026, "hour": 14, "minute": 30, "timestamp": 1794504600000u64})),
         "time.compare" => ("Qualquer dado: segue adiante sem mudar.", "A mesma entrada, pela saída sim ou não conforme a comparação das datas.", n),
         "time.shift" => ("Qualquer dado, para usar no campo Data.", "A data calculada, como texto no formato escolhido (ou número, ou campos).", n),
@@ -823,6 +838,10 @@ fn io_kind(kind: &str) -> Option<(&'static str, &'static str)> {
         "logic.if" | "logic.assert" | "util.delay" | "util.output" | "windows.notify" | "windows.open" | "windows.alarm" | "notify.chat" | "file.exists" | "time.window" | "time.compare" | "time.until" => ("any", "same"),
         "time.now" => ("none", "object"),
         "time.shift" => ("any", "text"),
+        "logic.each" => ("list", "any"),
+        "logic.break" | "logic.next" => ("any", "none"),
+        "logic.repeat" | "logic.while" | "logic.try" | "logic.var" => ("any", "any"),
+        "logic.switch" | "logic.all" => ("any", "same"),
         k if k.starts_with("sec.") => ("object", "same"),
         "util.text" | "data.datetime" | "file.read" | "windows.command" | "windows.powershell" | "windows.clipboard" | "agent.cli" | "ai.openrouter" => ("any", "text"),
         "text.replace" | "text.case" | "text.extract" => ("text", "text"),
@@ -1006,12 +1025,16 @@ const GEN_RULES: &str = "# Regras
 - Cada nó diz o que recebe e o que devolve (texto, JSON, lista, número, arquivo). Ligue a saída de um nó a outro que aceite aquele formato. Se um nó devolve texto e o próximo precisa de JSON, ponha um json.parse no meio; para tirar um campo de um JSON use json.get ou {{input.campo}}.
 - Dados entre nós: {{input}} é o que chegou no nó; {{input.campo.sub}} é um campo do JSON que chegou; {{nodes.ID.out}} (ou {{nodes.ID.true}}) é a saída de um nó anterior. Não existe outra expressão: nada de {{now}}, {{trigger...}} ou {{ID.campo}}. Só use campos que aparecem em 'saída' do nó de origem.
 - Nós com as portas true e false (Condição, Testar site, Testar API e parecidos) seguem por um caminho ou pelo outro: ligue from_port 'true' e/ou 'false'.
-- Todo nó que não é gatilho precisa de uma conexão chegando nele. Sem ciclos.
+- Todo nó que não é gatilho precisa de uma conexão chegando nele. Sem ciclos: nenhuma conexão volta para um nó anterior.
+- Para repetir um trecho use logic.each (uma vez por item de uma lista), logic.repeat (N vezes) ou logic.while (enquanto a condição valer). O trecho que repete é o que sai da porta 'item' (ou 'loop'); dentro dele {{input}} é o item da vez. O que vem depois do laço sai da porta 'done' e recebe a lista dos resultados. Um nó de dentro do laço não se liga a um nó de fora nem recebe conexão de fora: para ler um nó de fora use {{nodes.ID.out}}. logic.break sai do laço; logic.next pula para o próximo item.
+- Para não parar o fluxo num erro (ou tentar de novo), use logic.try: o trecho protegido sai da porta 'try'; depois siga por 'ok' ou por 'error'. Para mais de dois caminhos use logic.switch; para várias condições juntas, logic.all. Para contar ou acumular entre as voltas, logic.var e {{vars.nome}}.
 - Dê um title curto a cada nó, dizendo o que aquele passo faz neste fluxo.
 - Preencha os parâmetros com o que o pedido informou (endereços, pastas, horários, textos). O que o pedido não informou e o usuário precisa preencher ou conferir vai em 'notes', uma frase curta por item, dizendo em qual nó.
 - Senhas, tokens e chaves nunca ficam escritos no fluxo: use {{cred:nome}}, uma credencial do Automator ({{cred:nome.user}} é o usuário dela). Reaproveite as de 'Credenciais que já existem' quando servirem. O pedido pode trazer {{cred:nome}} no lugar de uma senha que o usuário escreveu: use exatamente essa referência onde a senha é usada. Se ainda houver uma senha ou token escrito no pedido, não o copie para o fluxo: dê um nome, use {{cred:nome}} e liste em 'secrets' como {\"name\":\"nome\",\"value\":\"o valor\"}.
 - {{cred:nome}} funciona nos campos dos nós e dentro do script de windows.powershell (fora de aspas simples). Não funciona nos argumentos de windows.command.
 - Dias e horários: para o fluxo rodar sozinho só em certos dias e horas, use trigger.schedule com 'days' e, no modo interval, window 'between' com 'from' e 'to'. Para decidir no meio do fluxo se agora é dia e hora de trabalho, use time.window (saídas true e false). Os dias são números: 1 segunda … 6 sábado, 0 domingo.\n- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho). Num script, o que chegou vem em $env:BS_INPUT e a saída é o que o script escrever.
+- Sites: para entrar num site, clicar, preencher e ler o que está na tela, use browser.run. Cada passo é {\"do\":ação,\"on\":onde,\"value\":valor}; 'on' é um seletor CSS ou texto=Rótulo do botão. Vários browser.run no mesmo fluxo continuam na mesma página (deixe 'url' vazio nos seguintes). Se não souber os seletores do site, deixe os passos que souber e avise em 'notes' que o usuário pode completar com o botão Gravar.
+- Servidores e serviços: ssh.run e ssh.copy (SSH e SFTP), mail.send e mail.read (e-mail), ftp.files, db.query (SQL), mqtt.publish, notify.telegram. Usuário e senha deles vêm de uma credencial: {{cred:nome.user}} e {{cred:nome}}.
 - Não execute nada nem altere arquivos agora: só descreva o fluxo.";
 const GEN_FORMAT: &str = "{\"name\":\"Nome\",\"description\":\"Para que serve\",\"notes\":[\"o que o usuário ainda precisa preencher ou conferir\"],\"secrets\":[],\"nodes\":[{\"id\":\"n1\",\"type\":\"trigger.manual\",\"title\":\"nome do passo\",\"params\":{\"sample\":\"\"},\"position\":[60,100]}],\"edges\":[{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"}]}";
 const GEN_EXAMPLE: &str = "Pedido: A cada 30 minutos, chamar https://api.exemplo.com/status com o token {{cred:token-exemplo}} e me avisar se o campo ok vier falso.
@@ -1296,7 +1319,7 @@ fn flow_issues(f: &Flow) -> Vec<String> {
         let text = n.params.to_string();
         for c in ANY.captures_iter(&text) {
             let k = &c[1];
-            if !(k == "input" || ["input.", "nodes.", "vault:", "cred:", "secret:"].iter().any(|p| k.starts_with(p))) {
+            if !(k == "input" || ["input.", "nodes.", "vars.", "vault:", "cred:", "secret:"].iter().any(|p| k.starts_with(p))) {
                 out.push(format!("{name}: {{{{{k}}}}} não é uma expressão que existe (use {{{{input}}}}, {{{{input.campo}}}} ou {{{{nodes.ID.out}}}})"));
             }
         }
@@ -1314,6 +1337,68 @@ fn flow_issues(f: &Flow) -> Vec<String> {
     out.sort(); out.dedup();
     out.truncate(20);
     out
+}
+/// Nós de lógica que organizam o fluxo: laços, tentativas, caminhos e variáveis. Os laços e o Tentar têm um trecho
+/// "de dentro" (o que sai da primeira porta), que o motor roda várias vezes ou sob proteção (ver `Run::container`).
+fn logic_catalog() -> Value {
+    let ops = json!([{"value":"eq","label":"é igual a"},{"value":"ne","label":"é diferente de"},{"value":"contains","label":"contém"},{"value":"not_contains","label":"não contém"},{"value":"gt","label":"é maior que"},{"value":"lt","label":"é menor que"},{"value":"empty","label":"está vazio"},{"value":"not_empty","label":"não está vazio"},{"value":"true","label":"é verdadeiro"}]);
+    json!([
+        {"type":"logic.each","name":"Para cada item","category":"Lógica","desc":"Repete um trecho do fluxo uma vez para cada item de uma lista.","inputs":["in"],"outputs":["item","done"],
+         "params":{"list":"{{input}}","on_error":"stop","wait_s":0,"max":1000},
+         "fields":[
+            {"name":"list","label":"Lista","kind":"text","help":"O que você ligar em \"cada item\" roda uma vez por item: lá, {{input}} é o item. O que ligar em \"fim\" roda uma vez só, depois de todos, e recebe a lista com o resultado de cada volta."},
+            {"name":"on_error","label":"Se um item der erro","kind":"select","options":[{"value":"stop","label":"Parar o fluxo"},{"value":"continue","label":"Anotar e seguir para o próximo"}]},
+            {"name":"wait_s","label":"Esperar entre os itens (segundos)","kind":"number","min":0,"max":3600},
+            {"name":"max","label":"Limite de itens","kind":"number","min":1,"max":100000,"help":"Uma lista maior que isso para o fluxo, em vez de rodar sem fim."}
+         ]},
+        {"type":"logic.repeat","name":"Repetir","category":"Lógica","desc":"Repete um trecho do fluxo um número certo de vezes.","inputs":["in"],"outputs":["loop","done"],
+         "params":{"times":3,"wait_s":0,"on_error":"stop"},
+         "fields":[
+            {"name":"times","label":"Quantas vezes","kind":"text","help":"Um número, ou uma expressão que vire número. O que você ligar em \"repetir\" roda esse tanto de vezes; \"fim\" roda depois."},
+            {"name":"wait_s","label":"Esperar entre as voltas (segundos)","kind":"number","min":0,"max":3600},
+            {"name":"on_error","label":"Se uma volta der erro","kind":"select","options":[{"value":"stop","label":"Parar o fluxo"},{"value":"continue","label":"Anotar e seguir"}]}
+         ]},
+        {"type":"logic.while","name":"Repetir enquanto","category":"Lógica","desc":"Repete um trecho do fluxo enquanto uma condição valer.","inputs":["in"],"outputs":["loop","done"],
+         "params":{"value":"{{input}}","op":"not_empty","equals":"","wait_s":0,"max":100},
+         "fields":[
+            {"name":"value","label":"Valor","kind":"text","help":"Conferido antes de cada volta. Na primeira, {{input}} é o que chegou no nó; nas seguintes, o que a volta anterior entregou. Também dá para olhar uma variável: {{vars.nome}}."},
+            {"name":"op","label":"Continua enquanto","kind":"select","options":ops.clone()},
+            {"name":"equals","label":"Comparar com","kind":"text","show":{"op":["eq","ne","contains","not_contains","gt","lt"]}},
+            {"name":"wait_s","label":"Esperar entre as voltas (segundos)","kind":"number","min":0,"max":3600},
+            {"name":"max","label":"Limite de voltas","kind":"number","min":1,"max":10000,"help":"Proteção contra laço sem fim: ao passar disso, o fluxo para com erro."}
+         ]},
+        {"type":"logic.break","name":"Sair do laço","category":"Lógica","desc":"Encerra o laço agora e segue pelo \"fim\" dele.","inputs":["in"],"outputs":[],"params":{},"fields":[]},
+        {"type":"logic.next","name":"Próximo item","category":"Lógica","desc":"Pula o resto desta volta e vai para o próximo item do laço.","inputs":["in"],"outputs":[],"params":{},"fields":[]},
+        {"type":"logic.try","name":"Tentar","category":"Lógica","desc":"Roda um trecho e, se ele falhar, tenta de novo ou segue por outro caminho em vez de parar o fluxo.","inputs":["in"],"outputs":["try","ok","error"],
+         "params":{"attempts":1,"wait_s":5},
+         "fields":[
+            {"name":"attempts","label":"Tentativas","kind":"number","min":1,"max":20,"help":"O que você ligar em \"tentar\" é o trecho protegido. Se ele falhar em todas as tentativas, o fluxo segue por \"deu erro\" (com a mensagem em {{input.error}}); sem nada ligado ali, o fluxo falha."},
+            {"name":"wait_s","label":"Esperar antes de tentar de novo (segundos)","kind":"number","min":0,"max":3600}
+         ]},
+        {"type":"logic.switch","name":"Escolher caminho","category":"Lógica","desc":"Segue por uma saída diferente conforme o valor: até cinco casos e o caminho \"outro\".","inputs":["in"],"outputs":["1","2","3","4","5","other"],
+         "params":{"value":"{{input}}","mode":"eq","cases":[]},
+         "fields":[
+            {"name":"value","label":"Valor","kind":"text"},
+            {"name":"mode","label":"Como comparar","kind":"select","options":[{"value":"eq","label":"É igual ao caso"},{"value":"contains","label":"Contém o caso"},{"value":"regex","label":"Casa com a expressão regular"}]},
+            {"name":"cases","label":"Casos","kind":"lines","help":"Um por linha, até cinco. A primeira linha é a saída 1, a segunda a saída 2… Se nenhum casar, segue por \"outro\"."}
+         ]},
+        {"type":"logic.all","name":"Várias condições","category":"Lógica","desc":"Confere várias condições de uma vez: todas, ou pelo menos uma.","inputs":["in"],"outputs":["true","false"],
+         "params":{"mode":"all","rules":[]},
+         "fields":[
+            {"name":"mode","label":"Segue por sim quando","kind":"select","options":[{"value":"all","label":"Todas valem (E)"},{"value":"any","label":"Pelo menos uma vale (OU)"}]},
+            {"name":"rules","label":"Condições","kind":"rows","add":"Condição","columns":[
+                {"name":"value","placeholder":"Valor: {{input.campo}}"},
+                {"name":"op","kind":"select","options":ops.clone()},
+                {"name":"equals","placeholder":"Comparar com","hide":{"op":["empty","not_empty","true"]}}]}
+         ]},
+        {"type":"logic.var","name":"Variável","category":"Lógica","desc":"Guarda um valor com nome para usar em qualquer nó depois: um contador, um total, uma lista que cresce a cada volta.","inputs":["in"],"outputs":["out"],
+         "params":{"name":"total","op":"set","value":"{{input}}"},
+         "fields":[
+            {"name":"name","label":"Nome","kind":"text","help":"Depois, em qualquer campo: {{vars.nome}}. Vale até o fim desta execução."},
+            {"name":"op","label":"Ação","kind":"select","options":[{"value":"set","label":"Guardar o valor"},{"value":"add","label":"Somar ao número guardado"},{"value":"append","label":"Acrescentar à lista"},{"value":"get","label":"Só ler"},{"value":"clear","label":"Esvaziar"}]},
+            {"name":"value","label":"Valor","kind":"text","show":{"op":["set","add","append"]},"help":"Para somar: vazio soma 1."}
+         ]},
+    ])
 }
 /// Nós de data e hora: saber se é dia e horário de trabalho, ler o agora em campos, comparar e calcular datas, esperar.
 fn time_catalog() -> Value {
@@ -1682,12 +1767,15 @@ async fn qa_node(kind: &str, p: &Value) -> ApiResult<Value> {
 /// Gravador de um nó de plugin (`"record": { "args": [...] }` no automator.json): o programa fica rodando e cada linha
 /// JSON que ele escreve é um passo. A tela busca as linhas novas com "poll" e encerra com "stop" (a entrada do
 /// programa fecha; se ele não sair sozinho em alguns segundos, é finalizado).
-struct Rec { id: String, lines: Arc<Mutex<Vec<Value>>>, done: Arc<std::sync::atomic::AtomicBool>, err: Arc<Mutex<String>>, stdin: Option<tokio::process::ChildStdin>, child: tokio::process::Child }
+struct Rec { id: String, lines: Arc<Mutex<Vec<Value>>>, done: Arc<std::sync::atomic::AtomicBool>, err: Arc<Mutex<String>>, stdin: Option<tokio::process::ChildStdin>, child: Option<tokio::process::Child>,
+    /// gravador do nó Navegador do núcleo: avisar aqui encerra a gravação
+    stop: Option<tokio::sync::oneshot::Sender<()>> }
 static REC: LazyLock<Mutex<Option<Rec>>> = LazyLock::new(Default::default);
 fn rec_stop() {
     if let Some(mut r) = REC.lock().take() {
         drop(r.stdin.take());
-        tokio::spawn(async move { tokio::time::sleep(Duration::from_secs(4)).await; let _ = r.child.start_kill(); });
+        if let Some(s) = r.stop.take() { let _ = s.send(()); }
+        if let Some(mut child) = r.child.take() { tokio::spawn(async move { tokio::time::sleep(Duration::from_secs(4)).await; let _ = child.start_kill(); }); }
     }
 }
 async fn record(b: &Value) -> ApiResult<Value> {
@@ -1696,6 +1784,15 @@ async fn record(b: &Value) -> ApiResult<Value> {
     let action = b["action"].as_str().unwrap_or("");
     if action == "start" {
         let s = spec(b["type"].as_str().unwrap_or("")).ok_or_else(|| fail("o plugin deste nó está desligado ou foi removido", 409))?;
+        if s["record"]["core"] == true {
+            rec_stop();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let rec = Rec { id: id(), lines: Default::default(), done: Default::default(), err: Default::default(), stdin: None, child: None, stop: Some(tx) };
+            tokio::spawn(browser::record(b["params"].clone(), rec.lines.clone(), rec.done.clone(), rec.err.clone(), rx));
+            let rid = rec.id.clone();
+            *REC.lock() = Some(rec);
+            return Ok(json!({"id": rid}));
+        }
         let args: Vec<String> = s["record"]["args"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
         if args.is_empty() { return Err(fail("este nó não tem gravador", 400)); }
         rec_stop();
@@ -1707,17 +1804,17 @@ async fn record(b: &Value) -> ApiResult<Value> {
         let mut child = cmd.spawn().map_err(|e| fail(format!("não deu para abrir o gravador ({program}): {e}"), 500))?;
         let mut stdin = child.stdin.take();
         if let Some(i) = stdin.as_mut() { i.write_all(format!("{}\n", json!({"params": b["params"], "data": s["data"]})).as_bytes()).await?; i.flush().await?; }
-        let rec = Rec { id: id(), lines: Default::default(), done: Default::default(), err: Default::default(), stdin, child };
+        let (out, errs) = (child.stdout.take(), child.stderr.take());
+        let rec = Rec { id: id(), lines: Default::default(), done: Default::default(), err: Default::default(), stdin, child: Some(child), stop: None };
         let (lines, done, err) = (rec.lines.clone(), rec.done.clone(), rec.err.clone());
-        let mut rec = rec;
-        if let Some(out) = rec.child.stdout.take() {
+        if let Some(out) = out {
             tokio::spawn(async move {
                 let mut r = tokio::io::BufReader::new(out).lines();
                 while let Ok(Some(l)) = r.next_line().await { if let Ok(v) = serde_json::from_str::<Value>(l.trim()) { let mut g = lines.lock(); if g.len() < 2000 { g.push(v); } } }
                 done.store(true, Relaxed);
             });
         }
-        if let Some(mut e) = rec.child.stderr.take() {
+        if let Some(mut e) = errs {
             tokio::spawn(async move { let mut t = String::new(); let _ = e.read_to_string(&mut t).await; *err.lock() = t.trim().chars().take(600).collect(); });
         }
         let rid = rec.id.clone();
@@ -1771,21 +1868,26 @@ pub fn catalog() -> Value {
     all.extend(json_catalog().as_array().cloned().unwrap_or_default());
     all.extend(qa_catalog().as_array().cloned().unwrap_or_default());
     all.extend(time_catalog().as_array().cloned().unwrap_or_default());
+    all.extend(logic_catalog().as_array().cloned().unwrap_or_default());
+    all.extend(links::catalog().as_array().cloned().unwrap_or_default());
+    all.extend(browser::catalog().as_array().cloned().unwrap_or_default());
     all.extend(plugin_nodes());
     // o que cada nó espera e entrega (o plugin pode trazer o dele no automator.json)
     for s in &mut all {
-        let Some((expects, returns, sample)) = io_doc(s["type"].as_str().unwrap_or("")) else { continue };
+        let kind = s["type"].as_str().unwrap_or("");
+        let Some((expects, returns, sample)) = io_doc(kind).or_else(|| links::io_doc(kind)).or_else(|| browser::io_doc(kind)) else { continue };
         if s["expects"].as_str().is_none_or(str::is_empty) { s["expects"] = json!(expects); }
         if s["returns"].as_str().is_none_or(str::is_empty) { s["returns"] = json!(returns); }
         if s.get("sample").is_none() && !sample.is_null() { s["sample"] = sample; }
     }
     for s in &mut all {
-        let Some((takes, gives)) = io_kind(s["type"].as_str().unwrap_or("")) else { continue };
+        let kind = s["type"].as_str().unwrap_or("");
+        let Some((takes, gives)) = io_kind(kind).or_else(|| links::io_kind(kind)).or_else(|| (kind == "browser.run").then_some(("any", "object"))) else { continue };
         if s["takes"].as_str().is_none_or(str::is_empty) { s["takes"] = json!(takes); }
         if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
     }
     // a paleta mostra um grupo por categoria, nesta ordem; as categorias dos plugins vêm depois, na ordem em que chegam
-    const ORDER: [&str; 17] = ["Gatilhos", "Lógica", "Data e hora", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Rede", "QA", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
+    const ORDER: [&str; 19] = ["Gatilhos", "Lógica", "Data e hora", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Navegador", "Rede", "Conexões", "QA", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
     let mut extra: Vec<String> = vec![];
     for s in &all { let c = s["category"].as_str().unwrap_or(""); if !ORDER.contains(&c) && !extra.iter().any(|e| e == c) { extra.push(c.to_string()); } }
     all.sort_by_key(|s| { let c = s["category"].as_str().unwrap_or(""); ORDER.iter().position(|o| *o == c).unwrap_or_else(|| ORDER.len() + extra.iter().position(|e| e == c).unwrap_or(0)) });
@@ -1847,7 +1949,8 @@ fn validate(f: &Flow) -> ApiResult<Vec<usize>> {
         out.push(i);
         for &b in &next[i] { degree[b] -= 1; }
     }
-    if out.len() != f.nodes.len() { return Err(fail("o fluxo tem um ciclo: uma conexão volta para um nó anterior", 400)); }
+    if out.len() != f.nodes.len() { return Err(fail("o fluxo tem um ciclo: uma conexão volta para um nó anterior. Para repetir um trecho, use Para cada item, Repetir ou Repetir enquanto.", 400)); }
+    check_bodies(f)?;
     Ok(out)
 }
 /// Próximo disparo da Agenda do fluxo depois de `from` (ms): por intervalo, ou no horário local nos dias marcados.
@@ -1916,7 +2019,7 @@ fn dig(v: &Value, path: &str) -> Option<Value> {
     Some(cur)
 }
 fn fill(v: &Value, input: &Value, outputs: &HashMap<String, Value>) -> ApiResult<Value> {
-    static RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{\s*(input(?:\.[\w.-]+)?|nodes\.[\w.-]+)\s*\}\}").unwrap());
+    static RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{\s*(input(?:\.[\w.-]+)?|nodes\.[\w.-]+|vars\.[\w.-]+)\s*\}\}").unwrap());
     match v {
         Value::String(s) => {
             let resolve = |key: &str| -> ApiResult<Value> {
@@ -1929,6 +2032,8 @@ fn fill(v: &Value, input: &Value, outputs: &HashMap<String, Value>) -> ApiResult
                     let out = outputs.get(node).ok_or_else(|| fail(format!("{{{{{key}}}}}: esse nó ainda não rodou neste caminho"), 400))?;
                     return dig(out, rest).ok_or_else(|| fail(format!("{{{{{key}}}}}: saída ou campo não existe"), 400));
                 }
+                // variável que ainda não foi definida vale vazio (um contador começa do nada)
+                if let Some(path) = key.strip_prefix("vars.") { return Ok(outputs.get("$vars").and_then(|v| dig(v, path)).unwrap_or_else(|| json!(""))); }
                 Err(fail(format!("expressão desconhecida: {key}"), 400))
             };
             // Referências do cofre ({{vault:..}}) continuam intactas para os serviços do núcleo.
@@ -2848,6 +2953,8 @@ async fn ops_node(n: &Node, p: &Value, input: &Value) -> Option<ApiResult<Value>
 async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
     if n.kind.starts_with("qa.") { return qa_node(&n.kind, &p).await; }
     if n.kind.starts_with("time.") { return time_node(&n.kind, &p, input).await; }
+    if n.kind.starts_with("browser.") { return browser::node(&n.kind, &p).await; }
+    if let Some(r) = links::node(&n.kind, &p, &input).await { return r; }
     if let Some(r) = ops_node(n, &p, &input).await { return r; }
     let out = match n.kind.as_str() {
         "trigger.manual" => p.get("sample").cloned().unwrap_or(Value::Null),
@@ -2863,6 +2970,33 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
             } else {
                 json!({"false":input})
             });
+        }
+        "logic.switch" => {
+            // o primeiro caso que casar decide a saída; nenhum: "outro"
+            let (value, mode) = (stringify(&p["value"]), p["mode"].as_str().unwrap_or("eq"));
+            let cases = list_of(&p["cases"]);
+            if cases.len() > 5 { return Err(fail("Escolher caminho aceita até 5 casos; para mais, encadeie outro nó na saída \"outro\"", 400)); }
+            let hit = cases.iter().position(|c| {
+                let c = stringify(c);
+                if c.trim().is_empty() { return false; }
+                match mode {
+                    "contains" => value.to_lowercase().contains(&c.trim().to_lowercase()),
+                    "regex" => regex::Regex::new(c.trim()).is_ok_and(|r| r.is_match(&value)),
+                    _ => condition(&json!({"value": value, "op": "eq", "equals": c})).unwrap_or(false),
+                }
+            });
+            let port = hit.map(|i| (i + 1).to_string()).unwrap_or_else(|| "other".into());
+            let mut m = serde_json::Map::new();
+            m.insert(port, input);
+            return Ok(Value::Object(m));
+        }
+        "logic.all" => {
+            let rules: Vec<Value> = list_of(&p["rules"]).into_iter().filter(|r| r.is_object()).collect();
+            if rules.is_empty() { return Err(fail("adicione pelo menos uma condição", 400)); }
+            let mut passed = vec![];
+            for r in &rules { passed.push(condition(&json!({"value": r["value"], "op": r["op"].as_str().unwrap_or("eq"), "equals": r["equals"]}))?); }
+            let pass = if p["mode"] == "any" { passed.iter().any(|x| *x) } else { passed.iter().all(|x| *x) };
+            return Ok(if pass { json!({"true": input}) } else { json!({"false": input}) });
         }
         "util.delay" => {
             let secs = p["seconds"]
@@ -3106,7 +3240,7 @@ fn brief(v: &Value) -> Value {
 }
 /// Histórico de uma chamada de endpoint: tokens, cookies e assinaturas não ficam gravados.
 fn redact(v: &Value) -> Value {
-    const HIDE: [&str; 8] = ["token", "authorization", "x-api-key", "cookie", "set-cookie", "x-hub-signature", "x-hub-signature-256", "proxy-authorization"];
+    const HIDE: [&str; 9] = ["token", "authorization", "x-api-key", "cookie", "cookies", "set-cookie", "x-hub-signature", "x-hub-signature-256", "proxy-authorization"];
     match v {
         Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), if HIDE.contains(&k.to_lowercase().as_str()) && !v.is_null() && v != "" { json!("••••••") } else { redact(v) })).collect()),
         Value::Array(a) => Value::Array(a.iter().map(redact).collect()),
@@ -3123,82 +3257,297 @@ fn update_run(run_id: &str, f: impl FnOnce(&mut Value)) -> ApiResult<()> {
         Ok(())
     })
 }
+/// Nós que têm um trecho do fluxo dentro deles: o que sai da porta indicada roda várias vezes (laços) ou sob
+/// proteção (Tentar). As outras portas do nó seguem depois que o trecho termina.
+fn body_port(kind: &str) -> Option<&'static str> {
+    match kind { "logic.each" => Some("item"), "logic.while" | "logic.repeat" => Some("loop"), "logic.try" => Some("try"), _ => None }
+}
+/// Os nós alcançados a partir de um nó (por uma porta, ou por todas), por qualquer caminho.
+fn reach(f: &Flow, from: &str, port: Option<&str>) -> HashSet<String> {
+    let mut seen = HashSet::new();
+    let mut stack: Vec<&str> = f.edges.iter().filter(|e| e.from == from && port.is_none_or(|p| e.from_port == p)).map(|e| e.to.as_str()).collect();
+    while let Some(x) = stack.pop() { if seen.insert(x.to_string()) { stack.extend(f.edges.iter().filter(|e| e.from == x).map(|e| e.to.as_str())); } }
+    seen
+}
+fn node_title(n: &Node) -> String {
+    n.title.clone().filter(|t| !t.trim().is_empty()).or_else(|| spec(&n.kind).and_then(|s| s["name"].as_str().map(String::from))).unwrap_or_else(|| n.kind.clone())
+}
+/// Laços e Tentar: o trecho de dentro não pode se misturar com o que vem depois nem receber conexão de fora (o de
+/// dentro roda várias vezes, o de fora uma só); Sair do laço e Próximo item só existem dentro de um laço.
+fn check_bodies(f: &Flow) -> ApiResult<()> {
+    let title = |id: &str| f.nodes.iter().find(|n| n.id == id).map(node_title).unwrap_or_default();
+    let loops: Vec<HashSet<String>> = f.nodes.iter().filter(|n| !n.disabled && matches!(n.kind.as_str(), "logic.each" | "logic.while" | "logic.repeat")).map(|n| reach(f, &n.id, body_port(&n.kind))).collect();
+    for n in f.nodes.iter().filter(|n| !n.disabled) {
+        if matches!(n.kind.as_str(), "logic.break" | "logic.next") && !loops.iter().any(|b| b.contains(&n.id)) {
+            return Err(fail(format!("\"{}\" só funciona dentro de um laço: ligue-o depois da saída de repetição de Para cada item, Repetir ou Repetir enquanto", node_title(n)), 400));
+        }
+        let Some(port) = body_port(&n.kind) else { continue };
+        let body = reach(f, &n.id, Some(port));
+        let inside = match port { "item" => "cada item", "loop" => "repetir", _ => "tentar" };
+        for e in f.edges.iter().filter(|e| e.from == n.id && e.from_port != port) {
+            let mut after = reach(f, &e.to, None);
+            after.insert(e.to.clone());
+            if let Some(x) = after.iter().find(|x| body.contains(*x)) {
+                return Err(fail(format!("\"{}\": o nó \"{}\" está ligado ao trecho de dentro (saída {inside}) e também ao que vem depois dele. Separe os dois caminhos.", node_title(n), title(x)), 400));
+            }
+        }
+        if let Some(e) = f.edges.iter().find(|e| body.contains(&e.to) && e.from != n.id && !body.contains(&e.from)) {
+            return Err(fail(format!("\"{}\": o nó \"{}\" roda dentro dele (saída {inside}) e recebe uma conexão de fora. Dentro do trecho, leia um nó de fora com {{{{nodes.ID.out}}}} em vez de ligar.", node_title(n), title(&e.to)), 400));
+        }
+    }
+    Ok(())
+}
+/// Como um trecho do fluxo terminou: seguiu, pediu para sair do laço, pediu o próximo item, falhou ou foi cancelado.
+enum Step { Go, Break, Next, Fail(String), Cancel }
+enum Halt { Err(ApiError), Step(Step) }
+impl From<ApiError> for Halt { fn from(e: ApiError) -> Self { Halt::Err(e) } }
+tokio::task_local! { /// a execução (do histórico) em que o nó está rodando: o navegador do fluxo é guardado por ela
+    pub(crate) static RUN_ID: String; }
+/// Até quantas voltas de um laço o histórico guarda nó por nó (as seguintes só aparecem se falharem).
+const LOUD_ROUNDS: usize = 20;
+struct Run<'a> {
+    f: &'a Flow, via: &'a str, payload: &'a Value, rid: &'a str, cancel: &'a Arc<AtomicBool>, stack: Vec<String>,
+    order: Vec<usize>, trigger: String,
+    /// a saída de cada nó que já rodou (id -> { porta: valor }); "$vars" guarda as variáveis do nó Variável
+    outputs: HashMap<String, Value>,
+    /// o resultado do fluxo, para quem o chamou: o que chegou no nó Resultado, ou a saída do último nó
+    shown: Option<Value>, last_out: Value,
+    /// dentro de um laço, depois das primeiras voltas: o histórico não anota mais nó por nó
+    quiet: bool, round: Option<usize>,
+}
+impl<'a> Run<'a> {
+    fn stopped(&self) -> bool { self.cancel.load(Ordering::Relaxed) || !enabled("automator") }
+    /// Anota um nó no histórico da execução; devolve a posição da anotação, para completar depois.
+    fn push(&self, mut v: Value) -> Option<usize> {
+        if self.quiet { return None; }
+        if let Some(k) = self.round { v["round"] = json!(k); }
+        let mut at = None;
+        let _ = update_run(self.rid, |r| { if let Some(a) = r["nodes"].as_array_mut() && a.len() < 3000 { a.push(v); at = Some(a.len() - 1); } });
+        at
+    }
+    fn patch(&self, at: Option<usize>, patch: Value) {
+        let Some(at) = at else { return };
+        let _ = update_run(self.rid, |r| { if let Some(node) = r["nodes"].get_mut(at).and_then(Value::as_object_mut) && let Some(p) = patch.as_object() { node.extend(p.clone()); } });
+    }
+    /// A falha sempre fica no histórico, mesmo nas voltas que não são anotadas.
+    fn failed(&self, at: Option<usize>, n: &Node, ms: u64, error: &str, code: u16) {
+        if at.is_some() { return self.patch(at, json!({"status":"failed","ms":ms,"error":error,"code":code})); }
+        let mut v = json!({"id":n.id,"status":"failed","ms":ms,"error":error,"code":code});
+        if let Some(k) = self.round { v["round"] = json!(k); }
+        let _ = update_run(self.rid, |r| { if let Some(a) = r["nodes"].as_array_mut() && a.len() < 3200 { a.push(v); } });
+    }
+    fn clear(&mut self, body: &[usize]) { for j in body { self.outputs.remove(&self.f.nodes[*j].id); } }
+    /// Espera que dá para cancelar. `false`: a execução foi cancelada no meio.
+    async fn nap(&self, secs: f64) -> bool {
+        let end = std::time::Instant::now() + Duration::from_secs_f64(secs.clamp(0.0, 3600.0));
+        while std::time::Instant::now() < end { if self.stopped() { return false; } tokio::time::sleep(Duration::from_millis(100)).await; }
+        !self.stopped()
+    }
+    /// Roda os nós de `list` na ordem. Os nós de dentro de um laço (ou de um Tentar) rodam pelo nó que os contém.
+    fn steps<'b>(&'b mut self, list: Vec<usize>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Step> + Send + 'b>> {
+        Box::pin(async move {
+            let f = self.f;
+            let mut inner: HashSet<usize> = HashSet::new();
+            for i in list {
+                if inner.contains(&i) { continue; }
+                if self.stopped() { return Step::Cancel; }
+                let n = &f.nodes[i];
+                let incoming: Vec<Value> = f.edges.iter().filter(|e| e.to == n.id)
+                    .filter_map(|e| self.outputs.get(&e.from).and_then(|o| o.get(&e.from_port)).cloned())
+                    .collect();
+                let is_trigger = n.kind.starts_with("trigger.");
+                if n.disabled || (is_trigger && n.kind != self.trigger) || (!is_trigger && incoming.is_empty()) {
+                    if self.round.is_none() { self.push(json!({"id":n.id,"status":"skipped"})); }
+                    continue;
+                }
+                let input = if incoming.len() == 1 { incoming[0].clone() } else { json!(incoming) };
+                let at = self.push(json!({"id":n.id,"status":"running","started_at":now()}));
+                let began = std::time::Instant::now();
+                let done = if let Some(port) = body_port(&n.kind) {
+                    let set = reach(f, &n.id, Some(port));
+                    let body: Vec<usize> = self.order.iter().copied().filter(|j| set.contains(&f.nodes[*j].id)).collect();
+                    inner.extend(body.iter().copied());
+                    self.container(n, body, input, at).await
+                } else {
+                    self.single(n, input, is_trigger).await
+                };
+                let ms = began.elapsed().as_millis() as u64;
+                match done {
+                    Ok(v) => {
+                        let shown = if self.via == "trigger.webhook" { redact(&brief(&v)) } else { brief(&v) };
+                        let first = v.as_object().and_then(|o| o.values().next()).cloned().unwrap_or(Value::Null);
+                        if n.kind == "util.output" { self.shown = Some(first.clone()); }
+                        self.last_out = first;
+                        self.outputs.insert(n.id.clone(), v);
+                        self.patch(at, json!({"status":"completed","ms":ms,"output":shown}));
+                    }
+                    Err(Halt::Step(Step::Cancel)) => { self.patch(at, json!({"status":"cancelled","ms":ms})); return Step::Cancel; }
+                    Err(Halt::Err(_)) if self.cancel.load(Ordering::Relaxed) => { self.patch(at, json!({"status":"cancelled","ms":ms})); return Step::Cancel; }
+                    Err(Halt::Err(e)) => { self.failed(at, n, ms, &e.to_string(), e.status); return Step::Fail(format!("{}: {e}", node_title(n))); }
+                    // a falha veio de um nó de dentro do trecho: a mensagem já diz qual
+                    Err(Halt::Step(Step::Fail(msg))) => { self.failed(at, n, ms, &msg, 422); return Step::Fail(msg); }
+                    Err(Halt::Step(s)) => { self.patch(at, json!({"status":"completed","ms":ms})); return s; }
+                }
+            }
+            Step::Go
+        })
+    }
+    /// Um nó comum.
+    async fn single(&mut self, n: &'a Node, input: Value, is_trigger: bool) -> Result<Value, Halt> {
+        let p = fill(&n.params, &input, &self.outputs)?;
+        if is_trigger && !self.payload.is_null() { return Ok(json!({"out": self.payload.clone()})); }
+        match n.kind.as_str() {
+            "logic.break" => return Err(Halt::Step(Step::Break)),
+            "logic.next" => return Err(Halt::Step(Step::Next)),
+            "logic.var" => return Ok(self.var(&p)?),
+            "flow.call" => return Ok(call_flow(&self.f.name, &p, self.cancel, &self.stack).await?),
+            _ => {}
+        }
+        let cancel = self.cancel;
+        let stop = async { while !cancel.load(Ordering::Relaxed) && enabled("automator") { tokio::time::sleep(Duration::from_millis(200)).await; } };
+        tokio::select! { r = RUN_ID.scope(self.rid.to_string(), run_node(&self.f.name, n, p, input)) => Ok(r?), _ = stop => Err(Halt::Step(Step::Cancel)) }
+    }
+    /// O nó Variável: um valor com nome que vale até o fim da execução ({{vars.nome}} em qualquer campo).
+    fn var(&mut self, p: &Value) -> ApiResult<Value> {
+        let name = text_of(p, "name");
+        let name = name.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') { return Err(fail("dê um nome à variável: letras, números, _ ou -", 400)); }
+        let vars = self.outputs.entry("$vars".into()).or_insert_with(|| json!({}));
+        let cur = vars.get(name).cloned().unwrap_or(Value::Null);
+        let val = &p["value"];
+        let blank = val.is_null() || val.as_str().is_some_and(|t| t.trim().is_empty());
+        let new = match p["op"].as_str().unwrap_or("set") {
+            "set" => val.clone(),
+            "add" => {
+                let step = if blank { 1.0 } else { number_of(val).ok_or_else(|| fail(format!("para somar, o valor tem que ser um número (chegou \"{}\")", stringify(val)), 400))? };
+                let sum = number_of(&cur).unwrap_or(0.0) + step;
+                if sum.fract() == 0.0 && sum.abs() < 9e15 { json!(sum as i64) } else { json!(sum) }
+            }
+            "append" => { let mut l = match cur { Value::Array(a) => a, Value::Null => vec![], o => vec![o] }; if !blank { l.push(val.clone()); } json!(l) }
+            "get" => cur,
+            "clear" => Value::Null,
+            o => return Err(fail(format!("ação desconhecida: {o}"), 400)),
+        };
+        vars[name] = new.clone();
+        Ok(json!({"out": new}))
+    }
+    /// Roda o trecho de dentro uma vez. Devolve como terminou e o que o último nó dele entregou.
+    async fn round(&mut self, body: &[usize], k: usize, loud: bool) -> (Step, Value) {
+        let (quiet, round, last) = (self.quiet, self.round, std::mem::take(&mut self.last_out));
+        self.quiet = quiet || !loud;
+        self.round = Some(k);
+        let step = self.steps(body.to_vec()).await;
+        let out = std::mem::replace(&mut self.last_out, last);
+        self.quiet = quiet;
+        self.round = round;
+        (step, out)
+    }
+    /// Laços (Para cada item, Repetir, Repetir enquanto) e Tentar: rodam o trecho de dentro e entregam o que ficou.
+    async fn container(&mut self, n: &'a Node, body: Vec<usize>, input: Value, at: Option<usize>) -> Result<Value, Halt> {
+        let num = |v: &Value, d: f64| number_of(v).unwrap_or(d);
+        match n.kind.as_str() {
+            "logic.each" | "logic.repeat" => {
+                let p = fill(&n.params, &input, &self.outputs)?;
+                let each = n.kind == "logic.each";
+                let items: Vec<Value> = if each { list_of(&p["list"]) } else {
+                    let times = num(&p["times"], -1.0);
+                    if !(0.0..=10000.0).contains(&times) { return Err(fail("diga quantas vezes repetir: de 0 a 10000", 400).into()); }
+                    (0..times as usize).map(|_| input.clone()).collect()
+                };
+                let max = num(&p["max"], 1000.0).clamp(1.0, 100_000.0) as usize;
+                if each && items.len() > max { return Err(fail(format!("a lista tem {} itens e o limite deste nó é {max}: aumente o limite, ou corte a lista antes", items.len()), 400).into()); }
+                let (keep_going, wait, total) = (p["on_error"] == "continue", num(&p["wait_s"], 0.0), items.len());
+                let (mut results, mut errors, mut seen) = (vec![], vec![], std::time::Instant::now());
+                for (k, item) in items.into_iter().enumerate() {
+                    if self.stopped() { return Err(Halt::Step(Step::Cancel)); }
+                    if k > 0 && wait > 0.0 && !self.nap(wait).await { return Err(Halt::Step(Step::Cancel)); }
+                    self.clear(&body);
+                    let port = if each { "item" } else { "loop" };
+                    self.outputs.insert(n.id.clone(), json!({(port): item, "index": k + 1, "total": total}));
+                    if k == 0 || seen.elapsed() > Duration::from_secs(1) { seen = std::time::Instant::now(); self.patch(at, json!({"rounds": format!("{} de {total}", k + 1)})); }
+                    match self.round(&body, k + 1, k < LOUD_ROUNDS).await {
+                        (Step::Go, out) => results.push(out),
+                        (Step::Next, _) => {}
+                        (Step::Break, _) => break,
+                        (Step::Cancel, _) => return Err(Halt::Step(Step::Cancel)),
+                        (Step::Fail(msg), _) if keep_going => errors.push(json!({"index": k + 1, "item": item, "error": msg})),
+                        (Step::Fail(msg), _) => return Err(Halt::Step(Step::Fail(format!("{} (na volta {} de {total})", msg, k + 1)))),
+                    }
+                }
+                self.patch(at, json!({"rounds": format!("{total} de {total}")}));
+                Ok(json!({"done": results, "total": total, "errors": errors}))
+            }
+            "logic.while" => {
+                let max = num(&n.params["max"], 100.0).clamp(1.0, 10000.0) as usize;
+                let (mut cur, mut k) = (input, 0usize);
+                loop {
+                    if self.stopped() { return Err(Halt::Step(Step::Cancel)); }
+                    // a condição é lida de novo a cada volta: {{input}} é o que a volta anterior entregou
+                    let p = fill(&n.params, &cur, &self.outputs)?;
+                    if !condition(&p)? { break; }
+                    if k >= max { return Err(fail(format!("passou de {max} voltas e a condição continua valendo. Se for isso mesmo, aumente o limite do nó."), 400).into()); }
+                    if k > 0 && num(&p["wait_s"], 0.0) > 0.0 && !self.nap(num(&p["wait_s"], 0.0)).await { return Err(Halt::Step(Step::Cancel)); }
+                    k += 1;
+                    self.clear(&body);
+                    self.outputs.insert(n.id.clone(), json!({"loop": cur, "index": k}));
+                    self.patch(at, json!({"rounds": format!("volta {k}")}));
+                    match self.round(&body, k, k <= LOUD_ROUNDS).await {
+                        (Step::Go, out) => cur = out,
+                        (Step::Next, _) => {}
+                        (Step::Break, _) => break,
+                        (Step::Cancel, _) => return Err(Halt::Step(Step::Cancel)),
+                        (Step::Fail(msg), _) => return Err(Halt::Step(Step::Fail(format!("{msg} (na volta {k})")))),
+                    }
+                }
+                Ok(json!({"done": cur, "rounds": k}))
+            }
+            _ => {
+                let p = fill(&n.params, &input, &self.outputs)?;
+                let attempts = num(&p["attempts"], 1.0).clamp(1.0, 20.0) as usize;
+                let caught = self.f.edges.iter().any(|e| e.from == n.id && e.from_port == "error");
+                let mut last = String::new();
+                for a in 1..=attempts {
+                    if a > 1 && !self.nap(num(&p["wait_s"], 0.0)).await { return Err(Halt::Step(Step::Cancel)); }
+                    self.clear(&body);
+                    self.outputs.insert(n.id.clone(), json!({"try": input, "attempt": a}));
+                    if attempts > 1 { self.patch(at, json!({"rounds": format!("tentativa {a} de {attempts}")})); }
+                    let (quiet, round) = (self.quiet, self.round);
+                    let step = self.round(&body, round.unwrap_or(a), !quiet).await;
+                    match step {
+                        (Step::Go, out) => return Ok(json!({"ok": if body.is_empty() { input } else { out }, "attempts": a})),
+                        (Step::Fail(msg), _) => last = msg,
+                        (s, _) => return Err(Halt::Step(s)),
+                    }
+                }
+                // ninguém ligado em "deu erro": a falha continua sendo falha do fluxo (o nó só serviu para tentar de novo)
+                if !caught { return Err(Halt::Step(Step::Fail(if attempts > 1 { format!("{last} (depois de {attempts} tentativas)") } else { last }))); }
+                Ok(json!({"error": {"error": last, "attempts": attempts, "input": input}}))
+            }
+        }
+    }
+}
 /// Percorre os nós do fluxo na ordem, anotando cada um na execução `rid` do histórico. Devolve como terminou
 /// ("completed", "failed", "cancelled"), o erro e o resultado (o que chegou no nó Resultado, ou a saída do último nó).
 /// `stack`: os fluxos que estão rodando um dentro do outro até aqui (nó Chamar fluxo), para barrar laços.
 fn run_steps<'a>(f: &'a Flow, order: Vec<usize>, via: &'a str, payload: &'a Value, rid: &'a str, cancel: &'a Arc<AtomicBool>, stack: Vec<String>)
     -> std::pin::Pin<Box<dyn std::future::Future<Output = (&'static str, Option<String>, Value)> + Send + 'a>> {
     Box::pin(async move {
-        let mut outputs = HashMap::<String, Value>::new();
-        let mut status = "completed";
-        let mut error = None;
-        // o resultado do fluxo, para quem o chamou: o que chegou no nó Resultado, ou a saída do último nó
-        let (mut shown_result, mut last_out) = (None::<Value>, Value::Null);
         // disparo da agenda segue pela Agenda; o manual, pelo gatilho manual (ou pela Agenda, se for o único gatilho)
         // (sem gatilho manual, o botão Executar segue pelo primeiro gatilho que houver)
         let trigger = if !via.is_empty() { via.to_string() }
             else if f.nodes.iter().any(|n| n.kind == "trigger.manual" && !n.disabled) { "trigger.manual".to_string() }
             else { f.nodes.iter().find(|n| n.kind.starts_with("trigger.") && !n.disabled).map(|n| n.kind.clone()).unwrap_or_default() };
-        let last = |r: &mut Value, patch: Value| {
-            if let Some(node) = r["nodes"].as_array_mut().and_then(|a| a.last_mut()) && let (Some(node), Some(patch)) = (node.as_object_mut(), patch.as_object()) {
-                node.extend(patch.clone());
-            }
+        let mut run = Run { f, via, payload, rid, cancel, stack, order: order.clone(), trigger, outputs: HashMap::new(), shown: None, last_out: Value::Null, quiet: false, round: None };
+        let step = run.steps(order).await;
+        // o navegador que os nós Navegador abriram nesta execução fecha (ou fica, se o nó pediu) quando ela termina
+        browser::finish(rid).await;
+        let (status, error) = match step {
+            Step::Go => ("completed", None),
+            Step::Cancel => ("cancelled", None),
+            Step::Fail(msg) => ("failed", Some(msg)),
+            Step::Break | Step::Next => ("failed", Some("Sair do laço e Próximo item só funcionam dentro de um laço".to_string())),
         };
-        for i in order {
-            if cancel.load(Ordering::Relaxed) || !enabled("automator") {
-                status = "cancelled";
-                break;
-            }
-            let n = &f.nodes[i];
-            let incoming: Vec<Value> = f.edges.iter().filter(|e| e.to == n.id)
-                .filter_map(|e| outputs.get(&e.from).and_then(|o| o.get(&e.from_port)).cloned())
-                .collect();
-            let is_trigger = n.kind.starts_with("trigger.");
-            if n.disabled || (is_trigger && n.kind != trigger) || (!is_trigger && incoming.is_empty()) {
-                let _ = update_run(&rid, |r| { if let Some(a) = r["nodes"].as_array_mut() { a.push(json!({"id":n.id,"status":"skipped"})); } });
-                continue;
-            }
-            let input = if incoming.len() == 1 { incoming[0].clone() } else { json!(incoming) };
-            let _ = update_run(&rid, |r| { if let Some(a) = r["nodes"].as_array_mut() { a.push(json!({"id":n.id,"status":"running","started_at":now()})); } });
-            let began = std::time::Instant::now();
-            let action = async {
-                let p = fill(&n.params, &input, &outputs)?;
-                if is_trigger && !payload.is_null() { return Ok(json!({"out": payload.clone()})); }
-                if n.kind == "flow.call" { return call_flow(&f.name, &p, cancel, &stack).await; }
-                run_node(&f.name, n, p, input).await
-            };
-            let stop = async { while !cancel.load(Ordering::Relaxed) && enabled("automator") { tokio::time::sleep(Duration::from_millis(200)).await; } };
-            let result = if n.kind == "flow.call" { Some(action.await) } else { tokio::select! { r = action => Some(r), _ = stop => None } };
-            let ms = began.elapsed().as_millis() as u64;
-            match result {
-                Some(Ok(v)) => {
-                    let shown = if via == "trigger.webhook" { redact(&brief(&v)) } else { brief(&v) };
-                    let first = v.as_object().and_then(|o| o.values().next()).cloned().unwrap_or(Value::Null);
-                    if n.kind == "util.output" { shown_result = Some(first.clone()); }
-                    last_out = first;
-                    outputs.insert(n.id.clone(), v);
-                    let _ = update_run(&rid, |r| last(r, json!({"status":"completed","ms":ms,"output":shown})));
-                }
-                Some(Err(_)) if cancel.load(Ordering::Relaxed) => {
-                    status = "cancelled";
-                    let _ = update_run(&rid, |r| last(r, json!({"status":"cancelled","ms":ms})));
-                    break;
-                }
-                Some(Err(e)) => {
-                    status = "failed";
-                    let title = n.title.clone().filter(|t| !t.trim().is_empty()).or_else(|| spec(&n.kind).and_then(|s| s["name"].as_str().map(String::from))).unwrap_or_else(|| n.kind.clone());
-                    error = Some(format!("{title}: {e}"));
-                    let _ = update_run(&rid, |r| last(r, json!({"status":"failed","ms":ms,"error":e.to_string(),"code":e.status})));
-                    break;
-                }
-                None => {
-                    status = "cancelled";
-                    let _ = update_run(&rid, |r| last(r, json!({"status":"cancelled","ms":ms})));
-                    break;
-                }
-            }
-        }
-        (status, error, shown_result.unwrap_or(last_out))
+        (status, error, run.shown.unwrap_or(run.last_out))
     })
 }
 /// O nó Chamar fluxo: roda outro fluxo salvo, do começo ao fim, dentro desta execução, e devolve o resultado dele.
@@ -3225,6 +3574,48 @@ async fn call_flow(caller: &str, p: &Value, cancel: &Arc<AtomicBool>, stack: &[S
         "cancelled" => Err(fail("cancelado", 409)),
         _ => Err(fail(format!("o fluxo \"{}\" falhou em {}", child.name, error.unwrap_or_default()), 422)),
     }
+}
+/// Tudo o que dá para saber de uma chamada ao Endpoint HTTP, em campos, para o fluxo decidir o que fazer com ela.
+fn hook_payload(r: &Req, endpoint: &str, raw: &str) -> Value {
+    let head = |k: &str| r.headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let ip = { let i = head("x-bluescreen-ip"); if i.is_empty() { "127.0.0.1".to_string() } else { i } };
+    let url = head("x-bluescreen-url");
+    let headers: serde_json::Map<String, Value> = r.headers.iter().filter(|(k, _)| !k.as_str().starts_with("x-bluescreen-")).filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str().to_lowercase(), json!(v)))).collect();
+    let query: serde_json::Map<String, Value> = r.query.iter().filter(|(k, _)| k.as_str() != "e" && k.as_str() != "plugin").map(|(k, v)| (k.clone(), json!(v))).collect();
+    let pairs = |text: &str, sep: char| -> serde_json::Map<String, Value> {
+        text.split(sep).filter_map(|kv| { let (k, v) = kv.trim().split_once('=').unwrap_or((kv.trim(), "")); (!k.is_empty()).then(|| (urlencoding::decode(&k.replace('+', " ")).map(|c| c.into_owned()).unwrap_or_else(|_| k.to_string()), json!(urlencoding::decode(&v.replace('+', " ")).map(|c| c.into_owned()).unwrap_or_else(|_| v.to_string())))) }).collect()
+    };
+    let auth = head("authorization");
+    let token = auth.strip_prefix("Bearer ").or_else(|| auth.strip_prefix("bearer ")).map(String::from)
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.as_str()).map(String::from)).or_else(|| r.q("token").map(String::from)).unwrap_or_default();
+    // Authorization: Basic -> o usuário (a senha fica só no cabeçalho, para quem quiser conferir)
+    let (scheme, rest) = auth.split_once(' ').unwrap_or((auth.as_str(), ""));
+    let basic_user = if scheme.eq_ignore_ascii_case("basic") { base64::engine::general_purpose::STANDARD.decode(rest.trim()).ok().and_then(|b| String::from_utf8(b).ok()).map(|t| t.split(':').next().unwrap_or("").to_string()).unwrap_or_default() } else { String::new() };
+    let ctype = head("content-type");
+    let kind = ctype.split(';').next().unwrap_or("").trim().to_lowercase();
+    let body = serde_json::from_str::<Value>(raw).unwrap_or_else(|_| if raw.is_empty() { Value::Null } else { json!(raw) });
+    let form = if kind == "application/x-www-form-urlencoded" { Value::Object(pairs(raw, '&')) } else { Value::Null };
+    let now = chrono::Local::now();
+    let (path, query_string) = url.split_once('?').map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or((url.clone(), String::new()));
+    json!({
+        "endpoint": endpoint, "method": r.method.as_str(), "url": url, "path": path, "query_string": query_string, "query": query,
+        "headers": headers, "cookies": pairs(&head("cookie"), ';'), "body": body, "form": form, "raw": raw,
+        "content_type": kind, "content_length": r.body.len(), "is_json": body.is_object() || body.is_array(),
+        "token": token.trim(), "auth": {"scheme": scheme, "user": basic_user},
+        "ip": ip, "remote": r.remote, "host": head("host"), "user_agent": head("user-agent"), "referer": head("referer"), "origin": head("origin"), "language": head("accept-language"),
+        "time": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false), "timestamp": now.timestamp_millis(),
+    })
+}
+/// Um fluxo ligado tem um Endpoint HTTP que aceita a rede local, e o acesso pela rede do BlueScreen está desligado:
+/// liga (é por ele que a chamada chega). Só quando esse pedido aparece: quem desligar a rede depois, à mão, fica
+/// com ela desligada.
+async fn ensure_lan() {
+    static WANTED: AtomicBool = AtomicBool::new(false);
+    let want = enabled("automator") && with_store(|s, _| s.flows.iter().any(|f| f.active && f.nodes.iter().any(|n| n.kind == "trigger.webhook" && !n.disabled && n.params["who"] == "lan"))).unwrap_or(false);
+    if want && !WANTED.swap(want, Ordering::Relaxed) && !crate::server::lan_enabled() {
+        match crate::server::lan_enable().await { Ok(_) => log("Automator: acesso pela rede local ligado para um Endpoint HTTP que aceita a rede."), Err(e) => log(format!("Automator: não deu para ligar o acesso pela rede local: {e}")) }
+    }
+    if !want { WANTED.store(false, Ordering::Relaxed); }
 }
 /// `via`: o tipo do gatilho que disparou sozinho; vazio quando alguém mandou executar. `payload`: o que esse gatilho
 /// entrega ao primeiro nó (nulo: o próprio nó de gatilho decide).
@@ -3417,6 +3808,13 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
     );
     // Preferências do Automator: GET -> { keep_runs, runs }; POST { keep_runs } muda a retenção e já corta o histórico;
     // POST { action: "clear_runs", flow? } apaga as execuções terminadas (de um fluxo, ou de todos).
+    // Os endereços pelos quais a rede local chama um Endpoint HTTP. POST { enable: true } liga o acesso pela rede.
+    m.insert("automator/lan".into(), route_fn(|r| async move {
+        r.local_only()?; require_enabled("automator")?;
+        if r.is_post() && r.body_json::<Value>()?["enable"] == true { crate::server::lan_enable().await?; }
+        let st = crate::server::lan_status();
+        ok(json!({"enabled": st["enabled"], "port": st["port"], "urls": st["urls"].as_array().into_iter().flatten().filter_map(|u| u["url"].as_str()).collect::<Vec<_>>()}))
+    }));
     m.insert("automator/settings".into(), route_fn(|r| async move {
         r.local_only()?; require_enabled("automator")?;
         if !r.is_post() { let _g = STORE.lock(); let s = load()?; return ok(json!({"keep_runs": keep_runs(&s), "runs": s.runs.len(), "folder_colors": s.folder_colors})); }
@@ -3636,12 +4034,7 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
             if want != "any" && !r.method.as_str().eq_ignore_ascii_case(want) { return err(405, "método não aceito por este endpoint"); }
             if r.body.len() > 1024 * 1024 { return err(413, "corpo grande demais (mais de 1 MB)"); }
             let raw = String::from_utf8_lossy(&r.body).into_owned();
-            let headers: serde_json::Map<String, Value> = r.headers.iter().filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str().to_lowercase(), json!(v)))).collect();
-            let query: serde_json::Map<String, Value> = r.query.iter().filter(|(k, _)| k.as_str() != "e" && k.as_str() != "plugin").map(|(k, v)| (k.clone(), json!(v))).collect();
-            let token = headers.get("authorization").and_then(|v| v.as_str()).and_then(|a| a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer "))).map(String::from)
-                .or_else(|| headers.get("x-api-key").and_then(|v| v.as_str()).map(String::from)).or_else(|| r.q("token").map(String::from)).unwrap_or_default();
-            let body = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| if raw.is_empty() { Value::Null } else { json!(raw) });
-            let payload = json!({"method": r.method.as_str(), "query": query, "headers": headers, "body": body, "raw": raw, "token": token.trim(), "remote": r.remote});
+            let payload = hook_payload(&r, &name, &raw);
             let kinds: HashMap<String, String> = f.nodes.iter().map(|n| (n.id.clone(), n.kind.clone())).collect();
             let rec = match start(f, "trigger.webhook", payload) {
                 Ok(v) => v,
@@ -3812,6 +4205,7 @@ pub async fn scheduler() {
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let first = std::mem::replace(&mut boot, false);
+        ensure_lan().await;
         let (automator, agenda) = (enabled("automator"), enabled("agenda"));
         let quiet = !first && with_store(|s, _| {
             let t = now();

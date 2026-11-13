@@ -199,6 +199,7 @@ dependencies = [
  "sha2",
  "tao",
  "tokio",
+ "tokio-tungstenite",
  "urlencoding",
  "windows-sys 0.61.2",
  "winresource",

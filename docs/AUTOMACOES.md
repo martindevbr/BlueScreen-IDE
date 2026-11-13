@@ -92,6 +92,32 @@ O nó **Chamar fluxo** (categoria Lógica) roda outro fluxo salvo, do começo ao
 - A execução do fluxo chamado ganha uma entrada própria no histórico dele. Se ele falhar, o fluxo de fora para naquele nó com o motivo. Parar o fluxo de fora para também o de dentro.
 - Um fluxo que acabaria chamando a si mesmo é barrado, e a profundidade vai até oito níveis.
 
+### Repita, tente de novo e escolha caminhos
+
+Um fluxo não tem fio voltando para trás. Para repetir um trecho, use um nó de laço (categoria Lógica): o trecho que repete é o que você liga na primeira saída dele, e o que vem depois sai de **fim**.
+
+| Nó | O que faz |
+|---|---|
+| Para cada item | Roda o trecho ligado em **cada item** uma vez por item da lista. Lá dentro, `{{input}}` é o item, `{{nodes.ID.index}}` a posição e `{{nodes.ID.total}}` o total. **fim** recebe a lista com o que o último nó do trecho entregou em cada volta. |
+| Repetir | Roda o trecho ligado em **repetir** um número certo de vezes. |
+| Repetir enquanto | Confere a condição antes de cada volta e roda o trecho enquanto ela valer. Na primeira volta `{{input}}` é o que chegou no nó; nas seguintes, o que a volta anterior entregou. Tem um limite de voltas, para não rodar sem fim. |
+| Sair do laço | Encerra o laço agora e segue pelo **fim** dele. |
+| Próximo item | Pula o resto desta volta. O item pulado não entra na lista de resultados. |
+| Tentar | Roda o trecho ligado em **tentar**. Se ele falhar, tenta de novo (quantas vezes você disser) e, se não der, segue por **deu erro** com a mensagem em `{{input.error}}`, em vez de parar o fluxo. Sem nada ligado em **deu erro**, a falha continua sendo falha do fluxo. |
+| Escolher caminho | Compara um valor com até cinco casos e segue pela saída do primeiro que casar, ou por **outro**. |
+| Várias condições | Uma lista de condições: segue por **sim** se todas valem (E) ou se pelo menos uma vale (OU). |
+| Variável | Guarda um valor com nome até o fim da execução: guardar, somar a um número, acrescentar a uma lista. Em qualquer campo depois: `{{vars.nome}}`. |
+
+Como ligar:
+
+- O trecho de dentro de um laço (ou de um Tentar) não se liga ao que vem depois nem recebe fio de fora: dentro dele, leia um nó de fora com `{{nodes.ID.out}}`. O Automator avisa ao salvar.
+- Laços podem ficar um dentro do outro, e o Tentar pode ficar dentro de um laço.
+- Em **Para cada item**, **Se um item der erro** escolhe entre parar o fluxo e anotar o erro e seguir (os erros ficam em `{{nodes.ID.errors}}`).
+- Num **Repetir enquanto** que conta numa variável, comece a variável antes do laço (Variável, Guardar o valor, `0`).
+- No histórico, os nós de dentro mostram a volta em que rodaram. Só as 20 primeiras voltas de cada laço são anotadas nó por nó; uma falha em qualquer volta aparece sempre.
+
+O modelo **Repetir para cada arquivo** traz um laço montado.
+
 ### Execuções: ocultas até você pedir
 
 No painel do fluxo, **Execuções** começa oculta, para a tela ficar leve: com ela oculta o Automator busca só a execução mais recente, que é a que pinta os nós no quadro. **mostrar** traz a lista. Aberta, ela tem **Guardar no máximo N execuções** (de 5 a 1000, somando todos os fluxos; o padrão é 100), que já corta o histórico ao mudar, e **limpar**, que apaga as execuções terminadas do fluxo aberto.
@@ -290,6 +316,7 @@ Nos campos de texto, o link **+ dado** insere a expressão para você. Elas são
 | `{{input.campo}}` | Um campo do que chegou. Vale `{{input.itens.0.nome}}` para listas. |
 | `{{nodes.ID.out}}` | A saída de outro nó. Na Condição, as saídas são `true` e `false`. |
 | `{{nodes.ID.out.campo}}` | Um campo dessa saída. |
+| `{{vars.nome}}` | O valor guardado pelo nó Variável. Antes de ser definida, vale vazio. |
 
 Uma expressão sozinha no campo mantém o tipo (objeto, número). No meio de um texto, vira texto. Se o que chegou é um texto em JSON (a saída de um programa, por exemplo), o campo é lido de dentro dele.
 
@@ -313,12 +340,28 @@ Os gatilhos valem enquanto o BlueScreen estiver aberto, inclusive na bandeja. El
 
 O gatilho **Endpoint HTTP** dá um endereço ao fluxo. Quem chama esse endereço dispara o fluxo e recebe a resposta dele.
 
-1. Ponha o nó **Endpoint HTTP** e dê um nome a ele (`pedidos`, por exemplo). O painel mostra o endereço, com um botão para copiar: `http://127.0.0.1:4747/api/automator/hook?e=pedidos`.
+1. Ponha o nó **Endpoint HTTP** e dê um nome a ele (`pedidos`, por exemplo). O painel mostra o endereço **Neste PC**, com um botão para copiar: `http://127.0.0.1:4747/api/automator/hook?e=pedidos`.
 2. Logo depois, ponha os nós de **Segurança** que fizerem sentido: **Exigir token**, **Limitar chamadas**, **Exigir campos**, **Conferir assinatura**.
 3. Faça o trabalho (gravar num arquivo, chamar outro serviço, perguntar a um agente) e termine com **Responder ao endpoint**.
 4. Acenda o interruptor **Ligado**. O modelo **Endpoint com token** já vem montado assim.
 
-O gatilho entrega `method`, `query`, `headers` (nomes em minúsculas), `body` (já como objeto, se veio JSON), `raw` (o corpo como chegou) e `token`. O token é tirado do `Authorization: Bearer`, do `X-API-Key` ou de `?token=`.
+O gatilho entrega a chamada inteira em campos, para você montar as regras que quiser com Condição, Várias condições e Escolher caminho:
+
+| Campo | O que traz |
+|---|---|
+| `method`, `url`, `path`, `query_string` | O método e o endereço chamado, inteiro e em partes. |
+| `query` | Os parâmetros da URL, como objeto: `{{input.query.id}}`. |
+| `headers` | Todos os cabeçalhos, com os nomes em minúsculas: `{{input.headers.x-meu-cabecalho}}`. |
+| `cookies` | Os cookies, como objeto. |
+| `body`, `raw` | O corpo: já como objeto se veio JSON (`{{input.body.nome}}`), e como chegou. |
+| `form` | Os campos de um formulário (`application/x-www-form-urlencoded`), como objeto. |
+| `content_type`, `content_length`, `is_json` | O formato e o tamanho do corpo. |
+| `token` | O token tirado do `Authorization: Bearer`, do `X-API-Key` ou de `?token=`. |
+| `auth` | O esquema do `Authorization` e, no login básico, o usuário. |
+| `ip`, `remote` | O endereço de quem chamou e se a chamada veio pela rede. O `ip` é o da conexão: um cabeçalho não o falsifica. |
+| `host`, `user_agent`, `referer`, `origin`, `language` | Os cabeçalhos mais usados em regras, já separados. |
+| `time`, `timestamp` | A hora em que a chamada chegou. |
+| `endpoint` | O nome do endpoint. |
 
 ```
 curl -X POST "http://127.0.0.1:4747/api/automator/hook?e=pedidos" -H "Authorization: Bearer MEU-TOKEN" -H "Content-Type: application/json" -d "{\"nome\": \"Ana\"}"
@@ -338,7 +381,9 @@ O que o endpoint devolve:
 
 Sobre a segurança:
 
-- **Quem pode chamar** começa em **Só este PC**. Com **A rede local também**, o endpoint atende outros aparelhos, mas só com o acesso pela rede local do BlueScreen ligado. Ele não fica exposto na internet.
+- **Quem pode chamar** começa em **Só este PC**. O endereço que começa com `127.0.0.1` só funciona neste PC: de outro aparelho ele não abre, nem trocando pelo IP.
+- Com **A rede local também**, o painel do nó mostra o endereço **Na rede**, com o IP deste PC e a porta do acesso pela rede local (4748, se você não mudou): `http://192.168.0.10:4748/api/automator/hook?e=pedidos`. É esse que o celular ou outro PC da casa chama. Ligar o fluxo com essa opção liga o acesso pela rede local do BlueScreen; se ele estiver desligado, o painel tem o botão **Ligar o acesso pela rede**. Na primeira vez, o Windows pode pedir para liberar o BlueScreen no Firewall.
+- Quem chama o endpoint pela rede não precisa do PIN da IDE (um programa não tem como digitar): por isso ponha **Exigir token** logo depois do gatilho. O resto do BlueScreen continua pedindo o PIN. Ele não fica exposto na internet.
 - No **Exigir token** e no **Conferir assinatura**, escreva `{{cred:nome}}` (Credenciais do Automator) ou `{{vault:nome}}` (um segredo do Cofre liberado para o Automator). Um token digitado direto no nó fica gravado no fluxo, em texto.
 - O histórico de uma chamada não guarda o token, o `Authorization`, os cookies nem a assinatura.
 - Um fluxo atende uma chamada por vez, e o BlueScreen roda quatro fluxos ao mesmo tempo. É um endpoint para automações suas e da equipe, não para tráfego de produção.
@@ -354,6 +399,33 @@ Para ir além do que se vê de fora, use os nós do **Dynatrace**:
 3. Nos nós, informe o ambiente (`https://abc12345.live.dynatrace.com`).
 
 O modelo **Relatório de problemas do Dynatrace** lista os problemas abertos, monta uma tabela e manda para um canal do Slack, do Teams ou do Discord.
+
+### Conecte servidores e serviços
+
+A categoria **Conexões** fala com o que está fora do PC. Usuário e senha vêm de uma credencial do Automator: `{{cred:nome.user}}` e `{{cred:nome}}`. A senha não vai em argumento de programa, não fica no fluxo e sai mascarada do histórico.
+
+| Nó | O que faz |
+|---|---|
+| SSH: rodar comando | Entra num servidor, roda um comando (ou um script de várias linhas) e entrega `out`, `err` e `code`. Login por senha, por chave, ou pelas chaves da sua pasta `.ssh`. |
+| SSH: enviar ou baixar arquivo | Copia um arquivo ou uma pasta inteira por SFTP. |
+| Enviar e-mail | SMTP com STARTTLS ou SSL, texto ou HTML, cópia, cópia oculta e anexos. |
+| Ler e-mails | IMAP: as não lidas (ou todas), filtradas por remetente e assunto. Entrega remetente, assunto, data, texto e anexos, e pode salvar os anexos numa pasta. |
+| FTP | Lista uma pasta, baixa, envia ou apaga um arquivo. FTP, FTPS explícito e implícito. |
+| Banco de dados (SQL) | Roda uma consulta e entrega as linhas como objetos. SQL Server direto; MySQL, PostgreSQL, Oracle e outros pelo driver ODBC de 64 bits instalado no Windows. |
+| MQTT: publicar | Publica uma mensagem num tópico (automação residencial, IoT). |
+| Mensagem no Telegram | Manda um aviso por um bot seu. |
+| Ping | Segue por sim se o computador ou servidor responde. |
+| Ligar computador pela rede | Manda o sinal de Wake-on-LAN. |
+
+O que vale saber:
+
+- **SSH** usa o OpenSSH que vem com o Windows. Na primeira conexão o servidor é anotado no `known_hosts` da sua pasta `.ssh`; se a identidade dele mudar depois, o nó recusa. Com chave, o campo Senha é a senha da chave.
+- **E-mail e FTP** usam o `curl` que vem com o Windows. No Gmail e no Outlook com verificação em duas etapas, a senha é a "senha de app" criada na conta.
+- **Ler e-mails** marca como lida a mensagem que leu, a menos que você escolha deixar como estava. Num fluxo com Agenda, "só as não lidas" faz cada mensagem ser tratada uma vez.
+- **Banco de dados:** valores que vêm de fora vão no campo **Valores**, não colados no SQL. No SQL Server use `@p1`, `@p2`…; no ODBC, um `?` para cada um.
+- Para SFTP use o nó de SSH, não o de FTP. Slack, Teams e Discord continuam em Integrações.
+
+Um exemplo: **Agenda** (a cada 10 minutos) → **Ler e-mails** (assunto contém "nota", salvar anexos) → **Para cada item** → **SSH: enviar ou baixar arquivo** → no **fim**, **Mensagem no Telegram**.
 
 ### Agentes de IA
 
@@ -378,6 +450,37 @@ A janela **Agentes de IA** guarda o programa, o modelo e o esforço de cada agen
 - **Testar** grava e faz uma pergunta curta ao agente, para você ver se ele responde.
 
 Os agentes cadastrados aparecem no nó **Agente de IA** e nas janelas **Criar com IA**, **Ajustar com IA** e **Script com IA**. O esforço vai de mínimo a máximo; cada programa aceita os níveis dele e recusa os outros com a própria mensagem.
+
+### Automatize um site inteiro
+
+O nó **Navegador** (categoria Navegador) abre o Edge, ou o Chrome, e faz no site o que você faria: clica, digita, escolhe, envia arquivo, lê o que está na tela e confere. Ele vem no Automator: não precisa de plugin nem do Node.js.
+
+**Grave em vez de escrever.** No painel do nó, ponha o endereço e clique em **Gravar no navegador**. O site abre com uma barra de gravação: use ele normalmente e cada clique, texto digitado e opção escolhida vira um passo. Na barra, **Ler campo** guarda um texto da tela na saída do nó e **Conferir** garante que um texto continua lá. Senha digitada nunca é gravada: o passo fica com `{{cred:senha}}`, e você guarda o valor em Credenciais.
+
+**A mesma página do começo ao fim.** Os nós Navegador de um fluxo usam a mesma janela. O primeiro abre o site; os seguintes, com o Endereço em branco, continuam de onde o anterior parou. Assim dá para:
+
+- entrar no site num nó, com usuário e senha de uma credencial;
+- ler uma lista da tela com o passo **Ler todos**, que vai para `{{input.values.nome}}`;
+- ligar um **Para cada item** e, dentro dele, outro nó Navegador que repete uma ação para cada item, na mesma página;
+- pôr um nó dentro de um **Tentar**, para um teste de tela que falha virar um caminho do fluxo em vez de parar tudo.
+
+Quando o fluxo termina, a janela fecha (ou fica aberta, se o nó pedir).
+
+| Passo | O que faz |
+|---|---|
+| Clicar, Digitar, Escolher opção, Marcar ou desmarcar, Apertar tecla, Passar o mouse | As ações de sempre. **Onde** é um seletor CSS (`#senha`, `.botao`) ou `texto=Entrar`, que acha pelo texto visível. |
+| Enviar arquivo | Põe um arquivo do PC num campo de arquivo do site. |
+| Ir para endereço, Voltar uma página, Rolar a página | Navegação. |
+| Ir para a aba que abriu | Passa para a aba nova, quando um link ou um login abre outra. |
+| Ler campo, Ler todos | Guardam na saída o texto de um elemento, ou a lista dos textos de todos os que casam com o seletor. O valor é o nome do campo. |
+| Capturar tela | Grava um PNG no arquivo do valor. |
+| Esperar aparecer, Esperar sumir, Esperar (segundos) | Para páginas que carregam aos poucos. Cada passo já espera o elemento por alguns segundos. |
+| Conferir texto, que aparece, endereço, título, quantidade | Se não bater, o nó falha dizendo o passo, o que esperava e o que viu. |
+| Rodar JavaScript | Roda um trecho na página. Com `return`, o valor vai para a saída, no campo de **Onde**. |
+
+O nó entrega `url`, `title` e `values` (o que os passos de leitura guardaram). Quando um passo falha, a mensagem diz qual e traz o caminho de uma imagem da tela naquela hora.
+
+Outras opções: **Janela do navegador** (mostrar ou não), **Sessão** (lembrar dos logins entre as execuções, ou começar sempre do zero) e **Tela** (computador, tablet ou celular). Para relatório de teste em HTML, comparação visual e checagem de acessibilidade, use o **Testar site**, a seguir.
 
 ### Teste e automatize um site
 
