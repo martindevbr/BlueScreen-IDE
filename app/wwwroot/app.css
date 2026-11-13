@@ -1560,6 +1560,12 @@ body.studio-mode #btnSettings { margin-left: auto; }
 .ps-tag .i { width: 11px; height: 11px; }
 .ps-tag.node { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-2); }
 .ps-tag.link { color: var(--accent-2); } .ps-tag.link:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ps-tag.cat { background: none; border: 1px solid var(--line-2); }
+.ps-title a.ps-pub { font-family: inherit; font-size: 12px; font-weight: 500; color: var(--accent-2); }
+.ps-need { flex: none; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--fg-2); font-size: 11px; white-space: nowrap; cursor: help; }
+.ps-cat { flex: none; height: 32px; max-width: 220px; padding: 0 8px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; color: var(--fg); font: inherit; }
+.ps-cat:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.ps-empty a, .ps .ps-readme a.ps-anchor { color: var(--accent-2); cursor: pointer; }
 .ps .ps-act { flex: none; height: 28px; gap: 5px; } .ps .ps-act .i { width: 13px; height: 13px; stroke-width: 2.2; }
 .ps .ps-act:disabled { opacity: .75; pointer-events: none; } .ps .ps-act .spin { width: 11px; height: 11px; }
 .ps-done { flex: none; display: inline-flex; align-items: center; gap: 4px; color: var(--add); font-weight: 500; white-space: nowrap; } .ps-done .i { width: 14px; height: 14px; stroke-width: 2.4; }

@@ -30,7 +30,7 @@ Cada pasta tem:
 
 | Arquivo | |
 |---|---|
-| `plugin.json` | `{ "id", "name", "description", "version", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }` |
+| `plugin.json` | `{ "id", "name", "description", "version", "author", "license", "category", "keywords", "minBlueScreen", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }`. `author`, `license` (SPDX, como `MIT`), `category`, `keywords` e `contributors` aparecem na loja; `minBlueScreen` (`"2.1.33"`) é a versão mais antiga do BlueScreen em que o plugin funciona: numa IDE mais velha, a loja mostra o que falta no lugar do botão de instalar e não oferece a atualização. Na loja oficial esses campos são obrigatórios (veja [Publicar um plugin](#publicar-um-plugin)) |
 | `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Um campo com `"choicesFrom": "<id>/<rota>"` vira uma lista preenchida por uma rota do servidor do plugin (`{ choices: [{ value, label }] }`). Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
 | `bs.footer.set(id, { icon, text, title, run })` | um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso); `bs.footer.remove(id)` tira. Janela registrada com `footer: true` em `bs.bubble.register` é a janela de um item do rodapé: não entra na lista do balão, não ganha ícone nem cartão no Estúdio e abre no meio da tela |
 | `icon.svg` ou `icon.png` (opcional) | o ícone na aba Plugins e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
@@ -431,8 +431,9 @@ O catálogo oficial é o repositório [martindevbr/BlueScreen-Plugins](https://g
 
 **Na IDE:**
 - **Onde fica.** O painel **Plugins** (`Alt+7`) mostra os instalados na esquerda e abre a **Loja de plugins** na área grande, numa aba fixa.
-- **Loja.** Busca, filtros (**Todos**, **Instalados**, **Atualizações**, **Com nós**) e um cartão por plugin. O cartão diz quem publicou o plugin (o autor do primeiro commit da pasta dele, com a foto do GitHub) e, menor, quem fez a última edição e quando; o tamanho do pacote; quantos nós o plugin acrescenta ao Automator; e se o servidor dele precisa de Node.js, Python ou PowerShell.
-- **Página do plugin.** Clique no cartão: descrição, README, nós do Automator, tamanho e o link do código no GitHub.
+- **Loja.** Busca (pelo nome, descrição, autor, categoria e palavras-chave), filtros (**Todos**, **Instalados**, **Atualizações**, **Com nós**), a lista de **categorias** e um cartão por plugin. O cartão mostra a categoria e diz quem publicou o plugin (o autor do primeiro commit da pasta dele, com a foto do GitHub) e, menor, quem fez a última edição e quando; o tamanho do pacote; quantos nós o plugin acrescenta ao Automator; e se o servidor dele precisa de Node.js, Python ou PowerShell.
+- **Página do plugin.** Clique no cartão: descrição, README, nós do Automator, tamanho, licença, o link do código no GitHub e os atalhos **Relatar problema** e **Sugerir melhoria**, que abrem uma issue no repositório de plugins já com o nome e a versão. Os links do sumário do README (`#seção`) rolam até a seção.
+- **Compatibilidade.** Um plugin com `minBlueScreen` maior que a versão da IDE aparece com "Precisa do BlueScreen X" no lugar do **Instalar**; a instalação é recusada com o motivo, e a versão nova de um plugin instalado não vira aviso de atualização até a IDE ser atualizada.
 - **Instalar e atualizar.** O plugin liga na hora, sem recarregar a janela. Vai para `~/.bluescreen/plugins/<id>`, que vale mais que o do app, com um `.origin.json` (origem, versão, sha256 e `disk`). Depois de gravar, a IDE mede a pasta: o aviso de instalação e o cartão passam a mostrar o espaço que o plugin ocupa no disco.
 - **Aviso de atualização.**
   - A IDE consulta a loja alguns segundos depois de abrir, de meia em meia hora e quando você volta para a janela.
@@ -446,7 +447,16 @@ O catálogo oficial é o repositório [martindevbr/BlueScreen-Plugins](https://g
 - Pasta sem `plugin.json` válido, ou com `id` diferente do nome da pasta, não entra.
 - Quem fez cada plugin vem da API do GitHub (os commits de `plugins/<id>`: o primeiro e o último), dois pedidos por plugin, guardados em `store-cache/authors.json` até o repositório mudar. Sem resposta (sem rede, ou no limite de pedidos da API), o cartão mostra o `author` do `plugin.json`. Com `BLUESCREEN_PLUGIN_REPO`, vem do `git log` da pasta.
 
-**Publicar um plugin:** ponha a pasta em `plugins/<id>/` no repositório e faça o push na `main`. Para as IDEs receberem o aviso de atualização, aumente o `version` do `plugin.json`.
+### Publicar um plugin
+
+O repositório de plugins tem um padrão, conferido pela ferramenta `ferramentas/plugins.mjs` e pelo CI de lá: manifesto completo (autor, licença, categoria), README com seções fixas (**Como usar**, **Configurações**, **Nós do Automator**, **Autor e licença**, **Histórico de versões**) e uma ficha gerada a partir do `plugin.json`, ícone, sintaxe, nenhum segredo no código e versão maior a cada mudança de código. O `main` só recebe pull request com o CI passando. O passo a passo está no [CONTRIBUTING.md](https://github.com/martindevbr/BlueScreen-Plugins/blob/main/CONTRIBUTING.md) do repositório de plugins:
+
+```
+node ferramentas/plugins.mjs novo meu-plugin --nome "Meu Plugin" --autor "Seu Nome" --categoria produtividade
+node ferramentas/plugins.mjs tudo
+```
+
+Para as IDEs receberem o aviso de atualização, aumente o `version` do `plugin.json` (o CI recusa código mudado sem versão nova).
 
 **Testar antes de publicar:** `BLUESCREEN_PLUGIN_REPO` aponta uma pasta local com a mesma forma do repositório (um clone, por exemplo). A loja lê dela no lugar do GitHub e avisa na tela. `BLUESCREEN_HOME` troca a pasta `~/.bluescreen` inteira, para uma instância de teste não tocar nos seus plugins e dados.
 

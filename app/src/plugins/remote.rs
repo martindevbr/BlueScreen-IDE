@@ -187,13 +187,22 @@ impl Pkg {
         let has = |ext: &str| named.as_deref().is_some_and(|n| n.ends_with(ext)) || self.files.iter().any(|f| f.0 == format!("server{ext}"));
         if has(".js") || has(".mjs") || has(".cjs") { Some("Node.js") } else if has(".py") { Some("Python") } else if has(".ps1") { Some("PowerShell") } else { None }
     }
+    /// a versão mínima do BlueScreen que o plugin pede (`minBlueScreen`), quando esta IDE é mais velha que ela
+    fn too_new(&self) -> Option<String> {
+        let min = self.manifest["minBlueScreen"].as_str().map(str::trim).filter(|v| !v.is_empty())?;
+        (version_cmp(env!("CARGO_PKG_VERSION"), min) == Ordering::Less).then(|| min.to_string())
+    }
     fn entry(&self) -> Value {
         let m = &self.manifest;
+        let words = |k: &str| m[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty())).take(20).collect::<Vec<_>>()).unwrap_or_default();
         json!({
             "id": self.id, "name": m["name"].as_str().unwrap_or(&self.id), "description": m["description"].as_str().unwrap_or(""),
             "version": m["version"].as_str().unwrap_or("0"), "author": m["author"].as_str().unwrap_or(""), "icon": self.icon(), "server": STORE,
             "requires": m["requires"], "nodes": self.nodes().len(), "readme": self.file("README.md").is_some(), "runtime": self.runtime(),
             "size": self.files.iter().map(|f| f.1.len()).sum::<usize>(), "files": self.files.len(),
+            // padrão do repositório de plugins (ferramentas/plugins.mjs lá): licença, categoria, busca e compatibilidade
+            "license": m["license"].as_str(), "category": m["category"].as_str(), "keywords": words("keywords"), "contributors": words("contributors"),
+            "minBlueScreen": m["minBlueScreen"].as_str(), "incompatible": self.too_new().is_some(),
         })
     }
 }
@@ -306,7 +315,8 @@ async fn check(fresh: bool) -> Value {
                 // o espaço que o plugin instalado ocupa: medido na instalação (.origin.json) ou agora, na pasta
                 p["disk"] = json!(origin["disk"].as_u64().unwrap_or_else(|| disk_size(Path::new(path))));
                 p["installed"] = json!(v);
-                p["update"] = json!(version_cmp(&remote, v) == Ordering::Greater);
+                // versão nova que pede um BlueScreen mais novo não vira aviso: o cartão explica o que falta
+                p["update"] = json!(version_cmp(&remote, v) == Ordering::Greater && p["incompatible"] != json!(true));
                 p["origin"] = origin.clone();
                 p["user"] = json!(user);
             }
@@ -324,6 +334,7 @@ async fn install_store(id: &str) -> Result<Value, String> {
     let mut snap = snapshot(false).await?;
     if !snap.pkgs.iter().any(|p| p.id == id) { snap = snapshot(true).await?; }
     let p = snap.pkgs.iter().find(|p| p.id == id).ok_or(format!("a loja não tem o plugin {id}"))?;
+    if let Some(min) = p.too_new() { return Err(format!("este plugin precisa do BlueScreen {min} ou mais novo (você tem a {}); atualize o BlueScreen primeiro", env!("CARGO_PKG_VERSION"))); }
     let files = p.files.clone();
     let version = p.manifest["version"].as_str().unwrap_or("").to_string();
     let origin = json!({ "server": STORE, "version": version, "sha256": bundle_hash(&files), "installed": now_ms() });
@@ -511,5 +522,20 @@ mod tests {
         let e = p.entry();
         assert_eq!((e["name"].as_str(), e["version"].as_str(), e["nodes"].as_u64(), e["runtime"].as_str()), (Some("Olá"), Some("1.2.0"), Some(1), Some("Node.js")));
         assert!(e["icon"].as_str().unwrap().starts_with("data:image/svg+xml;base64,"));
+        assert_eq!((e["license"].as_str(), e["category"].as_str(), e["incompatible"].as_bool()), (None, None, Some(false)));
+    }
+    #[test]
+    fn padrao_do_repositorio() {
+        let f = |p: &str, d: &str| (p.to_string(), d.as_bytes().to_vec());
+        let pk = group(vec![
+            f("plugins/novo/plugin.json", r#"{"id":"novo","version":"1.0.0","license":"MIT","category":"midia","keywords":["música"," ",3],"contributors":["Ana"],"minBlueScreen":"999.0.0"}"#),
+            f("plugins/velho/plugin.json", r#"{"id":"velho","version":"1.0.0","minBlueScreen":"1.0.0"}"#),
+        ]);
+        let (novo, velho) = (pk[0].entry(), pk[1].entry());
+        assert_eq!((novo["license"].as_str(), novo["category"].as_str()), (Some("MIT"), Some("midia")));
+        assert_eq!(novo["keywords"], json!(["música"]));
+        assert_eq!(novo["contributors"], json!(["Ana"]));
+        assert_eq!((novo["incompatible"].as_bool(), velho["incompatible"].as_bool()), (Some(true), Some(false)));
+        assert_eq!(pk[0].too_new().as_deref(), Some("999.0.0"));
     }
 }
