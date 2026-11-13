@@ -11,6 +11,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 mod browser;
+mod extra;
 mod links;
 
 static STORE: Mutex<()> = Mutex::new(());
@@ -237,10 +238,15 @@ fn builtin() -> Value {
          "params":{"title":"BlueScreen","message":"{{input}}"},
          "fields":[{"name":"title","label":"Título","kind":"text"},{"name":"message","label":"Mensagem","kind":"area"}]},
         {"type":"http.request","name":"Requisição HTTP","category":"Rede","desc":"Chama um endereço e entrega a resposta.","inputs":["in"],"outputs":["out"],
-         "params":{"url":"https://example.com","method":"GET","headers":{},"body":"","timeout":30000},
+         "params":{"url":"https://example.com","method":"GET","auth":"none","auth_token":"","auth_user":"","auth_pass":"","auth_header":"X-API-Key","headers":{},"body":"","timeout":30000},
          "fields":[
             {"name":"url","label":"Endereço","kind":"text"},
-            {"name":"method","label":"Método","kind":"select","options":["GET","POST","PUT","PATCH","DELETE","HEAD"]},
+            {"name":"method","label":"O que fazer","kind":"select","options":[{"value":"GET","label":"Buscar dados (GET)"},{"value":"POST","label":"Enviar dados (POST)"},{"value":"PUT","label":"Substituir (PUT)"},{"value":"PATCH","label":"Alterar uma parte (PATCH)"},{"value":"DELETE","label":"Apagar (DELETE)"},{"value":"HEAD","label":"Só conferir se responde (HEAD)"}]},
+            {"name":"auth","label":"Login no serviço","kind":"select","options":[{"value":"none","label":"Nenhum"},{"value":"bearer","label":"Token"},{"value":"basic","label":"Usuário e senha"},{"value":"header","label":"Chave num cabeçalho"}]},
+            {"name":"auth_token","label":"Token ou chave","kind":"text","placeholder":"{{cred:nome}}","show":{"auth":["bearer","header"]},"help":"Guarde em Credenciais e use {{cred:nome}}: o valor não fica escrito no fluxo."},
+            {"name":"auth_header","label":"Nome do cabeçalho","kind":"text","placeholder":"X-API-Key","show":{"auth":["header"]}},
+            {"name":"auth_user","label":"Usuário","kind":"text","placeholder":"{{cred:nome.user}}","show":{"auth":["basic"]}},
+            {"name":"auth_pass","label":"Senha","kind":"text","placeholder":"{{cred:nome}}","show":{"auth":["basic"]}},
             {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Um por linha: o nome e o valor. Tokens: {{cred:nome}} (Credenciais do Automator) ou {{vault:nome}} (Cofre da IDE)."},
             {"name":"body","label":"Corpo","kind":"area","show":{"method":["POST","PUT","PATCH","DELETE"]}},
             {"name":"timeout","label":"Tempo limite (ms)","kind":"number","min":1000,"max":600000}
@@ -748,7 +754,7 @@ fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
     Some(match kind {
         "trigger.manual" => ("Nada: é o começo do fluxo.", "O texto do campo Entrada de exemplo (vazio se não preencher).", n),
         "trigger.schedule" | "trigger.startup" => ("Nada: é o começo do fluxo.", "Objeto com a hora do disparo, em milissegundos.", json!({"at": 1794485263000u64})),
-        "trigger.file" => ("Nada: é o começo do fluxo.", "Objeto com o caminho vigiado.", json!({"path": "C:\\pasta\\arquivo.txt"})),
+        "trigger.file" => ("Nada: é o começo do fluxo.", "Objeto com o primeiro arquivo que mudou (path e name) e a lista de todos (files). Para tratar cada um, ligue um Para cada item em {{input.files}}.", json!({"path": "C:\\pasta\\arquivo.txt", "name": "arquivo.txt", "files": ["C:\\pasta\\arquivo.txt"]})),
         "trigger.webhook" => ("Nada: começa quando chamam o endereço.", "Objeto com a chamada inteira: método, endereço, parâmetros da URL, cabeçalhos, cookies, corpo (já como JSON quando for), formulário, token, quem chamou (ip, user_agent) e a hora.",
             json!({"endpoint": "meu-endpoint", "method": "POST", "url": "/api/automator/hook?e=meu-endpoint&id=42", "path": "/api/automator/hook", "query_string": "e=meu-endpoint&id=42", "query": {"id": "42"},
                 "headers": {"content-type": "application/json", "user-agent": "curl/8.0"}, "cookies": {"sessao": "abc"}, "body": {"campo": "valor"}, "form": null, "raw": "{\"campo\":\"valor\"}",
@@ -1280,6 +1286,40 @@ fn gen_flow(out: &str) -> ApiResult<(Flow, Value)> {
     }
     validate(&flow)?;
     Ok((flow, raw))
+}
+/// O que o fluxo faz que merece um olhar antes de salvar e ligar: roda programa, apaga arquivo, manda senha para
+/// fora, deixa um agente alterar o PC, ou aceita ordem de quem chama um endereço. Não volta para a IA: é para a pessoa.
+fn risk_notes(f: &Flow, request: &str) -> Vec<String> {
+    static HOST: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)https?://([a-z0-9.-]+)").unwrap());
+    let asked = request.to_lowercase();
+    let cut = |t: &str| { let t = t.split_whitespace().collect::<Vec<_>>().join(" "); if t.chars().count() > 90 { format!("{}…", t.chars().take(90).collect::<String>()) } else { t } };
+    let hook = f.nodes.iter().any(|n| n.kind == "trigger.webhook" && !n.disabled);
+    let mut out = vec![];
+    for n in f.nodes.iter().filter(|n| !n.disabled) {
+        let name = node_title(n);
+        let text = n.params.to_string();
+        match n.kind.as_str() {
+            "windows.powershell" => out.push(format!("\"{name}\" roda um script no seu PC: {}", cut(n.params["script"].as_str().unwrap_or("")))),
+            "windows.command" => out.push(format!("\"{name}\" roda o programa {} {}", n.params["program"].as_str().unwrap_or(""), cut(&n.params["args"].as_array().map(|a| a.iter().map(stringify).collect::<Vec<_>>().join(" ")).unwrap_or_default()))),
+            "ssh.run" => out.push(format!("\"{name}\" roda um comando no servidor {}: {}", n.params["host"].as_str().unwrap_or(""), cut(n.params["command"].as_str().unwrap_or("")))),
+            "agent.cli" if n.params["access"] == "full" => out.push(format!("\"{name}\" deixa o agente de IA rodar qualquer comando e alterar arquivos, sem perguntar")),
+            "agent.cli" if n.params["access"] == "edit" => out.push(format!("\"{name}\" deixa o agente de IA alterar os arquivos da pasta {}", n.params["cwd"].as_str().filter(|c| !c.is_empty()).unwrap_or("de usuário"))),
+            "file.manage" if n.params["op"] == "trash" => out.push(format!("\"{name}\" manda arquivos para a Lixeira")),
+            "file.manage" if n.params["op"] == "move" => out.push(format!("\"{name}\" move arquivos de lugar")),
+            "db.query" if { let q = n.params["sql"].as_str().unwrap_or("").to_lowercase(); ["delete ", "update ", "drop ", "insert ", "truncate ", "alter "].iter().any(|k| q.contains(k)) } => out.push(format!("\"{name}\" altera dados no banco: {}", cut(n.params["sql"].as_str().unwrap_or("")))),
+            "mail.send" | "notify.telegram" | "notify.chat" => out.push(format!("\"{name}\" envia mensagens em seu nome")),
+            _ => {}
+        }
+        // senha saindo para um endereço que o pedido não citou
+        if (text.contains("cred:") || text.contains("vault:")) && let Some(h) = HOST.captures(&text).map(|c| c[1].to_lowercase()) && !asked.contains(&h) {
+            out.push(format!("\"{name}\" manda uma credencial para {h}, um endereço que o seu pedido não citou"));
+        }
+        if hook && text.contains("{{input") && matches!(n.kind.as_str(), "windows.powershell" | "windows.command" | "agent.cli" | "ssh.run" | "db.query") {
+            out.push(format!("\"{name}\" usa o que chega pelo Endpoint HTTP: quem chamar o endereço influencia o que roda aqui. Ponha um Exigir token logo depois do gatilho"));
+        }
+    }
+    out.sort(); out.dedup(); out.truncate(12);
+    out
 }
 /// O que a estrutura não pega: parâmetro que o nó não tem, valor fora da lista, referência a nó que não existe ou que
 /// não vem antes, campo que a saída do nó anterior não tem, e nó sem ninguém ligado nele.
@@ -1900,19 +1940,20 @@ pub fn catalog() -> Value {
     all.extend(time_catalog().as_array().cloned().unwrap_or_default());
     all.extend(logic_catalog().as_array().cloned().unwrap_or_default());
     all.extend(links::catalog().as_array().cloned().unwrap_or_default());
+    all.extend(extra::catalog().as_array().cloned().unwrap_or_default());
     all.extend(browser::catalog().as_array().cloned().unwrap_or_default());
     all.extend(plugin_nodes());
     // o que cada nó espera e entrega (o plugin pode trazer o dele no automator.json)
     for s in &mut all {
         let kind = s["type"].as_str().unwrap_or("");
-        let Some((expects, returns, sample)) = io_doc(kind).or_else(|| links::io_doc(kind)).or_else(|| browser::io_doc(kind)) else { continue };
+        let Some((expects, returns, sample)) = io_doc(kind).or_else(|| links::io_doc(kind)).or_else(|| extra::io_doc(kind)).or_else(|| browser::io_doc(kind)) else { continue };
         if s["expects"].as_str().is_none_or(str::is_empty) { s["expects"] = json!(expects); }
         if s["returns"].as_str().is_none_or(str::is_empty) { s["returns"] = json!(returns); }
         if s.get("sample").is_none() && !sample.is_null() { s["sample"] = sample; }
     }
     for s in &mut all {
         let kind = s["type"].as_str().unwrap_or("");
-        let Some((takes, gives)) = io_kind(kind).or_else(|| links::io_kind(kind)).or_else(|| (kind == "browser.run").then_some(("any", "object"))) else { continue };
+        let Some((takes, gives)) = io_kind(kind).or_else(|| links::io_kind(kind)).or_else(|| extra::io_kind(kind)).or_else(|| (kind == "browser.run").then_some(("any", "object"))) else { continue };
         if s["takes"].as_str().is_none_or(str::is_empty) { s["takes"] = json!(takes); }
         if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
     }
@@ -1927,7 +1968,7 @@ pub fn catalog() -> Value {
             let name = f["name"].as_str().unwrap_or("").to_string();
             let empty = match &params[&name] { Value::String(t) => t.is_empty(), Value::Array(a) => a.is_empty() && name == "to", _ => false };
             let optional = f["placeholder"].as_str().is_some_and(|p| p.contains("vazio"));
-            const NEEDED: [&str; 19] = ["path", "url", "host", "flow", "tool", "server", "topic", "mac", "token", "chat", "expected", "secret", "env", "find", "field", "local", "remote", "to", "from"];
+            const NEEDED: [&str; 18] = ["path", "url", "host", "flow", "tool", "server", "topic", "mac", "token", "chat", "expected", "secret", "env", "find", "field", "local", "remote", "to"];
             if empty && !optional && (NEEDED.contains(&name.as_str()) || matches!((kind.as_str(), name.as_str()), ("sys.process", "name") | ("ai.openrouter", "model") | ("json.get", "path") | ("json.set", "path"))) { f["required"] = json!(true); }
         }
     }
@@ -1983,6 +2024,14 @@ fn keywords(kind: &str) -> Option<&'static str> {
         "sys.info" => "disco memoria cpu espaco cheio lento saude",
         "audit.http" => "site no ar caiu fora online monitorar",
         "net.ping" => "online ligado responde rede",
+        "math.calc" => "somar subtrair multiplicar dividir conta calculo porcentagem desconto arredondar matematica",
+        "text.number" => "dinheiro reais moeda milhar porcentagem formatar",
+        "list.dedupe" => "duplicados repetidos unicos distintos",
+        "list.lookup" => "procv buscar achar encontrar cruzar planilha",
+        "data.excel" => "xlsx planilha excel tabela abrir ler",
+        "data.xlsx" => "xlsx planilha excel tabela salvar gravar exportar relatorio",
+        "file.zip" => "zip zipar compactar descompactar extrair backup",
+        "windows.screenshot" => "print foto tela captura screenshot imagem",
         _ => return None,
     })
 }
@@ -2447,26 +2496,34 @@ fn snapshot(path: &str) -> Vec<(String, u64, u64)> {
     v.sort();
     v
 }
-static WATCH: LazyLock<Mutex<HashMap<String, (String, Vec<(String, u64, u64)>)>>> = LazyLock::new(Default::default);
+type Seen = (String, u64, u64);
+/// Por gatilho: (caminho, o que já foi tratado, a olhada anterior).
+static WATCH: LazyLock<Mutex<HashMap<String, (String, Vec<Seen>, Vec<Seen>)>>> = LazyLock::new(Default::default);
 /// Gatilho "Quando um arquivo mudar": o que foi criado ou alterado desde a última olhada (a primeira só anota).
+/// Um arquivo só conta quando parou de mudar: igual em duas olhadas seguidas. Assim uma cópia grande em andamento
+/// não dispara o fluxo com o arquivo pela metade. Entrega todos os arquivos prontos, de todos os gatilhos do fluxo.
 fn file_changes(f: &Flow) -> Option<Value> {
-    let mut hit = None;
+    let mut files: Vec<String> = vec![];
     let mut w = WATCH.lock();
     for n in f.nodes.iter().filter(|n| n.kind == "trigger.file" && !n.disabled) {
         let path = n.params["path"].as_str().unwrap_or("").trim().trim_matches('"').to_string();
         if path.is_empty() { continue; }
         let snap = snapshot(&path);
         let key = format!("{}/{}", f.id, n.id);
-        if let Some((old_path, old)) = w.get(&key) && *old_path == path {
-            let changed: Vec<&String> = snap.iter().filter(|e| !old.contains(e)).map(|e| &e.0).collect();
-            if let Some(first) = changed.first() && hit.is_none() {
-                let name = std::path::Path::new(first.as_str()).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                hit = Some(json!({"path": first, "name": name, "files": changed}));
+        let base = match w.get(&key) {
+            Some((old_path, base, last)) if *old_path == path => {
+                let (ready, busy): (Vec<&Seen>, Vec<&Seen>) = snap.iter().filter(|e| !base.contains(e)).partition(|e| last.contains(e));
+                for e in &ready { if !files.contains(&e.0) { files.push(e.0.clone()); } }
+                // o que ainda está mudando fica de fora do "já tratado": volta a ser visto na próxima olhada
+                snap.iter().filter(|e| !busy.contains(e)).cloned().collect()
             }
-        }
-        w.insert(key, (path, snap));
+            _ => snap.clone(),
+        };
+        w.insert(key, (path, base, snap));
     }
-    hit
+    let first = files.first()?;
+    let name = std::path::Path::new(first.as_str()).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    Some(json!({"path": first, "name": name, "files": files}))
 }
 /// As referências `{{vault:nome}}` e `{{cred:nome}}` de um texto, cada uma numa variável de ambiente: (variáveis,
 /// referência -> nome da variável). A do Cofre da IDE segue como referência (quem resolve é o `plugin/exec`, com as
@@ -2486,6 +2543,11 @@ fn secret_env(text: &str) -> ApiResult<(serde_json::Map<String, Value>, serde_js
 }
 /// Roda o nó com as credenciais do Automator (`{{cred:nome}}`) no lugar e tira os valores do que ele devolve, saída e
 /// erro, antes de seguir para os próximos nós e para o histórico.
+/// Senhas curtas usadas em cada execução: não saem da saída dos nós, mas saem do histórico.
+static RUN_SECRETS: LazyLock<Mutex<HashMap<String, Vec<String>>>> = LazyLock::new(Default::default);
+fn hide_short(rid: &str, v: Value) -> Value {
+    match RUN_SECRETS.lock().get(rid) { Some(list) if !list.is_empty() => crate::creds::scrub_value(&v, list), _ => v }
+}
 async fn run_node(flow: &str, n: &Node, p: Value, input: Value) -> ApiResult<Value> {
     let text = p.to_string();
     if !text.contains("cred:") { return execute_node(n, p, input).await; }
@@ -2501,8 +2563,12 @@ async fn run_node(flow: &str, n: &Node, p: Value, input: Value) -> ApiResult<Val
     let values: Vec<String> = found.iter().map(|x| x.1.clone()).collect();
     // nó de plugin e script do PowerShell recebem por variável de ambiente (secret_env); os outros, no próprio campo
     let p = if n.kind.starts_with("plugin.") || n.kind == "windows.powershell" { p } else { crate::creds::fill(&p, &found) };
+    // senha curta ("2026", "admin") aparece por acaso em datas e nomes: apagar da saída estragaria o dado que segue
+    // para os próximos nós. Ela some só do que fica gravado no histórico (ver `hide_short`).
+    let (strong, short): (Vec<String>, Vec<String>) = values.iter().cloned().partition(|v| v.chars().count() >= 8);
+    if !short.is_empty() && let Ok(rid) = RUN_ID.try_with(|r| r.clone()) { let mut g = RUN_SECRETS.lock(); let list = g.entry(rid).or_default(); for v in short { if !list.contains(&v) { list.push(v); } } }
     match execute_node(n, p, input).await {
-        Ok(v) => Ok(crate::creds::scrub_value(&v, &values)),
+        Ok(v) => Ok(crate::creds::scrub_value(&v, &strong)),
         Err(mut e) => { e.msg = crate::plugins::vault::scrub(&e.msg, &values); Err(e) }
     }
 }
@@ -3140,11 +3206,18 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
     if n.kind.starts_with("time.") { return time_node(&n.kind, &p, input).await; }
     if n.kind.starts_with("browser.") { return browser::node(&n.kind, &p).await; }
     if let Some(r) = links::node(&n.kind, &p, &input).await { return r; }
+    if let Some(r) = extra::node(&n.kind, &p, &input).await { return r; }
     if let Some(r) = ops_node(n, &p, &input).await { return r; }
     let out = match n.kind.as_str() {
         "trigger.manual" => p.get("sample").cloned().unwrap_or(Value::Null),
         "trigger.schedule" | "trigger.startup" => json!({"at":now()}),
-        "trigger.file" => json!({"path":p["path"]}),
+        // pelo botão Executar: entrega o arquivo vigiado (numa pasta, o mais novo), no mesmo formato do disparo de verdade
+        "trigger.file" => {
+            let path = text_of(&p, "path"); let path = path.trim().trim_matches('"');
+            let newest = if std::path::Path::new(path).is_dir() { snapshot(path).into_iter().max_by_key(|e| e.1).map(|e| e.0) } else { None }.unwrap_or_else(|| path.to_string());
+            let name = std::path::Path::new(&newest).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            json!({"path": newest, "name": name, "files": [newest]})
+        }
         "util.text" => p["text"].clone(),
         "util.output" => input,
         k if k.starts_with("json.") => json_node(k, &p)?,
@@ -3200,6 +3273,18 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
             let method = p["method"].as_str().unwrap_or("GET").to_uppercase();
             if matches!(method.as_str(), "GET" | "HEAD") || p["body"].as_str().is_some_and(str::is_empty) {
                 if let Some(o) = p.as_object_mut() { o.remove("body"); }
+            }
+            // o login escolhido vira o cabeçalho que o serviço espera
+            let (token, user, pass, key) = (text_of(&p, "auth_token"), text_of(&p, "auth_user"), text_of(&p, "auth_pass"), text_of(&p, "auth_header"));
+            let login = match p["auth"].as_str().unwrap_or("none") {
+                "bearer" => { if token.trim().is_empty() { return Err(fail("falta o token do login no serviço", 400)); } Some(("Authorization".to_string(), format!("Bearer {}", token.trim().trim_start_matches("Bearer ").trim()))) }
+                "basic" => { use base64::Engine as _; if user.trim().is_empty() { return Err(fail("falta o usuário do login no serviço", 400)); } Some(("Authorization".to_string(), format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", user.trim(), pass))))) }
+                "header" => { if token.trim().is_empty() { return Err(fail("falta a chave do login no serviço", 400)); } Some((if key.trim().is_empty() { "X-API-Key".to_string() } else { key.trim().to_string() }, token.trim().to_string())) }
+                _ => None,
+            };
+            if let Some(o) = p.as_object_mut() {
+                for k in ["auth", "auth_token", "auth_user", "auth_pass", "auth_header"] { o.remove(k); }
+                if let Some((name, value)) = login { let mut h = o.get("headers").and_then(Value::as_object).cloned().unwrap_or_default(); h.insert(name, json!(value)); o.insert("headers".into(), Value::Object(h)); }
             }
             let v = service("automator", "plugin/fetch", p).await?;
             let body = v["body"].as_str().unwrap_or("");
@@ -3577,7 +3662,7 @@ impl<'a> Run<'a> {
                 let ms = began.elapsed().as_millis() as u64;
                 match done {
                     Ok(v) => {
-                        let shown = if self.via == "trigger.webhook" { redact(&brief(&v)) } else { brief(&v) };
+                        let shown = hide_short(self.rid, if self.via == "trigger.webhook" { redact(&brief(&v)) } else { brief(&v) });
                         let first = v.as_object().and_then(|o| o.values().next()).cloned().unwrap_or(Value::Null);
                         if n.kind == "util.output" { self.shown = Some(first.clone()); }
                         self.last_out = first;
@@ -3744,6 +3829,7 @@ fn run_steps<'a>(f: &'a Flow, order: Vec<usize>, via: &'a str, payload: &'a Valu
         let step = run.steps(order).await;
         // o navegador que os nós Navegador abriram nesta execução fecha (ou fica, se o nó pediu) quando ela termina
         browser::finish(rid).await;
+        RUN_SECRETS.lock().remove(rid);
         let (status, error) = match step {
             Step::Go => ("completed", None),
             Step::Cancel => ("cancelled", None),
@@ -3907,6 +3993,7 @@ async fn generate_flow(b: Value) -> ApiResult<Value> {
         let notes: Vec<String> = raw["notes"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).map(|n| crate::plugins::vault::scrub(n.trim(), &values).chars().take(300).collect::<String>()).filter(|n| !n.is_empty()).take(8).collect();
         let mut out = serde_json::to_value(&flow)?;
         out["warnings"] = json!(warnings);
+        out["risks"] = json!(risk_notes(&flow, asked));
         out["notes"] = json!(notes);
         out["secrets"] = json!(report);
         out["missing_creds"] = json!(missing);
@@ -4015,7 +4102,7 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
         if !r.is_post() { return Err(fail("use POST", 405)); }
         let b: Value = r.body_json()?;
         let f: Flow = serde_json::from_value(b["flow"].clone()).map_err(|e| fail(format!("fluxo inválido: {e}"), 400))?;
-        ok(json!({"issues": check_flow(&f)}))
+        ok(json!({"issues": check_flow(&f), "risks": risk_notes(&f, b["request"].as_str().unwrap_or(""))}))
     }));
     m.insert(
         "automator/catalog".into(),
@@ -4465,8 +4552,14 @@ pub async fn scheduler() {
                 }
             }
             for (f, via, payload) in flows {
-                if !s.pending.iter().any(|p| p.flow_id == f.id) {
-                    s.pending.push(Pending { flow_id: f.id, scheduled: !via.is_empty(), at: now(), via, payload });
+                match s.pending.iter_mut().find(|p| p.flow_id == f.id) {
+                    // o fluxo já espera a vez dele: os arquivos novos entram no mesmo disparo, em vez de se perderem
+                    Some(p) => if via == "trigger.file" && p.via == via && let (Some(have), Some(more)) = (p.payload["files"].as_array().cloned(), payload["files"].as_array()) {
+                        let mut all = have;
+                        for x in more { if !all.contains(x) { all.push(x.clone()); } }
+                        p.payload["files"] = json!(all);
+                    },
+                    None => s.pending.push(Pending { flow_id: f.id, scheduled: !via.is_empty(), at: now(), via, payload }),
                 }
             }
             Ok((s.pending.clone(), notifications))
@@ -4587,10 +4680,14 @@ mod tests {
         let f: Flow = serde_json::from_value(json!({"id":"w","name":"W","nodes":[{"id":"t","type":"trigger.file","params":{"path":dir.to_string_lossy()}}]})).unwrap();
         assert!(file_changes(&f).is_none()); // a primeira olhada só anota
         std::fs::write(dir.join("novo.txt"), "a").unwrap();
-        let hit = file_changes(&f).unwrap();
+        std::fs::write(dir.join("outro.txt"), "b").unwrap();
+        assert!(file_changes(&f).is_none()); // acabou de aparecer: pode estar sendo copiado
+        let hit = file_changes(&f).unwrap(); // parou de mudar: os dois saem juntos
         assert_eq!(hit["name"], "novo.txt");
+        assert_eq!(hit["files"].as_array().unwrap().len(), 2);
         assert!(file_changes(&f).is_none());
         std::fs::write(dir.join("novo.txt"), "maior").unwrap();
+        assert!(file_changes(&f).is_none());
         assert_eq!(file_changes(&f).unwrap()["files"].as_array().unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }

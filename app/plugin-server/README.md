@@ -13,4 +13,4 @@ O servidor é só de leitura: pela rede, as IDEs listam e baixam plugins, e nada
 
 Para que as IDEs recebam o aviso de atualização, aumente o `version` do `plugin.json`. Pasta com uma versão que já está no servidor vai para `<dir>/_recusados/`.
 
-Detalhes do lado da IDE: [docs/PLUGINS.md](../../docs/PLUGINS.md#servidor-de-plugins).
+Do lado da IDE, o servidor entra em `~/.bluescreen/plugins.json` (`{ "servers": [{ "url": "http://servidor:4900" }] }`) e os plugins dele aparecem na Loja de plugins: [docs/PLUGINS.md](../../docs/PLUGINS.md#servidor-de-plugins-da-equipe).

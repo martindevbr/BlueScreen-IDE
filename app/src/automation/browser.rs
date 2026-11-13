@@ -170,7 +170,11 @@ fn closed() -> ApiError { fail("o navegador foi fechado no meio do caminho", 409
 
 // ---------- a conversa com uma aba ----------
 type Waiting = Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<Value, String>>>>>;
-struct Cdp { tx: tokio::sync::mpsc::UnboundedSender<String>, waiting: Waiting, events: tokio::sync::broadcast::Sender<Value>, seq: AtomicU64, open: Arc<AtomicBool> }
+/// Um quadro (iframe) da página: (a sessão dele, se o navegador o roda em outro processo; o contexto de JavaScript; o id do quadro).
+type Frame = (Option<String>, i64, String);
+/// `frames`: os quadros que a página tem, de qualquer endereço. O JavaScript da página não entra num quadro de outra
+/// origem, então o motor pergunta a cada um deles quando a página não tem o que procura. `main`: o quadro da própria página.
+struct Cdp { tx: tokio::sync::mpsc::UnboundedSender<String>, waiting: Waiting, events: tokio::sync::broadcast::Sender<Value>, seq: Arc<AtomicU64>, open: Arc<AtomicBool>, frames: Arc<Mutex<Vec<Frame>>>, main: Mutex<String> }
 impl Cdp {
     async fn connect(url: &str) -> ApiResult<Arc<Cdp>> {
         let (ws, _) = tokio_tungstenite::connect_async(url).await.map_err(|e| fail(format!("não deu para falar com o navegador: {e}"), 502))?;
@@ -180,26 +184,56 @@ impl Cdp {
         let waiting: Waiting = Default::default();
         let open = Arc::new(AtomicBool::new(true));
         tokio::spawn(async move { while let Some(m) = rx.recv().await { if sink.send(tokio_tungstenite::tungstenite::Message::Text(m.into())).await.is_err() { break; } } let _ = sink.close().await; });
+        let seq = Arc::new(AtomicU64::new(0));
+        let frames: Arc<Mutex<Vec<Frame>>> = Default::default();
         let (w, ev, alive) = (waiting.clone(), events.clone(), open.clone());
+        let (tx2, sq, fr) = (tx.clone(), seq.clone(), frames.clone());
         tokio::spawn(async move {
             while let Some(Ok(m)) = stream.next().await {
                 let Ok(text) = m.to_text() else { continue };
                 let Ok(v) = serde_json::from_str::<Value>(text) else { continue };
                 if let Some(id) = v["id"].as_u64() {
                     if let Some(tx) = w.lock().remove(&id) { let _ = tx.send(if v["error"].is_null() { Ok(v["result"].clone()) } else { Err(v["error"]["message"].as_str().unwrap_or("erro do navegador").to_string()) }); }
-                } else if v["method"].as_str().is_some_and(|m| !m.starts_with("Network.")) { let _ = ev.send(v); }
+                } else if let Some(m) = v["method"].as_str().map(String::from) {
+                    let sid = v["sessionId"].as_str().map(String::from);
+                    match m.as_str() {
+                        // quadro de outro site: roda em outro processo e ganha uma sessão; ele avisa dos contextos dele e dos quadros de dentro
+                        "Target.attachedToTarget" => {
+                            if let Some(child) = v["params"]["sessionId"].as_str() && v["params"]["targetInfo"]["type"] == "iframe" {
+                                for (method, params) in [("Runtime.enable", json!({})), ("Target.setAutoAttach", json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true}))] {
+                                    let id = sq.fetch_add(1, Ordering::Relaxed) + 1;
+                                    let _ = tx2.send(json!({"id": id, "method": method, "params": params, "sessionId": child}).to_string());
+                                }
+                            }
+                        }
+                        "Target.detachedFromTarget" => { if let Some(child) = v["params"]["sessionId"].as_str() { fr.lock().retain(|f| f.0.as_deref() != Some(child)); } }
+                        "Runtime.executionContextCreated" => {
+                            let c = &v["params"]["context"];
+                            if c["auxData"]["isDefault"] == true && let Some(id) = c["id"].as_i64() { let mut g = fr.lock(); if g.len() < 200 { g.push((sid.clone(), id, c["auxData"]["frameId"].as_str().unwrap_or("").to_string())); } }
+                        }
+                        "Runtime.executionContextDestroyed" => { let id = v["params"]["executionContextId"].as_i64(); fr.lock().retain(|f| !(f.0 == sid && Some(f.1) == id)); }
+                        "Runtime.executionContextsCleared" => fr.lock().retain(|f| f.0 != sid),
+                        _ => {}
+                    }
+                    // eventos de rede (modo rápido) e os de dentro dos quadros não entopem a fila em que o goto espera a página
+                    if !m.starts_with("Network.") && sid.is_none() { let _ = ev.send(v); }
+                }
             }
             alive.store(false, Ordering::Relaxed);
             w.lock().clear();
         });
-        Ok(Arc::new(Cdp { tx, waiting, events, seq: AtomicU64::new(0), open }))
+        Ok(Arc::new(Cdp { tx, waiting, events, seq, open, frames, main: Default::default() }))
     }
-    async fn send(&self, method: &str, params: Value) -> ApiResult<Value> {
+    async fn send(&self, method: &str, params: Value) -> ApiResult<Value> { self.send_to(None, method, params).await }
+    /// `frame`: a sessão de um quadro de outro site; sem ela, a página.
+    async fn send_to(&self, frame: Option<&str>, method: &str, params: Value) -> ApiResult<Value> {
         if !self.open.load(Ordering::Relaxed) { return Err(closed()); }
         let id = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.waiting.lock().insert(id, tx);
-        self.tx.send(json!({"id": id, "method": method, "params": params}).to_string()).map_err(|_| closed())?;
+        let mut msg = json!({"id": id, "method": method, "params": params});
+        if let Some(f) = frame { msg["sessionId"] = json!(f); }
+        self.tx.send(msg.to_string()).map_err(|_| closed())?;
         match tokio::time::timeout(Duration::from_secs(60), rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
             Ok(Ok(Err(m))) => Err(fail(m, 422)),
@@ -208,8 +242,11 @@ impl Cdp {
         }
     }
     /// Roda JavaScript na página e devolve o valor.
-    async fn eval(&self, expression: &str) -> ApiResult<Value> {
-        let r = self.send("Runtime.evaluate", json!({"expression": expression, "awaitPromise": true, "returnByValue": true})).await?;
+    async fn eval(&self, expression: &str) -> ApiResult<Value> { self.eval_in(None, expression).await }
+    async fn eval_in(&self, frame: Option<&Frame>, expression: &str) -> ApiResult<Value> {
+        let mut params = json!({"expression": expression, "awaitPromise": true, "returnByValue": true});
+        if let Some(f) = frame { params["contextId"] = json!(f.1); }
+        let r = self.send_to(frame.and_then(|f| f.0.as_deref()), "Runtime.evaluate", params).await?;
         if !r["exceptionDetails"].is_null() {
             let d = &r["exceptionDetails"];
             return Err(fail(d["exception"]["description"].as_str().or(d["text"].as_str()).unwrap_or("erro na página").lines().next().unwrap_or("").to_string(), 422));
@@ -218,7 +255,24 @@ impl Cdp {
     }
     /// Acha o elemento e roda `body` com ele em `el`. Sem elemento: `{ missing: true }`.
     async fn call(&self, sel: &str, body: &str) -> ApiResult<Value> {
-        self.eval(&format!("(() => {{ const el = ({FIND})({}); if (!el) return {{ missing: true }}; {body} }})()", json!(sel))).await
+        self.eval_deep(&format!("(() => {{ const el = ({FIND})({}); if (!el) return {{ missing: true }}; {body} }})()", json!(sel))).await
+    }
+    /// Pergunta à página e, se ela não tiver o que se procura (nada, zero, lista ou texto vazio), aos quadros de outro site.
+    async fn eval_deep(&self, expression: &str) -> ApiResult<Value> {
+        let poor = |v: &Value| v.is_null() || v["missing"] == true || v.as_array().is_some_and(|a| a.is_empty()) || v.as_u64() == Some(0) || v.as_str().is_some_and(|t| t.trim().is_empty());
+        let r = self.eval(expression).await;
+        if r.as_ref().is_ok_and(|v| !poor(v)) { return r; }
+        for f in self.others() { if let Ok(v) = self.eval_in(Some(&f), expression).await && !poor(&v) { return Ok(v); } }
+        r
+    }
+    /// Os quadros fora o da própria página.
+    fn others(&self) -> Vec<Frame> { let main = self.main.lock().clone(); self.frames.lock().iter().filter(|f| f.0.is_some() || f.2 != main).cloned().collect() }
+    /// O que está escrito dentro dos quadros de outro site (o da página não alcança).
+    async fn frames_text(&self) -> String {
+        // os da mesma origem já entraram no texto da página: aqui só os que ela não alcança
+        let mut out = String::new();
+        for f in self.others() { if let Ok(v) = self.eval_in(Some(&f), "(() => { try { if (window.top.document) return ''; } catch (x) { } return document.body ? document.body.innerText.trim() : ''; })()").await && let Some(t) = v.as_str().filter(|t| !t.is_empty()) { out.push_str("\n"); out.push_str(t); } }
+        out
     }
     async fn goto(&self, to: &str) -> ApiResult<()> {
         static SCHEME: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)^[a-z][a-z0-9+.-]*:").unwrap());
@@ -280,6 +334,9 @@ async fn attach(ws: &str) -> ApiResult<Arc<Cdp>> {
     let cdp = Cdp::connect(ws).await?;
     cdp.send("Page.enable", json!({})).await?;
     cdp.send("Runtime.enable", json!({})).await?;
+    if let Ok(t) = cdp.send("Page.getFrameTree", json!({})).await { *cdp.main.lock() = t["frameTree"]["frame"]["id"].as_str().unwrap_or("").to_string(); }
+    // quadros de outro site ganham uma sessão própria nesta mesma conexão
+    let _ = cdp.send("Target.setAutoAttach", json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true})).await;
     Ok(cdp)
 }
 async fn new_tab(port: u16) -> ApiResult<(Arc<Cdp>, String)> {
@@ -353,7 +410,7 @@ impl Steps {
         let end = Instant::now() + self.wait;
         let mut seen = Value::Null;
         loop {
-            if let Ok(v) = self.cdp.eval(expr).await { if ok(&v) { return Ok((v, true)); } seen = v; }
+            if let Ok(v) = self.cdp.eval_deep(expr).await { if ok(&v) { return Ok((v, true)); } seen = v; }
             if !self.cdp.open.load(Ordering::Relaxed) { return Err(closed()); }
             if Instant::now() > end { return Ok((seen, false)); }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -431,7 +488,7 @@ impl Steps {
                 let expr = format!("({ALL})({}).map(el => {TEXT_OF}.replace(/\\s+/g, ' '))", json!(on));
                 let end = Instant::now() + self.wait.min(Duration::from_secs(4));
                 let v = loop {
-                    let v = self.cdp.eval(&expr).await;
+                    let v = self.cdp.eval_deep(&expr).await;
                     if v.as_ref().is_ok_and(|v| v.as_array().is_some_and(|a| !a.is_empty())) || Instant::now() > end { break v?; }
                     tokio::time::sleep(Duration::from_millis(120)).await;
                 };
@@ -451,7 +508,9 @@ impl Steps {
                     "(() => { const parts = [document.body ? document.body.innerText : '']; const walk = (d) => { for (const f of d.querySelectorAll('iframe, frame')) { try { if (f.contentDocument && f.contentDocument.body) { parts.push(f.contentDocument.body.innerText); walk(f.contentDocument); } } catch (x) { } } }; walk(document); return parts.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 200000); })()".to_string()
                 } else { format!("(() => {{ const el = ({FIND})({}); return el ? String(el.innerText || el.textContent || '').trim().slice(0, 200000) : ''; }})()", json!(on)) };
                 let (seen, _) = self.until(&expr, |v| v.as_str().is_some_and(|t| !t.trim().is_empty())).await?;
-                self.values.insert(if value.trim().is_empty() { "pagina".to_string() } else { value.trim().to_string() }, json!(seen.as_str().unwrap_or("")));
+                let mut text = seen.as_str().unwrap_or("").to_string();
+                if on.is_empty() { text.push_str(&self.cdp.frames_text().await); }
+                self.values.insert(if value.trim().is_empty() { "pagina".to_string() } else { value.trim().to_string() }, json!(text.trim().chars().take(200_000).collect::<String>()));
             }
             "pause" => { self.ask(if value.trim().is_empty() { "Faça o que o site pede e clique em Continuar." } else { value.trim() }, false, session).await?; self.cdp.settle().await; }
             "idle" => {

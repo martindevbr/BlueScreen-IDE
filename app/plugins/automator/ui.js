@@ -217,6 +217,8 @@ function normalize(f) {
   f.ui = f.ui && typeof f.ui === 'object' ? f.ui : {};
   f.nodes.forEach((n, i) => {
     if (!Array.isArray(n.position) || n.position.length !== 2 || !n.position.every(Number.isFinite)) n.position = [60 + (i % 4) * 280, 60 + Math.floor(i / 4) * 150];
+    // e-mail de um fluxo antigo: o servidor está escrito, então o provedor é "Outro"
+    if (/^mail\./.test(n.type) && n.params && !n.params.provider && String(n.params.host || '').trim()) n.params.provider = 'custom';
     n.params = { ...clone(spec(n.type)?.params || {}), ...(n.params && typeof n.params === 'object' ? n.params : {}) };
     n.disabled = !!n.disabled; n.locked = !!n.locked;
     if (Array.isArray(n.size) && n.size.length === 2 && n.size.every(Number.isFinite) && n.size[0] >= NODE_MIN) n.size = [Math.min(NODE_MAX, n.size[0]), Math.max(0, n.size[1])]; else delete n.size;
@@ -1837,10 +1839,12 @@ function secretLines(res) {
 const doneList = (lines) => lines.map(([tone, text]) => `<li class="${tone}">${tone === 'key' ? IC.key : IC.err}<span>${esc(text)}</span></li>`).join('');
 /** Depois de a IA montar ou ajustar um fluxo: credenciais, o que falta preencher e o que a conferência achou. */
 function aiDone(title, res) {
-  const lines = secretLines(res), miss = res.missing_creds || [], notes = res.notes || [], warnings = res.warnings || [];
-  if (!lines.length && !miss.length && !notes.length && !warnings.length) return false;
+  const lines = secretLines(res), miss = res.missing_creds || [], notes = res.notes || [], warnings = res.warnings || [], risks = res.risks || [];
+  if (!lines.length && !miss.length && !notes.length && !warnings.length && !risks.length && !res.paused) return false;
   const html = `<div class="dlg-hd"><div class="dlg-ic">${IC.spark}</div><div><h3>${esc(title)}</h3><p>Confira os pontos abaixo antes de salvar e executar.</p></div></div>
     ${lines.length || miss.length ? `<h4 class="am-done-h">Credenciais</h4><ul class="am-done">${doneList(lines)}${miss.map(m => `<li class="warn">${IC.key}<span>O fluxo usa a credencial "${esc(m)}", que ainda não existe.</span><button class="chip" data-cred="${esc(m)}" type="button">Guardar agora</button></li>`).join('')}</ul>` : ''}
+    ${res.paused ? `<p class="am-gen-note">${IC.err}<span>O fluxo estava ligado e foi desligado: ele mudou e ainda não foi testado. Execute uma vez e acenda o Ligado de novo.</span></p>` : ''}
+    ${risks.length ? `<h4 class="am-done-h">Este fluxo mexe no seu PC ou fala por você</h4><ul class="am-warn am-risk">${risks.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     ${notes.length ? `<h4 class="am-done-h">Falta preencher ou conferir</h4><ul class="am-warn">${notes.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     ${warnings.length ? `<h4 class="am-done-h">A conferência automática achou</h4><ul class="am-warn">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <div class="actions"><span class="spacer"></span><button class="chip primary" data-close>Entendi</button></div>`;
@@ -1858,10 +1862,13 @@ function applyAi(flow) {
     if (o.locked) return clone(o);
     return { ...n, position: o.position, disabled: o.disabled, locked: o.locked, ...(o.size ? { size: o.size } : {}) };
   });
-  Object.assign(A.flow, { name: flow.name || A.flow.name, description: flow.description || A.flow.description || '', nodes: flow.nodes, edges: flow.edges });
+  // fluxo que roda sozinho não segue ligado com uma versão que ninguém testou
+  const paused = !!A.flow.active;
+  Object.assign(A.flow, { name: flow.name || A.flow.name, description: flow.description || A.flow.description || '', nodes: flow.nodes, edges: flow.edges, ...(paused ? { active: false, next_run: null } : {}) });
   normalize(A.flow); A.sel.clear(); A.selEdge = null;
   renderAll(); changed(true);
   if (added) requestAnimationFrame(() => { arrange(false); fit(); });
+  return paused;
 }
 const AI_NOTE = `<p class="am-gen-note">${IC.key}<span>Pode escrever senha ou token no pedido, de preferência entre aspas. O valor vai para o cofre do Automator e a IA recebe só o nome.</span></p>`;
 const AI_STEPS = ['A IA escreve o fluxo', 'O BlueScreen confere', 'A IA corrige o que foi achado', 'Credenciais e resultado'];
@@ -1939,7 +1946,7 @@ function adjustAi(pre) {
       const flow = { ...res }; for (const k of ['warnings', 'notes', 'secrets', 'missing_creds', 'rounds']) delete flow[k];
       box.hidden = true;
       if (A.flow !== f) return bs.toast('O fluxo aberto mudou enquanto a IA trabalhava; o ajuste não foi aplicado.', 'err');
-      applyAi(flow);
+      res.paused = applyAi(flow);
       aiDone('Fluxo ajustado', res);
       bs.toast('Fluxo ajustado. Ctrl+Z desfaz.', 'ok');
     } catch (e) { st.textContent = e.message === 'cancelado' ? 'Cancelado. O fluxo ficou como estava.' : 'Não deu: ' + e.message; st.classList.toggle('bad', e.message !== 'cancelado'); }
@@ -2115,12 +2122,13 @@ const load = guard(async () => {
 });
 
 // (registrado antes da tela: ao reabrir a aba num recarregamento, o núcleo já acha o painel dela)
-// o painel da esquerda é a lista de fluxos: entra no lugar do painel de arquivos enquanto a aba do Automator está na frente
+// o painel da esquerda é a lista de fluxos; a tela é a aba fixa dele (pinned): fica na primeira posição enquanto o painel
+// Automator é o painel escolhido e sai quando outro painel entra (o fluxo aberto continua na memória)
 bs.tools.register({ id: 'automator', title: 'Automator', icon: IC.app, order: 60, page: 'automator', render() { if (!R.side) return; bs.$('#toolBody').replaceChildren(R.side); load(); } });
 // O Automator é uma tela inteira: abre numa aba do editor, pelo ícone da barra da esquerda.
 // O ponto de "não salvo" da aba, o Ctrl+S, o "Salvar tudo" e a pergunta ao fechar ou sair são os da IDE.
 bs.pages.register({
-  id: 'automator', title: 'Automator', icon: IC.app, render: mount,
+  id: 'automator', title: 'Automator', icon: IC.app, pinned: true, render: mount,
   show: () => { load(); bs.pages.dirty('automator', isDirty()); requestAnimationFrame(() => { if (A.flow && !root.contains(document.activeElement)) R.cv.focus({ preventScroll: true }); }); },
   save: guard(save),
   discard: () => { if (A.flow) open(A.flows.find(f => f.id === A.flow.id) || A.flows[0] || null); },

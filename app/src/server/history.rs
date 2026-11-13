@@ -15,4 +15,18 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         let text = if r.is_post() { Some(String::from_utf8_lossy(&r.body).into_owned()) } else { None };
         ok(vcs::blame(&project(&r)?, r.q_or("file", ""), r.q_or("line", "1").parse().unwrap_or(1), text.as_deref()).await)
     }));
+    // os checkouts Git/SVN dentro de uma pasta (ela mesma, se for um): uma pasta cheia de repositórios vira um painel só
+    add("repos", route_fn(|r| async move { ok(json!({ "repos": vcs::repos(&project(&r)?, r.q_or("depth", "3").parse().unwrap_or(3)).await })) }));
+    // os commits de um período (since/until em segundos unix) com os arquivos de cada um
+    add("timeline", route_fn(|r| async move {
+        let since = r.q_or("since", "0").parse().unwrap_or(0);
+        ok(vcs::timeline(&project(&r)?, since, r.q("until").and_then(|u| u.parse().ok()), r.q_or("n", "400").parse().unwrap_or(400)).await)
+    }));
+    // POST { terms: [..] }: as linhas somadas/removidas no período que contêm um dos termos (o erro colado no incidente)
+    add("scan", route_fn(|r| async move {
+        let b: Value = r.body_json()?;
+        let terms: Vec<String> = b["terms"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+        let since = r.q_or("since", "0").parse().unwrap_or(0);
+        ok(vcs::scan(&project(&r)?, since, r.q("until").and_then(|u| u.parse().ok()), &terms, 400).await)
+    }));
 }

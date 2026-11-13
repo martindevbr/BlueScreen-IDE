@@ -21,7 +21,8 @@ Um lugar para cada coisa, e nenhum outro:
 |---|---|
 | código dos seus plugins (inclusive os criados pelo IAMaker) | `~/.bluescreen/plugins/<id>/` |
 | dados de cada plugin (`plugin.data`, `plugin.files`, `plugin.secrets`, configurações) | `~/.bluescreen/plugin-data/<id>/` |
-| plugins desligados e servidores de plugins | `~/.bluescreen/plugins.json` |
+| plugins desligados | `~/.bluescreen/plugins.json` |
+| catálogo da loja guardado para abrir sem rede | `~/.bluescreen/store-cache/` |
 
 Não guarde dados de plugin em `localStorage`, `bs.store`, IndexedDB nem cookies: ficam presos à janela e sobram depois de remover o plugin. Remover com **Apagar também os dados do plugin** manda a pasta de dados junto para a Lixeira. Se um painel continua na barra depois de remover, ele é de outro plugin: o botão direito no ícone mostra de qual.
 
@@ -262,7 +263,7 @@ O objeto `bs` (também em `window.BS`):
 | `bs.dashboard.card({ id, order, wide, html(), bind(el) })` / `bs.dashboard.action({ label, icon, go })` | card e botão no resumo do projeto |
 | `bs.ui.panel(html)` | painel na área do editor, abaixo do código. Como os outros painéis, dá para arrastar a aba dele para cima, para os lados ou para uma janela flutuante (veja [Dividir a tela](#dividir-a-tela-bslayout)). A aba usa o `.head .ttl` do painel como título; `data-dock-title`, `data-dock-icon` (SVG) e `data-dock-tool` (o id do `bs.tools.register` que abre o painel) no elemento mudam isso |
 | `bs.bubble.register({ id, title, icon, order, width, height, render(el), show(), hide() })` | **janela no balão flutuante**: o balão (canto da tela, arrastável) lista as janelas; cada uma abre na própria janela, que o usuário move, redimensiona, maximiza, minimiza no balão, fecha ou encaixa numa região da tela. `render(el)` roda uma vez, no registro, e desenha dentro de `el`. `bs.bubble.open(id)` / `minimize(id)` / `close(id)` / `toggle(id)` / `isOpen(id)` / `windowOf(id)`; `bs.bubble.badge(id, 'busy' \| 'dot' \| null)` marca o balão (anel girando, ponto) |
-| `bs.pages.register({ id, title, icon, render(el), show(), hide(), save(), discard(), unsaved() })` | **tela inteira numa aba do editor**, ao lado dos arquivos (o Automator é assim). `render(el)` roda uma vez, no registro; fechar e reabrir a aba mantém o elemento. `bs.pages.open(id)` / `close(id)` / `isOpen(id)` / `isActive(id)`. `bs.pages.dirty(id, true)` põe o ponto de não salvo na aba: daí `Ctrl+S` e **Salvar tudo** chamam `save()`, fechar pergunta e **Fechar sem salvar** chama `discard()`; `unsaved()` devolve o texto do que está por salvar. O salvamento automático não chama `save()`. Para o ícone na barra da esquerda: `bs.tools.register({ id, title, icon, order, page: '<id da tela>' })`; com `render()` nesse registro, o painel da esquerda passa a ser da tela (entra no lugar do painel de arquivos enquanto a aba está na frente e sai quando outra aba entra). Registre o painel antes da tela |
+| `bs.pages.register({ id, title, icon, pinned, render(el), show(), hide(), save(), discard(), unsaved() })` | **tela inteira numa aba do editor**, ao lado dos arquivos. Com `pinned: true` ela é a **aba fixa** de um painel (veja [Aba fixa](#aba-fixa-de-um-painel)): o Automator, o QAutils, as Alterações e a Loja de plugins são assim. `render(el)` roda uma vez, no registro; fechar e reabrir a aba mantém o elemento. `bs.pages.open(id)` / `close(id)` / `isOpen(id)` / `isActive(id)`. `bs.pages.dirty(id, true)` põe o ponto de não salvo na aba: daí `Ctrl+S` e **Salvar tudo** chamam `save()`, fechar pergunta e **Fechar sem salvar** chama `discard()`; `unsaved()` devolve o texto do que está por salvar. O salvamento automático não chama `save()`. Para o ícone na barra da esquerda: `bs.tools.register({ id, title, icon, order, page: '<id da tela>' })`; com `render()` nesse registro, o painel da esquerda passa a ser da tela (entra no lugar do painel de arquivos enquanto a aba está na frente e sai quando outra aba entra). Registre o painel antes da tela |
 | `bs.aiClis.open(id)` / `list()` | a janela **Agentes de IA** (programa, modelo e esforço do Codex, do Claude Code e dos agentes cadastrados) e a lista deles. Ao gravar, roda o gancho `aiclis:change` |
 | `bs.build.info()` / `selected()` / `run(task, cmd)` / `showLog(log)` / `current()` / `render()` | painel Build (embaixo do editor): estrutura, escolhas (Maven, JDK, repositório), rodar tarefa, mostrar um log de fora no console |
 | `bs.build.runSteps({ title, steps, jdk })` / `runFile()` | roda passos prontos no console (`{ program, args, cwd, env, java }`, ou `kind: "maven"` com os argumentos do mvn), com uma linha para a entrada do programa; `runFile()` é o "Executar arquivo" pela extensão |
@@ -284,6 +285,30 @@ bs.hooks.filter('menu:file', (items, ctx) => [...items, '-', {
   action: async () => { const f = await bs.api('file', { project: bs.S.project.path, file: ctx.rel }); bs.toast(f.content.split('\n').length + ' linhas'); },
 }]);
 ```
+
+## Aba fixa de um painel
+
+Um painel da barra da esquerda pode ter uma tela grande presa a ele: a lista fica na esquerda e a tela ocupa a área do editor, numa aba que é sempre a primeira.
+
+```js
+// primeiro o painel (com page), depois a tela
+bs.tools.register({ id: 'meu', title: 'Meu plugin', icon: ICONE, order: 70, page: 'meu', render() { bs.$('#toolBody').innerHTML = '...'; } });
+bs.pages.register({ id: 'meu', title: 'Meu plugin', icon: ICONE, pinned: true, render(el) { el.innerHTML = '...'; }, show() {}, hide() {} });
+```
+
+Como ela se comporta:
+
+- **Entra com o painel.** Escolher o painel (ícone ou atalho) abre a aba na frente. Com a aba já aberta, o ícone só recolhe e mostra a lista.
+- **Fica presa.** É a primeira aba, não tem X, não arrasta, e continua à vista quando as outras rolam.
+- **Abrir um arquivo não troca o painel.** A lista da esquerda continua lá e a aba fixa continua na fila.
+- **Sai com o painel.** Escolher outro painel tira a aba, sem perguntar. O elemento de `render(el)` é guardado: ao voltar, a tela está como ficou. `hide()` avisa a saída e `show()` a volta.
+
+Cuidados:
+
+- O que precisa continuar rodando com a aba fora (uma música tocando, um processo) não pode depender de a tela estar montada.
+- `bs.pages.dirty(id, true)` mostra o ponto de não salvo na aba fixa, mas trocar de painel não pergunta nada: guarde o trabalho em memória e use o gancho `app:can-quit` para segurar a saída da IDE.
+- No Estúdio (janela só dos plugins), a tela abre como aba comum, com o X.
+- `bs.pages.isPinned(id)` diz se a tela é fixa.
 
 ## Dividir a tela (`bs.layout`)
 
@@ -387,36 +412,38 @@ O núcleo chama a rota indicada (POST, como chamada interna) e usa a resposta. G
 | `build.run` | `{ project, root, repo }` quando o usuário escolheu um repositório do plugin | `{ settings, env, note }`: settings.xml do Maven, variáveis de ambiente do build e o aviso no console |
 | `lint` | `{ project, file }` (caminho relativo ao projeto) | `{ handled, tool, problems: [{ line, col, end_line, end_col, sev, msg, rule }], client }`. Com `handled: false` (ou erro), o núcleo segue o lint de sempre. `sev` é `error`, `warning` ou `info`; `client: "ts"` mantém o verificador TypeScript do editor |
 
-## Servidor de plugins
+## Loja de plugins
 
-`app/plugin-server` é um programa à parte que hospeda plugins com versões. A IDE aponta para ele na aba **Plugins** › **Servidores de plugins** (só o endereço). O servidor é só de leitura: a IDE lista, instala e atualiza, mas não envia nada para ele. A lista fica em `~/.bluescreen/plugins.json` (`servers`).
+O catálogo oficial é o repositório [martindevbr/BlueScreen-Plugins](https://github.com/martindevbr/BlueScreen-Plugins): cada pasta de `plugins/` é um plugin, com o nome igual ao `id` do `plugin.json`.
 
 **Na IDE:**
-- **Instalar.** Os plugins do servidor aparecem em **Disponíveis nos servidores**, com o botão **Instalar**.
+- **Onde fica.** O painel **Plugins** (`Alt+7`) mostra os instalados na esquerda e abre a **Loja de plugins** na área grande, numa aba fixa.
+- **Loja.** Busca, filtros (**Todos**, **Instalados**, **Atualizações**, **Com nós**) e um cartão por plugin. O cartão diz quantos nós o plugin acrescenta ao Automator e se o servidor dele precisa de Node.js, Python ou PowerShell.
+- **Página do plugin.** Clique no cartão: descrição, README, nós do Automator, tamanho e o link do código no GitHub.
+- **Instalar e atualizar.** O plugin liga na hora, sem recarregar a janela. Vai para `~/.bluescreen/plugins/<id>`, que vale mais que o do app, com um `.origin.json` (origem, versão e sha256).
 - **Aviso de atualização.**
-  - A IDE consulta os servidores alguns segundos depois de abrir, de meia em meia hora e quando você volta para a janela.
-  - Havendo versão maior de um plugin instalado, aparecem o selo no topo e o número na aba Plugins.
-  - O botão **Atualizar para vX** fica na linha do plugin.
-  - O aviso some quando você atualiza.
-- **Onde instala.** O plugin vai para `~/.bluescreen/plugins/<id>`, que vale mais que o do app.
-  - O pacote é conferido pelo sha256 antes.
-  - Um plugin com `server.exe` é encerrado e trocado sem fechar a IDE.
-  - A pasta ganha um `.origin.json` com o servidor e a versão.
-- **Desinstalar.** Botão direito no plugin › **Desinstalar**. Só vale para plugins da pasta do usuário. Se o app tiver o mesmo plugin, a versão do app volta a valer.
+  - A IDE consulta a loja alguns segundos depois de abrir, de meia em meia hora e quando você volta para a janela.
+  - Havendo versão maior de um plugin instalado, aparecem o selo no topo e o número no ícone do painel.
+  - O botão **Atualizar para vX** fica na linha do plugin e no cartão da loja.
+- **Remover.** A lixeira no cartão do plugin (esquerda) ou na página dele na loja. Só vale para plugins da pasta do usuário. Se o app tiver o mesmo plugin, a versão do app volta a valer.
 
-**No servidor:**
+**Como a IDE lê o repositório:**
+- Um pedido só: o zip do branch `main` (`codeload.github.com`), guardado em `~/.bluescreen/store-cache/` com o ETag. Sem mudança no repositório, o GitHub responde que nada mudou e nada é baixado de novo.
+- Sem rede, a loja mostra o catálogo guardado e avisa.
+- Pasta sem `plugin.json` válido, ou com `id` diferente do nome da pasta, não entra.
 
+**Publicar um plugin:** ponha a pasta em `plugins/<id>/` no repositório e faça o push na `main`. Para as IDEs receberem o aviso de atualização, aumente o `version` do `plugin.json`.
+
+**Testar antes de publicar:** `BLUESCREEN_PLUGIN_REPO` aponta uma pasta local com a mesma forma do repositório (um clone, por exemplo). A loja lê dela no lugar do GitHub e avisa na tela. `BLUESCREEN_HOME` troca a pasta `~/.bluescreen` inteira, para uma instância de teste não tocar nos seus plugins e dados.
+
+**Rotas:** `GET plugins/remote` (o catálogo comparado com os instalados; `fresh=1` pergunta de novo), `GET plugins/about?id=` (README, nós e arquivos), `POST plugins/install { id }` e `POST plugins/uninstall { id, data }`.
+
+### Servidor de plugins da equipe
+
+`app/plugin-server` continua existindo para quem hospeda plugins dentro da empresa. A tela não gerencia mais servidores: liste-os em `~/.bluescreen/plugins.json`, e os plugins deles entram no mesmo catálogo da loja.
+
+```json
+{ "servers": [{ "url": "http://servidor:4900" }] }
 ```
-app\build.ps1 -PluginServer
-dist\PluginServer\bluescreen-plugin-server.exe --port 4900 --dir D:\plugins --name "Plugins da equipe"
-```
 
-- **Pasta de dados:** `<dir>/<id>/<versão>/`. As IDEs sempre recebem a maior versão; as antigas ficam guardadas.
-- **Publicar:** na máquina do servidor, solte a pasta do plugin, a que tem o `plugin.json`, direto em `<dir>/`. O servidor lê o id e a versão e arquiva sozinho. Para as IDEs receberem o aviso, aumente o `version` do `plugin.json`; uma versão que já está lá vai para `<dir>/_recusados/`.
-- **Tirar uma versão:** apague `<dir>/<id>/<versão>/`.
-- **Rotas:**
-  - `GET /api/index`
-  - `GET /api/plugins/<id>[?version=]`, que devolve o pacote `{ id, version, sha256, files: [{ path, data (base64) }] }`
-  - `GET /`, uma página com a lista
-- **Só leitura:** não há rota para enviar nem apagar plugins pela rede.
-
+Como subir e publicar: [app/plugin-server/README.md](../app/plugin-server/README.md). Com o mesmo `id` na loja e num servidor, vale a maior versão.

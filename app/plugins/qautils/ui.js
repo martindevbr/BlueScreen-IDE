@@ -1,5 +1,6 @@
 // QAutils: cenários do QA (plugin nativo, só interface). Usa o índice e a busca do núcleo, a pasta de dados do plugin e o
-// console de Build; nada de servidor próprio. O painel QA (Alt+9) mostra os cenários
+// console de Build; nada de servidor próprio. O painel QA (Alt+9) tem uma aba fixa na área do editor (quadro de
+// execução por status e cobertura por chamado, tag ou pasta) e mostra os cenários
 // (Gherkin/Cucumber): features por pasta e por chamado, busca por texto, @tag ou chamado,
 //   tags e o andamento da execução manual. No editor (.feature): autocompletar com os passos do projeto e as step
 //   definitions, aviso de passo parecido, Contexto automático, renumeração dos CTs, formatação (Shift+Alt+F); acima de
@@ -193,7 +194,7 @@ async function index(fresh) {
     P.at = Date.now();
   })();
   try { await P.loading; } finally { P.loading = null; }
-  if (proj() === pp) { if (S.tool === 'qa') bs.renderTool(); fireLens(); S.tabs.forEach(t => isFeature(t) && diagnose(t.model)); }
+  if (proj() === pp) { redraw(); fireLens(); S.tabs.forEach(t => isFeature(t) && diagnose(t.model)); }
 }
 // passos únicos (com quantas vezes aparecem e onde) e tags
 function catalog() {
@@ -271,7 +272,7 @@ async function setStatus(rel, sc, s, note) {
   const k = stKey(rel, sc);
   if (s) P.status[k] = { s, at: Date.now(), by: P.settings.qaName || '', note: note || (P.status[k] && P.status[k].note) || '' }; else delete P.status[k];
   try { await plugin.data.set('st:' + proj(), P.status); } catch (e) { toast(e.message); }
-  fireLens(); if (S.tool === 'qa') bs.renderTool();
+  fireLens(); redraw();
 }
 const statusOf = (rel, sc) => P.status[stKey(rel, sc)] || null;
 
@@ -304,13 +305,14 @@ function scenarioText(rel, d, sc) {
   if (st) out.push('', `Resultado: ${STATUS[st.s].sym} ${STATUS[st.s].label} em ${fmtDate(st.at)}${st.by ? ' (' + st.by + ')' : ''}${st.note ? ' — ' + st.note : ''}`);
   return out.join('\n');
 }
-function csvOf(rels) {
+function csvOf(rels, keep) {
   const q = (v) => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const rows = [['Chamado', 'Arquivo', 'Funcionalidade', 'ID', 'Cenário', 'Tags', 'Pré-condições', 'Passos', 'Resultado esperado', 'Exemplos', 'Status', 'Executado em', 'QA', 'Observação']];
   for (const rel of rels) {
     const d = docFor(rel); if (!d) continue;
     const bg = d.background ? d.background.steps.map(s => `${s.kw} ${s.text}`) : [];
     for (const sc of d.scenarios) {
+      if (keep && !keep(rel, sc)) continue;
       const by = (t) => sc.steps.filter(s => s.type === t).map(s => `${s.kw} ${s.text}`);
       const st = statusOf(rel, sc); const id = /^([A-Za-z]{1,6}\s*-?\s*\d+)/.exec(sc.name);
       rows.push([ticketsOf(rel).join(' '), rel, d.feature ? d.feature.name : '', id ? id[1].replace(/\s+/g, '') : '', id ? sc.name.slice(id[0].length).replace(/^[\s\-–:]+/, '') : sc.name,
@@ -330,14 +332,14 @@ function ticketLink(id) {
   return null;
 }
 // relatório de evidências em HTML (abre no navegador; dá para imprimir em PDF); as imagens ficam com caminho relativo
-function reportHtml(rels, outDir) {
+function reportHtml(rels, outDir, keep) {
   const h = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let pass = 0, fail = 0, blocked = 0, none = 0;
   const parts = rels.map(rel => {
     const d = docFor(rel); if (!d) return '';
     const tk = ticketsOf(rel).map(id => { const u = ticketLink(id); return u ? `<a href="${h(u)}">${h(id)}</a>` : h(id); }).join(' · ');
     const bg = d.background && d.background.steps.length ? `<div class="bg"><b>${h(d.background.kw)}</b>${d.background.steps.map(s => `<div class="st"><b>${h(s.kw)}</b> ${h(s.text)}</div>`).join('')}</div>` : '';
-    const scs = d.scenarios.map(sc => {
+    const scs = d.scenarios.filter(sc => !keep || keep(rel, sc)).map(sc => {
       const st = statusOf(rel, sc); if (!st) none++; else if (st.s === 'pass') pass++; else if (st.s === 'fail') fail++; else blocked++;
       const ev = evidences(rel, sc).map(p => `<figure><img src="${relFrom(outDir, p)}" alt=""><figcaption>${h(fileName(p))}</figcaption></figure>`).join('');
       const steps = sc.steps.map(s => `<div class="st"><b>${h(s.kw)}</b> ${h(s.text).replace(/&lt;([^&]+)&gt;/g, '<i>&lt;$1&gt;</i>')}${s.table.length ? `<table>${s.table.map(r => `<tr>${r.cells.map(c => `<td>${h(c)}</td>`).join('')}</tr>`).join('')}</table>` : ''}</div>`).join('');
@@ -528,7 +530,10 @@ const isFeature = (t) => t && t.model && /\.feature$/i.test(t.path || '');
 const relOfModel = (m) => (m && m._tab && m._tab.project === proj()) ? m._tab.path : null;
 const hold = new WeakMap(); // modelo -> { doc, marks }
 const lensEmitter = { list: new Set(), fire() { this.list.forEach(f => { try { f(); } catch {} }); } };
-const fireLens = () => { lensEmitter.fire(); S.tabs.forEach(t => isFeature(t) && paint(t.model)); };
+// com outra aba na frente (o quadro, por exemplo) o editor está escondido e o Monaco não troca o texto das lentes da feature:
+// quando ela volta (tab:activate), desenha o editor (as lentes voltam a contar como visíveis) e pede as lentes de novo
+let lensLate = false;
+const fireLens = () => { lensEmitter.fire(); if (!isFeature(S.active)) lensLate = true; S.tabs.forEach(t => isFeature(t) && paint(t.model)); };
 // faixa colorida na margem esquerda de cada cenário executado (verde Passou, vermelho Falhou, amarelo Bloqueado)
 const painted = new WeakMap(); // modelo -> ids das decorações
 function paint(model, d) {
@@ -688,22 +693,24 @@ async function runner(target, tags, title) {
 }
 
 // ---------- janelas: status, evidências, nova feature ----------
-function statusMenu(e, rel, sc) {
+function statusMenu(e, rel, sc, extra = []) {
   const st = statusOf(rel, sc);
   bs.showMenu(e, [
     ...Object.entries(STATUS).map(([k, v]) => ({ label: v.label + (st && st.s === k ? ' ✓' : ''), icon: v.ico, action: () => setStatus(rel, sc, k) })),
     { label: 'Anotação…', icon: bs.I.edit, action: () => noteDialog(rel, sc) },
     { label: 'Abrir relatório de bug deste cenário…', icon: ICO.bug, action: () => bugFromScenario(rel, sc) },
     '-', { label: 'Não executado', icon: bs.I.x, action: () => setStatus(rel, sc, null) },
+    ...extra,
   ], sc.name);
 }
+function copyScenario(rel, sc) { const d = docFor(rel); if (!d) return; bs.copyText(scenarioText(rel, d, sc)); toast('Cenário copiado (texto para o chamado)', 'ok'); }
 function noteDialog(rel, sc) {
   const st = statusOf(rel, sc) || {};
   dialog('qaNote', `<div class="dlg-hd"><span class="dlg-ic">${ICO.qa}</span><div><h3>Anotação do cenário</h3><p>${esc(sc.name)}</p></div></div>
     <label class="fld">Observação (vai no relatório e no CSV)<textarea id="qaNoteIn" rows="4">${esc(st.note || '')}</textarea></label>
     <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="qaNoteOk">Salvar</button></div>`, (el) => {
     el.querySelector('#qaNoteIn').focus();
-    el.querySelector('#qaNoteOk').onclick = async () => { const v = el.querySelector('#qaNoteIn').value.trim(); el.hidden = true; const k = stKey(rel, sc); if (P.status[k]) { P.status[k].note = v; await plugin.data.set('st:' + proj(), P.status); fireLens(); } else await setStatus(rel, sc, 'pass', v); };
+    el.querySelector('#qaNoteOk').onclick = async () => { const v = el.querySelector('#qaNoteIn').value.trim(); el.hidden = true; const k = stKey(rel, sc); if (P.status[k]) { P.status[k].note = v; await plugin.data.set('st:' + proj(), P.status); fireLens(); pgSoon(); } else await setStatus(rel, sc, 'pass', v); };
   });
 }
 function evidenceDialog(rel, sc) {
@@ -712,7 +719,7 @@ function evidenceDialog(rel, sc) {
     el.querySelector('.qa-evs').innerHTML = list.length ? list.map(p => `<figure data-p="${esc(p)}"><img src="${esc(rawUrl(p))}&t=${Date.now()}" alt="" loading="lazy"><figcaption>${esc(fileName(p))}<button class="icon-btn" data-del title="Excluir">${bs.I.x}</button></figcaption></figure>`).join('') : '<div class="qa-none">Nenhuma evidência ainda. Tire o print (Win+Shift+S) e cole aqui com Ctrl+V.</div>';
     el.querySelectorAll('figure').forEach(f => {
       f.querySelector('img').onclick = () => bs.openFile(f.dataset.p, 'editor');
-      f.querySelector('[data-del]').onclick = async () => { try { await api('file/delete', { project: proj() }, { method: 'POST', body: JSON.stringify({ paths: [f.dataset.p] }) }); P.all = P.all.filter(x => x.p !== f.dataset.p); draw(el); fireLens(); } catch (e) { toast(e.message); } };
+      f.querySelector('[data-del]').onclick = async () => { try { await api('file/delete', { project: proj() }, { method: 'POST', body: JSON.stringify({ paths: [f.dataset.p] }) }); P.all = P.all.filter(x => x.p !== f.dataset.p); draw(el); fireLens(); pgSoon(); } catch (e) { toast(e.message); } };
     });
   };
   const add = async (el, files) => {
@@ -721,7 +728,7 @@ function evidenceDialog(rel, sc) {
       if (!/^image\//.test(f.type)) continue;
       try { await saveEvidence(rel, sc, f, ext); } catch (e) { toast(e.message); }
     }
-    draw(el); fireLens();
+    draw(el); fireLens(); pgSoon();
   };
   const el = dialog('qaEv', `<div class="dlg-hd"><span class="dlg-ic">${ICO.cam}</span><div><h3>Evidências</h3><p>${esc(sc.name)}</p></div></div>
     <div class="qa-drop" tabindex="0">Cole um print (<b>Ctrl+V</b>), arraste imagens para cá ou <button class="chip" id="qaEvPick">escolha arquivos</button><input type="file" id="qaEvFile" accept="image/*" multiple hidden></div>
@@ -812,7 +819,7 @@ function setup() {
   const cmd = (id, fn) => { try { monaco.editor.registerCommand(id, (_a, ...args) => fn(...args)); } catch {} };
   cmd('qa.status', (rel, line) => { const d = docFor(rel); const sc = d && d.scenarios.find(s => s.line === line); if (sc) statusMenu(atMouse(), rel, sc); });
   cmd('qa.evidence', (rel, line) => { const d = docFor(rel); const sc = d && d.scenarios.find(s => s.line === line); if (sc) evidenceDialog(rel, sc); });
-  cmd('qa.copy', (rel, line) => { const d = docFor(rel); const sc = d && d.scenarios.find(s => s.line === line); if (sc) { bs.copyText(scenarioText(rel, d, sc)); toast('Cenário copiado (texto para o chamado)', 'ok'); } });
+  cmd('qa.copy', (rel, line) => { const d = docFor(rel); const sc = d && d.scenarios.find(s => s.line === line); if (sc) copyScenario(rel, sc); });
   cmd('qa.run', (rel, line, title) => runner(line != null ? `${rel}:${line + 1}` : rel, null, title));
   cmd('qa.report', (rel) => makeReport(rel, false));
   cmd('qa.csv', (rel) => exportCsv(rel, false));
@@ -1037,11 +1044,11 @@ function counts(rel, d) {
 }
 const bar = (c, total) => total ? `<span class="qa-bar">${['pass', 'fail', 'blocked'].map(k => c[k] ? `<i class="${k}" style="flex:${c[k]}"></i>` : '').join('')}<i class="none" style="flex:${c.none}"></i></span>` : '';
 // cenários que aparecem: a busca (na feature inteira ou só no cenário) e o filtro de status
-function visibleScs(rel, f) {
-  const q = V.q.toLowerCase();
-  const whole = !q || (q.startsWith('@') ? matches(rel, f, V.q) : rel.toLowerCase().includes(q) || (f.doc.feature && f.doc.feature.name.toLowerCase().includes(q)));
+function visibleScs(rel, f, query = V.q, status = V.st) {
+  const q = query.toLowerCase();
+  const whole = !q || (q.startsWith('@') ? matches(rel, f, query) : rel.toLowerCase().includes(q) || (f.doc.feature && f.doc.feature.name.toLowerCase().includes(q)));
   return f.doc.scenarios.filter(s => {
-    if (V.st) { const st = statusOf(rel, s); if ((st ? st.s : 'none') !== V.st) return false; }
+    if (status) { const st = statusOf(rel, s); if ((st ? st.s : 'none') !== status) return false; }
     return whole || s.name.toLowerCase().includes(q) || s.steps.some(x => x.text.toLowerCase().includes(q));
   });
 }
@@ -1152,6 +1159,8 @@ function scRow(rel, s) {
     <span class="qa-qs">${['pass', 'fail', 'blocked'].map(x => `<button class="q-${x} ${k === x ? 'on' : ''}" data-set="${x}" title="${k === x ? 'Desmarcar' : STATUS[x].label}">${STATUS[x].sym}</button>`).join('')}</span>
   </div>`;
 }
+// clique no chamado: abre o link configurado ou copia o número
+function ticketGo(id) { const u = ticketLink(id); if (u) window.open(u, '_blank'); else { bs.copyText(id); toast('Copiado: ' + id); } }
 function bindView(el) {
   el.querySelectorAll('[data-new]').forEach(b => b.onclick = () => newFeature());
   el.querySelectorAll('[data-sort]').forEach(b => b.onclick = () => { V.sort = b.dataset.sort; store.set('qaSort', V.sort); render(); });
@@ -1161,7 +1170,7 @@ function bindView(el) {
     const rel = card.dataset.rel;
     card.querySelector('.qa-fh').onclick = (e) => {
       const tk = e.target.closest('[data-tk]');
-      if (tk) { const u = ticketLink(tk.dataset.tk); if (u) window.open(u, '_blank'); else { bs.copyText(tk.dataset.tk); toast('Copiado: ' + tk.dataset.tk); } return; }
+      if (tk) return ticketGo(tk.dataset.tk);
       if (e.target.closest('[data-openf]') || card.classList.contains('nosc')) return bs.openFile(rel, 'editor');
       const open = card.classList.contains('open');
       if (open) V.openFeat.delete(rel); else V.openFeat.add(rel);
@@ -1185,14 +1194,13 @@ function bindView(el) {
     r.oncontextmenu = (e) => { e.preventDefault(); if (automation() && P.runner) bs.showMenu(e, [{ label: 'Executar ' + r.dataset.tag, icon: ICO.play, action: () => runner(null, r.dataset.tag, r.dataset.tag) }]); };
   });
 }
-// relatório/CSV do painel: o que a busca encontrou (ou tudo)
-async function runScope(kind) {
-  const rels = [...P.files.entries()].filter(([rel, f]) => matches(rel, f, V.q)).map(([rel]) => rel);
+// relatório/CSV do painel: o que a busca encontrou (ou tudo); a tela passa as features e os cenários do filtro dela
+async function runScope(kind, rels = [...P.files.entries()].filter(([rel, f]) => matches(rel, f, V.q)).map(([rel]) => rel), keep) {
   if (!rels.length) return toast('Nenhuma feature');
   const dirs = rels.map(dirOf); let common = dirs[0] || '';
   for (const d of dirs) while (common && !(d === common || d.startsWith(common + '/'))) common = dirOf(common);
-  if (kind === 'report') { const out = (common ? common + '/' : '') + 'relatorio-evidencias.html'; await writeText(out, reportHtml(rels, dirOf(out))); toast('Relatório gerado: ' + out, 'ok'); openOutside(out); }
-  else { const out = (common ? common + '/' : '') + 'casos-de-teste.csv'; await writeText(out, csvOf(rels)); toast('CSV gerado: ' + out, 'ok'); bs.openFile(out, 'editor'); }
+  if (kind === 'report') { const out = (common ? common + '/' : '') + 'relatorio-evidencias.html'; await writeText(out, reportHtml(rels, dirOf(out), keep)); toast('Relatório gerado: ' + out, 'ok'); openOutside(out); }
+  else { const out = (common ? common + '/' : '') + 'casos-de-teste.csv'; await writeText(out, csvOf(rels, keep)); toast('CSV gerado: ' + out, 'ok'); bs.openFile(out, 'editor'); }
 }
 function featMenu(e, rel) {
   bs.showMenu(e, [
@@ -1269,8 +1277,196 @@ function bugFromScenario(rel, sc) {
   });
 }
 
+// ---------- tela grande (aba fixa do painel): quadro de execução e cobertura ----------
+// Os cenários do filtro (busca, chamado, tag, pasta) em colunas por status: arrastar o cartão para outra coluna grava o
+// status pelo setStatus, o mesmo do painel e do CodeLens. "Cobertura" agrupa por chamado, tag ou pasta, com as piores primeiro.
+const COLS = [['none', 'Não executado'], ['pass', 'Passou'], ['fail', 'Falhou'], ['blocked', 'Bloqueado']];
+const GROUPS = { ticket: ['Chamado', 'Sem chamado'], tag: ['Tag', 'Sem tag'], dir: ['Pasta', 'Raiz do projeto'] };
+const PAGE = 60; // cartões desenhados por coluna de cada vez (projeto com centenas de cenários)
+// '-' num filtro: os cenários sem chamado, sem tag ou na raiz do projeto
+const B = { el: null, q: '', ticket: '', tag: '', dir: '', view: store.get('qaPgView', 'board'), by: store.get('qaPgBy', 'ticket'), more: {}, drag: null, tm: null };
+if (!GROUPS[B.by]) B.by = 'ticket';
+const scTags = (d, sc) => [...new Set([...(d.feature ? d.feature.tags : []), ...sc.tags])];
+// "CT001 - Login válido" -> ['CT001', 'Login válido']
+const scParts = (sc) => { const m = /^\s*[A-Za-z]{1,6}\s*[-_]?\s*\d{1,5}\b\s*[-–:]?\s*/.exec(sc.name); return m ? [scKey(sc), sc.name.slice(m[0].length) || sc.name] : ['', sc.name || sc.kw]; };
+const inDir = (rel, dir) => !dir || (dir === '-' ? !dirOf(rel) : rel.startsWith(dir + '/'));
+const hasOr = (list, v) => !v || (v === '-' ? !list.length : list.includes(v));
+const pgFiltered = () => !!(B.q || B.ticket || B.tag || B.dir);
+// os cenários do filtro, na ordem das features
+function pgItems() {
+  const out = [];
+  for (const rel of featuresIn('')) {
+    const f = P.files.get(rel); const d = f.doc; const tks = ticketsOf(rel);
+    if (!hasOr(tks, B.ticket) || !inDir(rel, B.dir)) continue;
+    for (const sc of visibleScs(rel, f, B.q, null)) {
+      const tags = scTags(d, sc); if (!hasOr(tags, B.tag)) continue;
+      const st = statusOf(rel, sc);
+      out.push({ rel, sc, tks, tags, st, k: st ? st.s : 'none' });
+    }
+  }
+  return out;
+}
+// o que os filtros oferecem: tudo o que existe no projeto (não só o que está filtrado)
+function pgOptions() {
+  const tks = new Set(), tags = new Set(), dirs = new Set(); let noTk = false, noTag = false, root = false, n = 0;
+  for (const [rel, f] of P.files) {
+    const t = ticketsOf(rel); t.forEach(x => tks.add(x)); if (!t.length) noTk = true;
+    let d = dirOf(rel); if (!d) root = true; while (d) { dirs.add(d); d = dirOf(d); }
+    for (const sc of f.doc.scenarios) { n++; const g = scTags(f.doc, sc); g.forEach(x => tags.add(x)); if (!g.length) noTag = true; }
+  }
+  const sort = (s) => [...s].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+  return { n, ticket: [sort(tks), noTk && tks.size], tag: [sort(tags), noTag && tags.size], dir: [sort(dirs), root && dirs.size] };
+}
+function pgCard(x) {
+  const [id, name] = scParts(x.sc); const ev = evidences(x.rel, x.sc).length; const st = x.st;
+  const tags = x.tags.slice(0, 3).map(t => `<span class="qa-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('') + (x.tags.length > 3 ? `<span class="qa-kc-x" title="${esc(x.tags.slice(3).join(' '))}">+${x.tags.length - 3}</span>` : '');
+  return `<article class="qa-kc s-${x.k}" draggable="true" tabindex="0" data-rel="${esc(x.rel)}" data-line="${x.sc.line}" title="${esc(x.rel)}">
+    <div class="qa-kc-h">${id ? `<code>${esc(id)}</code>` : ''}${x.tks.map(t => `<span class="qa-tk" data-tk="${esc(t)}" title="${ticketLink(t) ? 'Abrir o chamado' : 'Copiar'}">${esc(t)}</span>`).join('')}<span class="spacer"></span>${ev ? `<span class="qa-ev" title="Evidências">${ICO.cam}${ev}</span>` : ''}</div>
+    <div class="qa-kc-n">${esc(name)}</div>
+    <div class="qa-kc-f">${esc(titleOf(x.rel))}</div>
+    ${st && st.note ? `<div class="qa-kc-o">${esc(st.note)}</div>` : ''}
+    ${tags || st ? `<div class="qa-kc-t">${tags}<span class="spacer"></span>${st ? `<time title="${esc(st.by || '')}">${esc(fmtDate(st.at))}</time>` : ''}</div>` : ''}
+  </article>`;
+}
+function pgBoard(items) {
+  return `<div class="qa-board">${COLS.map(([k, label]) => {
+    const list = items.filter(x => x.k === k); const lim = B.more[k] || PAGE; const rest = list.length - lim;
+    return `<section class="qa-col s-${k}" data-col="${k}"><header><i class="qa-dot">${k === 'none' ? '' : STATUS[k].sym}</i><b>${label}</b><em>${list.length}</em></header>
+      <div class="qa-cards">${list.slice(0, lim).map(pgCard).join('')}${rest > 0 ? `<button class="chip qa-more" data-more="${k}">Mais ${Math.min(PAGE * 2, rest)} de ${rest}</button>` : ''}</div></section>`;
+  }).join('')}</div>`;
+}
+// cobertura: uma linha por chamado, tag ou pasta; as piores primeiro (mais falhas, mais bloqueios, menos executado)
+function pgCoverage(items) {
+  const keys = B.by === 'tag' ? (x) => x.tags.length ? x.tags : ['-'] : B.by === 'dir' ? (x) => [dirOf(x.rel) || '-'] : (x) => x.tks.length ? x.tks : ['-'];
+  const g = new Map();
+  for (const x of items) for (const k of keys(x)) { let c = g.get(k); if (!c) g.set(k, c = { pass: 0, fail: 0, blocked: 0, none: 0, n: 0 }); c[x.k]++; c.n++; }
+  const rows = [...g.entries()].sort(([ka, a], [kb, b]) => b.fail - a.fail || b.blocked - a.blocked || b.none / b.n - a.none / a.n || b.n - a.n || ka.localeCompare(kb, 'pt-BR', { numeric: true }));
+  const lim = B.more.cov || 200; const [, none] = GROUPS[B.by];
+  const seg = `<div class="qa-cov-h"><span class="seg">${Object.entries(GROUPS).map(([k, [l]]) => `<button class="${B.by === k ? 'on' : ''}" data-by="${k}">${l}</button>`).join('')}</span></div>`;
+  return seg + `<div class="qa-cov">${rows.slice(0, lim).map(([k, c]) => {
+    const done = c.n - c.none;
+    return `<button class="qa-cv" data-k="${esc(k)}" title="${done} de ${c.n} executado${done === 1 ? '' : 's'} · ver no quadro">
+      <span class="qa-cv-n ${k === '-' ? 'nil' : ''}">${esc(k === '-' ? none : k)}</span>${bar(c, c.n)}
+      <span class="qa-cv-c">${SFILTER.map(([s, , sym]) => `<i class="p-${s} ${c[s] ? '' : 'zero'}"><b>${sym} ${c[s]}</b></i>`).join('')}</span>
+    </button>`;
+  }).join('')}${rows.length > lim ? `<button class="chip qa-more" data-more="cov">Mais ${rows.length - lim}</button>` : ''}</div>`;
+}
+function pgKpis(items) {
+  const t = { pass: 0, fail: 0, blocked: 0, none: 0 }; for (const x of items) t[x.k]++;
+  const n = items.length; const pct = n ? Math.round((n - t.none) * 100 / n) : 0;
+  return `<div class="qa-kpi"><b>${n}</b><span>Cenários</span></div><div class="qa-kpi"><b>${pct || n === t.none ? pct : '&lt;1'}<small>%</small></b><span>Executado</span>${bar(t, n)}</div>`
+    + COLS.slice(1).concat([COLS[0]]).map(([k, l]) => `<div class="qa-kpi p-${k} ${t[k] ? '' : 'zero'}"><b>${t[k]}</b><span>${l}</span></div>`).join('');
+}
+// lista de um filtro: só troca as opções quando elas mudam (não fecha a lista aberta num redesenho)
+function pgSelect(sel, key, [list, none]) {
+  if (B[key] && B[key] !== '-' && !list.includes(B[key])) B[key] = '';
+  if (B[key] === '-' && !none) B[key] = '';
+  const [label, nil] = GROUPS[key]; const sig = list.join('\n') + '|' + !!none;
+  if (sel.dataset.sig !== sig) { sel.dataset.sig = sig; sel.innerHTML = `<option value="">${label}</option>${list.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')}${none ? `<option value="-">${nil}</option>` : ''}`; }
+  sel.value = B[key]; sel.classList.toggle('on', !!B[key]); sel.hidden = list.length + (none ? 1 : 0) < 2; // uma opção só não filtra nada
+}
+function pgDraw() {
+  clearTimeout(B.tm); B.tm = null;
+  const el = B.el; if (!el || !el.isConnected) return;
+  const main = el.querySelector('.qa-pg-main');
+  const off = (html) => { el.classList.add('off'); main.innerHTML = html; const b = main.querySelector('[data-new]'); if (b) b.onclick = () => newFeature(); };
+  if (!S.project) return off('<div class="qa-empty">' + ICO.qa + '<b>Nenhum projeto aberto</b><span>O quadro mostra os cenários das features do projeto.</span></div>');
+  if (P.for !== proj() || (!P.at && !P.loading)) { off('<div class="empty">Lendo as features…</div>'); if (!P.loading) index(); return; }
+  if (!P.files.size) return off(`<div class="qa-empty">${ICO.qa}<b>Quadro vazio</b><span>Os cenários das features do projeto aparecem aqui, por status.</span><button class="chip primary" data-new>${ICO.plus} Nova feature</button></div>`);
+  const opt = pgOptions();
+  if (!opt.n) return off(`<div class="qa-empty">${ICO.feat}<b>Nenhum cenário ainda</b><span>${P.files.size === 1 ? 'A feature do projeto ainda não tem' : `As ${P.files.size} features do projeto ainda não têm`} cenários.</span></div>`);
+  el.classList.remove('off');
+  for (const k of ['ticket', 'tag', 'dir']) pgSelect(el.querySelector(`[data-f="${k}"]`), k, opt[k]);
+  const qi = el.querySelector('.qa-q'); if (qi.value.trim() !== B.q) qi.value = B.q;
+  el.querySelector('.qa-clr').hidden = !B.q; el.querySelector('[data-clear]').hidden = !pgFiltered();
+  el.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === B.view));
+  const items = pgItems();
+  el.querySelector('.qa-kpis').innerHTML = pgKpis(items);
+  // a rolagem de cada coluna fica onde estava
+  const keep = new Map([...main.querySelectorAll('[data-col] .qa-cards')].map(c => [c.parentNode.dataset.col, c.scrollTop]));
+  main.classList.toggle('cov', B.view === 'cov');
+  main.innerHTML = !items.length ? `<div class="qa-empty">${ICO.feat}<b>Nada com esse filtro</b><button class="chip" data-clear>Limpar filtro</button></div>` : B.view === 'cov' ? pgCoverage(items) : pgBoard(items);
+  for (const [k, top] of keep) { const c = main.querySelector(`[data-col="${k}"] .qa-cards`); if (c) c.scrollTop = top; }
+}
+// vários avisos seguidos (índice, status, evidência) viram um desenho só; com a aba atrás, desenha quando ela voltar (show)
+function pgSoon() { if (B.el && !B.tm && bs.pages.isActive('qa')) B.tm = setTimeout(pgDraw, 0); }
+function redraw() { if (S.tool === 'qa') bs.renderTool(); pgSoon(); }
+const pgClear = () => { B.q = B.ticket = B.tag = B.dir = ''; B.more = {}; pgDraw(); };
+function pgScenario(card) { const d = card && docFor(card.dataset.rel); const sc = d && d.scenarios.find(s => s.line === +card.dataset.line); return sc ? [card.dataset.rel, sc] : null; }
+function pgMount(el) {
+  B.el = el; el.className += ' qa-pg';
+  el.innerHTML = `<div class="qa-pgw">
+    <div class="qa-pg-bar">
+      <span class="seg"><button data-view="board">Quadro</button><button data-view="cov">Cobertura</button></span>
+      <div class="qa-pg-flt"><label class="qa-search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input class="qa-q" placeholder="Buscar cenário, passo ou @tag" spellcheck="false"><button class="qa-clr" title="Limpar" hidden>${bs.I.x}</button></label>
+      <select data-f="ticket"></select><select data-f="tag"></select><select data-f="dir"></select>
+      <button class="chip" data-clear hidden>${bs.I.x} Limpar</button></div>
+      <div class="qa-pg-out"><button class="chip" data-out="report" title="Relatório de evidências (HTML) do que está filtrado">${ICO.doc}<span>Relatório</span></button><button class="chip" data-out="csv" title="Casos de teste (CSV) do que está filtrado">${ICO.csv}<span>CSV</span></button></div>
+    </div>
+    <div class="qa-kpis"></div>
+    <div class="qa-pg-main"></div>
+  </div>`;
+  const qi = el.querySelector('.qa-q'); let tm = null;
+  qi.oninput = () => { B.q = qi.value.trim(); B.more = {}; clearTimeout(tm); tm = setTimeout(pgDraw, 150); };
+  qi.onkeydown = (e) => { if (e.key === 'Escape' && B.q) { e.stopPropagation(); B.q = ''; pgDraw(); } };
+  el.querySelector('.qa-clr').onclick = () => { B.q = ''; pgDraw(); qi.focus(); };
+  el.querySelectorAll('[data-f]').forEach(s => s.onchange = () => { B[s.dataset.f] = s.value; B.more = {}; pgDraw(); });
+  el.addEventListener('click', (e) => {
+    const on = (sel) => e.target.closest(sel); let b;
+    if (b = on('[data-view]')) { B.view = b.dataset.view; store.set('qaPgView', B.view); B.more = {}; return pgDraw(); }
+    if (b = on('[data-by]')) { B.by = b.dataset.by; store.set('qaPgBy', B.by); B.more = {}; return pgDraw(); }
+    if (on('[data-clear]')) return pgClear();
+    if (b = on('[data-more]')) { const k = b.dataset.more; B.more[k] = (B.more[k] || (k === 'cov' ? 200 : PAGE)) + (k === 'cov' ? 200 : PAGE * 2); return pgDraw(); }
+    if (b = on('[data-out]')) {
+      const items = pgItems(); if (!items.length) return toast('Nenhum cenário');
+      const keys = new Set(items.map(x => stKey(x.rel, x.sc)));
+      return runScope(b.dataset.out, [...new Set(items.map(x => x.rel))], pgFiltered() ? (rel, sc) => keys.has(stKey(rel, sc)) : undefined).catch(err => toast(err.message));
+    }
+    // linha da cobertura: vira o filtro do quadro
+    if (b = on('.qa-cv')) { B[B.by] = b.dataset.k; B.view = 'board'; store.set('qaPgView', B.view); B.more = {}; return pgDraw(); }
+    if (b = on('.qa-kc [data-tk]')) return ticketGo(b.dataset.tk);
+    if (b = on('.qa-kc [data-tag]')) { B.tag = b.dataset.tag; B.more = {}; return pgDraw(); }
+    if (b = on('.qa-kc')) bs.openFile(b.dataset.rel, 'editor', +b.dataset.line + 1);
+  });
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.classList.contains('qa-kc')) bs.openFile(e.target.dataset.rel, 'editor', +e.target.dataset.line + 1); });
+  el.addEventListener('contextmenu', (e) => {
+    const x = pgScenario(e.target.closest('.qa-kc')); if (!x) return;
+    const [rel, sc] = x;
+    statusMenu(e, rel, sc, ['-',
+      { label: 'Evidências…', icon: ICO.cam, action: () => evidenceDialog(rel, sc) },
+      { label: 'Copiar cenário (texto)', icon: bs.I.copy, action: () => copyScenario(rel, sc) },
+      ...ticketsOf(rel).map(t => ({ label: (ticketLink(t) ? 'Abrir ' : 'Copiar ') + t, icon: ICO.link, action: () => ticketGo(t) })),
+      ...(automation() && P.runner ? [{ label: 'Executar cenário', icon: ICO.play, action: () => runner(`${rel}:${sc.line + 1}`, null, sc.name) }] : []),
+    ]);
+  });
+  // arrastar o cartão para outra coluna = mudar o status
+  const over = (col) => el.querySelectorAll('.qa-col.over').forEach(c => c !== col && c.classList.remove('over'));
+  el.addEventListener('dragstart', (e) => {
+    const card = e.target.closest && e.target.closest('.qa-kc'); if (!card) return;
+    B.drag = { rel: card.dataset.rel, line: +card.dataset.line, from: card.closest('.qa-col').dataset.col };
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', card.querySelector('.qa-kc-n').textContent);
+    card.classList.add('drag'); el.classList.add('dragging');
+  });
+  el.addEventListener('dragend', () => { B.drag = null; over(null); el.classList.remove('dragging'); el.querySelectorAll('.qa-kc.drag').forEach(c => c.classList.remove('drag')); });
+  el.addEventListener('dragover', (e) => {
+    if (!B.drag) return; const col = e.target.closest('.qa-col'); over(col);
+    if (!col || col.dataset.col === B.drag.from) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('over');
+  });
+  el.addEventListener('drop', (e) => {
+    const g = B.drag, col = e.target.closest('.qa-col'); if (!g || !col || col.dataset.col === g.from) return;
+    e.preventDefault(); e.stopPropagation();
+    const d = docFor(g.rel); const sc = d && d.scenarios.find(s => s.line === g.line); if (!sc) return toast('O cenário mudou de lugar: salve a feature e tente de novo');
+    setStatus(g.rel, sc, col.dataset.col === 'none' ? null : col.dataset.col);
+  });
+  pgDraw();
+}
+
 // ---------- registro ----------
-bs.tools.register({ id: 'qa', title: 'QAutils', icon: ICO.qa, key: 'Alt+9', order: 75, render });
+// o painel primeiro (com page), depois a tela: aba fixa, na primeira posição, enquanto o painel QA é o escolhido
+bs.tools.register({ id: 'qa', title: 'QAutils', icon: ICO.qa, key: 'Alt+9', order: 75, page: 'qa', render });
+bs.pages.register({ id: 'qa', title: 'QAutils', icon: ICO.qa, pinned: true, render: pgMount, show: pgDraw });
+plugin.onUnload(() => clearTimeout(B.tm));
 bs.actions.add([
   { label: 'QA: Nova feature (chamado)', icon: ICO.feat, run: () => newFeature() },
   { label: 'QA: Painel de features e execução', icon: ICO.qa, run: () => bs.openTool('qa') },
@@ -1298,14 +1494,14 @@ bs.dashboard.card({
 });
 // para outros plugins: ler features, reindexar e consultar o estado (features, passos, definições, status)
 bs.qautils = { parse, index: () => index(true), state: () => P, defsFor, automation, bug: bugDialog };
-function refreshAll() { S.tabs.forEach(t => isFeature(t) && diagnose(t.model)); fireLens(); if (S.tool === 'qa') bs.renderTool(); }
+function refreshAll() { S.tabs.forEach(t => isFeature(t) && diagnose(t.model)); fireLens(); redraw(); }
 bs.hooks.on('editor:ready', setup); if (bs.monaco) setup();
 bs.hooks.on('tab:open', (t) => { if (ready) watch(t); });
-bs.hooks.on('tab:activate', (t) => { if (ready) watch(t); });
+bs.hooks.on('tab:activate', (t) => { if (ready) watch(t); if (lensLate && isFeature(t)) { lensLate = false; setTimeout(() => { try { bs.editor.render(true); } catch {} lensEmitter.fire(); }, 60); } });
 bs.hooks.on('project:select', () => { P.at = 0; P.for = null; if (S.project) setTimeout(() => index(), 800); });
 bs.hooks.on('tab:save', (t) => {
   if (!t || !S.project) return;
-  if (/\.feature$/i.test(t.path)) { P.files.set(t.path, { mtime: -1, doc: parse(t.model.getValue()) }); catalog(); P.at = Date.now(); if (S.tool === 'qa') bs.renderTool(); fireLens(); }
+  if (/\.feature$/i.test(t.path)) { P.files.set(t.path, { mtime: -1, doc: parse(t.model.getValue()) }); catalog(); P.at = Date.now(); redraw(); fireLens(); }
   else if (DEF_EXT.test(t.path)) setTimeout(() => index(true), 300);
 });
 // arquivos mudados por fora (git pull, outro editor): features e step definitions entram no índice

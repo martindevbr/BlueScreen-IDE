@@ -15,6 +15,10 @@ pub(super) fn catalog() -> Value {
     let user = json!({"name":"user","label":"Usuário","kind":"text","placeholder":"{{cred:nome.user}} ou o nome"});
     let pass = json!({"name":"password","label":"Senha","kind":"text","placeholder":"{{cred:nome}}","help":cred});
     let timeout = json!({"name":"timeout_s","label":"Tempo limite (segundos)","kind":"number","min":5,"max":3600});
+    // com o provedor escolhido, o servidor, a porta e a segurança já vêm certos: só aparecem em "Outro"
+    let provider = json!({"name":"provider","label":"Provedor","kind":"select","options":[{"value":"gmail","label":"Gmail"},{"value":"outlook","label":"Outlook, Hotmail ou Microsoft 365"},{"value":"yahoo","label":"Yahoo"},{"value":"icloud","label":"iCloud"},{"value":"custom","label":"Outro (informar o servidor)"}],
+        "help":"A senha é a \"senha de app\" criada na sua conta (Gmail, Yahoo e iCloud exigem; a senha normal é recusada). Contas da Microsoft só entram se a empresa ou a conta permitir login por senha de app."});
+    let only_custom = json!({"provider":["custom"]});
     let ssh_key = json!({"name":"key","label":"Arquivo da chave privada","kind":"text","pick":"file","placeholder":"vazio: senha, ou as chaves da sua pasta .ssh","help":"Com chave, o campo Senha é a senha da chave (vazio se ela não tiver)."});
     json!([
         {"type":"ssh.run","name":"SSH: rodar comando","category":"Conexões","desc":"Entra num servidor por SSH, roda um comando e entrega o que ele escreveu.","inputs":["in"],"outputs":["out"],
@@ -35,11 +39,12 @@ pub(super) fn catalog() -> Value {
             timeout.clone()
          ]},
         {"type":"mail.send","name":"Enviar e-mail","category":"Conexões","desc":"Envia um e-mail por SMTP, com anexos se quiser.","inputs":["in"],"outputs":["out"],
-         "params":{"host":"","port":587,"security":"starttls","user":"","password":"","from":"","to":[],"cc":[],"bcc":[],"subject":"","body":"{{input}}","format":"text","attachments":[],"timeout_s":60},
+         "params":{"provider":"gmail","host":"","port":587,"security":"starttls","user":"","password":"","from":"","to":[],"cc":[],"bcc":[],"subject":"","body":"{{input}}","format":"text","attachments":[],"timeout_s":60},
          "fields":[
-            host("smtp.gmail.com, smtp.office365.com…"), {"name":"port","label":"Porta","kind":"number","min":1,"max":65535,"help":"587 com STARTTLS ou 465 com SSL, na maioria dos provedores."},
-            {"name":"security","label":"Segurança","kind":"select","options":[{"value":"starttls","label":"STARTTLS (porta 587)"},{"value":"ssl","label":"SSL/TLS direto (porta 465)"},{"value":"none","label":"Nenhuma (só em rede interna)"}]},
-            user.clone(), {"name":"password","label":"Senha","kind":"text","placeholder":"{{cred:nome}}","help":"Use {{cred:nome}}. No Gmail e no Outlook com verificação em duas etapas, é a \"senha de app\" criada na conta."},
+            provider.clone(),
+            {"name":"host","label":"Servidor de envio (SMTP)","kind":"text","placeholder":"smtp.suaempresa.com.br","show":only_custom.clone()}, {"name":"port","label":"Porta","kind":"number","min":1,"max":65535,"show":only_custom.clone(),"help":"587 com STARTTLS ou 465 com SSL, na maioria dos provedores."},
+            {"name":"security","label":"Segurança","kind":"select","show":only_custom.clone(),"options":[{"value":"starttls","label":"STARTTLS (porta 587)"},{"value":"ssl","label":"SSL/TLS direto (porta 465)"},{"value":"none","label":"Nenhuma (só em rede interna)"}]},
+            user.clone(), pass.clone(),
             {"name":"from","label":"De","kind":"text","placeholder":"Nome <voce@exemplo.com>","help":"Vazio: o usuário."},
             {"name":"to","label":"Para","kind":"lines","help":"Um endereço por linha."},
             {"name":"cc","label":"Cópia","kind":"lines"}, {"name":"bcc","label":"Cópia oculta","kind":"lines"},
@@ -50,10 +55,11 @@ pub(super) fn catalog() -> Value {
             timeout.clone()
          ]},
         {"type":"mail.read","name":"Ler e-mails","category":"Conexões","desc":"Busca mensagens de uma caixa de e-mail por IMAP: remetente, assunto, texto e anexos.","inputs":["in"],"outputs":["out"],
-         "params":{"host":"","port":993,"security":"ssl","user":"","password":"","folder":"INBOX","which":"unseen","from":"","subject":"","limit":10,"mark":"read","save_dir":"","timeout_s":60},
+         "params":{"provider":"gmail","host":"","port":993,"security":"ssl","user":"","password":"","folder":"INBOX","which":"unseen","from":"","subject":"","limit":10,"mark":"read","save_dir":"","timeout_s":60},
          "fields":[
-            host("imap.gmail.com, outlook.office365.com…"), {"name":"port","label":"Porta","kind":"number","min":1,"max":65535},
-            {"name":"security","label":"Segurança","kind":"select","options":[{"value":"ssl","label":"SSL/TLS direto (porta 993)"},{"value":"starttls","label":"STARTTLS (porta 143)"},{"value":"none","label":"Nenhuma (só em rede interna)"}]},
+            provider.clone(),
+            {"name":"host","label":"Servidor de leitura (IMAP)","kind":"text","placeholder":"imap.suaempresa.com.br","show":only_custom.clone()}, {"name":"port","label":"Porta","kind":"number","min":1,"max":65535,"show":only_custom.clone()},
+            {"name":"security","label":"Segurança","kind":"select","show":only_custom.clone(),"options":[{"value":"ssl","label":"SSL/TLS direto (porta 993)"},{"value":"starttls","label":"STARTTLS (porta 143)"},{"value":"none","label":"Nenhuma (só em rede interna)"}]},
             user.clone(), pass.clone(),
             {"name":"folder","label":"Pasta","kind":"text","placeholder":"INBOX"},
             {"name":"which","label":"Quais","kind":"select","options":[{"value":"unseen","label":"Só as não lidas"},{"value":"all","label":"Todas"}]},
@@ -311,7 +317,29 @@ fn b64_lines(data: &[u8]) -> String {
     let e = base64::engine::general_purpose::STANDARD.encode(data);
     e.as_bytes().chunks(76).map(|c| std::str::from_utf8(c).unwrap_or("")).collect::<Vec<_>>().join("\r\n")
 }
+/// O servidor, a porta e a segurança do provedor escolhido. Fluxo antigo (sem provedor, com o servidor escrito) e
+/// "Outro" seguem com o que está nos campos.
+fn mail_preset(p: &Value, imap: bool) -> Value {
+    let mut p = p.clone();
+    let named = p["provider"].as_str().unwrap_or("").to_string();
+    let typed = p["host"].as_str().is_some_and(|h| !h.trim().is_empty());
+    let hit = match (named.as_str(), imap) {
+        ("custom", _) => None,
+        ("", _) if typed => None,
+        ("outlook", false) => Some(("smtp.office365.com", 587, "starttls")),
+        ("outlook", true) => Some(("outlook.office365.com", 993, "ssl")),
+        ("yahoo", false) => Some(("smtp.mail.yahoo.com", 465, "ssl")),
+        ("yahoo", true) => Some(("imap.mail.yahoo.com", 993, "ssl")),
+        ("icloud", false) => Some(("smtp.mail.me.com", 587, "starttls")),
+        ("icloud", true) => Some(("imap.mail.me.com", 993, "ssl")),
+        (_, false) => Some(("smtp.gmail.com", 465, "ssl")),
+        (_, true) => Some(("imap.gmail.com", 993, "ssl")),
+    };
+    if let Some((host, port, security)) = hit { p["host"] = json!(host); p["port"] = json!(port); p["security"] = json!(security); }
+    p
+}
 async fn mail_send(p: &Value) -> ApiResult<Value> {
+    let p = &mail_preset(p, false);
     let host = host_of(p)?;
     let security = p["security"].as_str().unwrap_or("starttls");
     let port = port_of(p, if security == "ssl" { 465 } else { 587 })?;
@@ -492,6 +520,7 @@ pub(super) fn parse_mail(raw: &[u8], save_dir: Option<&std::path::Path>) -> ApiR
     Ok(json!({"from": from, "from_email": from_email, "to": h("to"), "cc": h("cc"), "subject": h("subject"), "date": iso, "text": text.replace("\r\n", "\n").trim(), "html": html, "attachments": files}))
 }
 async fn mail_read(p: &Value) -> ApiResult<Value> {
+    let p = &mail_preset(p, true);
     let host = host_of(p)?;
     let security = p["security"].as_str().unwrap_or("ssl");
     let port = port_of(p, if security == "ssl" { 993 } else { 143 })?;

@@ -182,7 +182,11 @@ pub fn encode_text(text: &str, encoding: &str, bom: bool) -> Result<Vec<u8>, cha
 pub fn looks_binary(head: &[u8]) -> bool { memchr::memchr(0, &head[..head.len().min(8000)]).is_some() }
 pub fn mtime_ms(t: SystemTime) -> f64 { t.duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0) }
 pub fn now_ms() -> f64 { mtime_ms(SystemTime::now()) }
-pub fn user_dir() -> PathBuf { dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".bluescreen") }
+/// ~/.bluescreen. BLUESCREEN_HOME aponta outra pasta (testes e instâncias à parte, sem tocar nos plugins e dados de verdade).
+pub fn user_dir() -> PathBuf {
+    if let Some(h) = std::env::var_os("BLUESCREEN_HOME").filter(|h| !h.is_empty()) { return PathBuf::from(h); }
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".bluescreen")
+}
 pub fn read_json(p: &Path) -> Value { std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null) }
 /// Para ler, mudar e gravar de volta: `Null` só quando o arquivo não existe (ou está vazio). Arquivo que existe mas não
 /// abre ou não é JSON é erro: tratá-lo como vazio faria a próxima gravação apagar o que estava lá (o cofre, a config).

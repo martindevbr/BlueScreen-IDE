@@ -1,26 +1,35 @@
-/* BlueScreen: servidores de plugins (plugins/remote.rs e app/plugin-server). A aba Plugins (Alt+7) ganha os
-   servidores apontados, os plugins que eles oferecem (Instalar) e, nos instalados, "Atualizar para vX". Alguns
-   segundos depois de abrir, e de meia em meia hora, a IDE pergunta aos servidores: havendo versão maior de um
-   plugin instalado, aparece o selo "Plugins" no topo e o número na aba, e eles ficam lá até atualizar.
-   Os servidores são só de leitura (nada é publicado daqui). Botão direito num plugin: atualizar e desinstalar. */
+/* BlueScreen: Loja de plugins. O catálogo oficial é o repositório github.com/martindevbr/BlueScreen-Plugins
+   (plugins/remote.rs baixa o zip do branch num pedido só e guarda com o ETag). O painel Plugins (Alt+7) fica com os
+   plugins instalados na esquerda e a loja abre como aba fixa na área grande: busca, filtros, cartões e a página de
+   cada plugin (README, nós do Automator, arquivos). Instalar e atualizar não recarregam a janela.
+   Alguns segundos depois de abrir, e de meia em meia hora, a IDE pergunta à loja: havendo versão maior de um plugin
+   instalado, aparece o selo "Plugins" no topo e o número na aba, e eles ficam lá até atualizar. */
 (function (bs) {
-const { $, esc, store, toast } = bs;
-const P = { remote: null, busy: new Set(), at: 0 };
+const { $, esc, toast } = bs;
+const P = { remote: null, busy: new Set(), at: 0, q: '', tab: 'all', sel: null, about: new Map(), loading: false, el: null };
 const post = (path, body) => bs.api(path, {}, { method: 'POST', body: JSON.stringify(body || {}) });
 const IC = {
   up: '<svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
-  down: '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg>',
-  server: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
+  down: '<svg class="i" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
+  ok: '<svg class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  store: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9l1.5-5h13L20 9M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9M4 9a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0A2.7 2.7 0 0 0 20 9M9.5 20v-5h5v5"/></svg>',
+  node: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="7" height="6" rx="1.5"/><path d="M10 7h3a2 2 0 0 1 2 2v5"/></svg>',
+  back: '<svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
+  link: '<svg class="i" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M11 7H6a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5"/></svg>',
+  search: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
 };
+const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+const size = (n) => n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
 
 // selo no topo, ao lado do de atualização do BlueScreen
 const pill = document.createElement('button');
 pill.id = 'plugPill'; pill.className = 'chip'; pill.hidden = true;
 pill.innerHTML = `${IC.up}<span class="pp-txt">Plugins</span>`;
 ($('#updPill') || $('#btnNet')).before(pill);
-pill.onclick = () => bs.openTool('plugins');
+pill.onclick = () => { P.tab = 'upd'; bs.openTool('plugins'); paint(); };
 
-const updates = () => (P.remote && P.remote.plugins || []).filter(p => p.update);
+const catalog = () => (P.remote && P.remote.plugins) || [];
+const updates = () => catalog().filter(p => p.update);
 function mark() {
   const n = updates().length;
   pill.hidden = !n;
@@ -29,47 +38,46 @@ function mark() {
   const b = $('#badge-plugins'); if (b) { b.hidden = !n; b.textContent = n; }
 }
 async function check(fresh, quiet = true) {
+  P.loading = true; if (!P.remote) paint();
   try {
-    P.remote = await bs.api('plugins/remote', { fresh: fresh ? '1' : null }); P.at = Date.now();
+    P.remote = await bs.api('plugins/remote', { fresh: fresh ? '1' : null }, { quiet: true }); P.at = Date.now(); P.error = '';
     const before = pill.hidden; mark();
     if (before && !pill.hidden) { pill.classList.remove('up-enter'); void pill.offsetWidth; pill.classList.add('up-enter'); }
-    if (bs.S.tool === 'plugins') bs.renderTool();
-    if (!quiet) toast(updates().length ? `${updates().length} atualização(ões) de plugin` : 'Plugins atualizados', 'ok');
-  } catch (e) { if (!quiet) toast('Servidores de plugins: ' + e.message); }
+    if (!quiet) toast(updates().length ? plural(updates().length, 'atualização de plugin', 'atualizações de plugins') : 'Plugins em dia', 'ok');
+  } catch (e) { P.error = e.message; if (!quiet) toast('Loja de plugins: ' + e.message); }
+  P.loading = false;
+  if (bs.S.tool === 'plugins') bs.renderTool();
+  paint();
 }
 
-// instala/atualiza (um ou vários) e recarrega a página para os plugins novos entrarem
+// instala/atualiza (um ou vários) e liga o plugin na hora, sem recarregar a janela
 async function install(list) {
-  if (!list.length) return;
-  list.forEach(p => P.busy.add(p.id)); if (bs.S.tool === 'plugins') bs.renderTool();
+  list = list.filter(p => p && !P.busy.has(p.id)); if (!list.length) return;
+  list.forEach(p => P.busy.add(p.id)); paint(); if (bs.S.tool === 'plugins') bs.renderTool();
   let done = 0;
   for (const p of list) {
-    try { toast(`Instalando ${p.name} v${p.version}…`, '', 'plug-inst'); await post('plugins/install', { server: p.server, id: p.id, version: p.version }); done++; }
-    catch (e) { toast(`${p.name}: ${e.message}`); }
+    try {
+      await post('plugins/install', { server: p.server, id: p.id, version: p.version });
+      const r = await bs.plugins.reload(p.id); done++;
+      if (r && r.error) toast(`${p.name}: ${r.error}`, 'err');
+    } catch (e) { toast(`${p.name}: ${e.message}`, 'err'); }
     P.busy.delete(p.id);
   }
-  if (!done) { if (bs.S.tool === 'plugins') bs.renderTool(); return; }
-  store.set('reopenTool', 'plugins'); toast(done > 1 ? `${done} plugins instalados. Recarregando…` : 'Plugin instalado. Recarregando…', 'ok');
-  reloadSaved(400); // grava as abas com alterações antes (app.js)
+  if (done) toast(done > 1 ? `${done} plugins instalados` : `${list[0].name} ${list[0].installed ? 'atualizado' : 'instalado'}`, 'ok');
+  await check(true);
 }
-async function setServers(list) {
-  try { await post('plugins/servers', { servers: list }); await check(true); }
-  catch (e) { toast(e.message); }
-}
-const servers = () => (P.remote && P.remote.servers) || [];
 
-// ----- aba Plugins: acrescenta versão, origem, atualização, catálogo e servidores -----
+// ----- painel Plugins (esquerda): versão, origem e "Atualizar" nos instalados -----
 function decorate(body) {
-  const r = P.remote, rp = new Map(((r && r.plugins) || []).map(p => [p.id, p]));
-  // linhas dos instalados: versão, de onde veio e "Atualizar"
+  const rp = new Map(catalog().map(p => [p.id, p]));
   body.querySelectorAll('.plug[data-id]').forEach(el => {
     const p = bs.plugins.list.find(x => x.id === el.dataset.id), o = rp.get(el.dataset.id); if (!p) return;
-    const nm = el.querySelector('.nm');
-    nm.insertAdjacentHTML('beforeend', `<span class="pl-ver">v${esc(p.version)}</span>${p.origin && p.origin.server ? `<span class="pl-src" title="Instalado de ${esc(p.origin.server)}">${IC.server}${esc(p.origin.server.replace(/^https?:\/\//, ''))}</span>` : ''}`);
+    el.querySelector('.nm').insertAdjacentHTML('beforeend', `<span class="pl-ver">v${esc(p.version)}</span>`);
+    if (o) { const nm = el.querySelector('.pl-name'); nm.classList.add('pl-link'); nm.title = 'Ver na loja'; nm.onclick = () => open(o.id); }
     if (o && o.update) {
       const b = document.createElement('button'); b.className = 'chip pl-upd'; b.disabled = P.busy.has(p.id);
       b.innerHTML = `${IC.up}${P.busy.has(p.id) ? 'Atualizando…' : 'Atualizar para v' + esc(o.version)}`;
-      b.title = `v${p.version} → v${o.version} (${o.server})`;
+      b.title = `v${p.version} → v${o.version}`;
       b.onclick = (e) => { e.stopPropagation(); install([o]); };
       el.querySelector('.tx').appendChild(b); el.classList.add('has-upd');
     }
@@ -79,50 +87,164 @@ function decorate(body) {
     body.insertAdjacentHTML('afterbegin', `<div class="pl-banner">${IC.up}<span>${ups.length} plugins têm versão nova</span><button class="chip" data-all>Atualizar todos</button></div>`);
     body.querySelector('[data-all]').onclick = () => install(ups);
   }
-  // catálogo: o que os servidores oferecem e ainda não está instalado
-  const avail = ((r && r.plugins) || []).filter(p => !p.installed);
-  let html = '';
-  if (avail.length) html += `<div class="pl-sec">Disponíveis nos servidores</div>` + avail.map(p => `
-    <div class="plug pl-remote" data-rid="${esc(p.id)}" title="${esc(p.description || '')}">${bs.plugIcon(p)}
-      <div class="tx"><div class="nm"><span class="pl-name">${esc(p.name)}</span><span class="pl-ver">v${esc(p.version)}</span><span class="pl-src">${IC.server}${esc(p.server.replace(/^https?:\/\//, ''))}</span></div><div class="ds">${esc(p.description || '')}</div>
-      <button class="chip pl-upd" data-inst ${P.busy.has(p.id) ? 'disabled' : ''}>${IC.down}${P.busy.has(p.id) ? 'Instalando…' : 'Instalar'}</button></div></div>`).join('');
-  // servidores apontados
-  html += `<div class="pl-sec">Servidores de plugins <button class="icon-btn" data-recheck title="Procurar atualizações agora">${bs.I.refresh}</button></div>`
-    + servers().map(s => `<div class="pl-srv" data-url="${esc(s.url)}"><span class="pl-dot ${s.ok ? 'ok' : 'err'}"></span>
-        <div class="tx"><div class="nm">${esc(s.name || s.url)}</div><div class="ds">${esc(s.url)} · ${s.ok ? `${s.count} plugin${s.count === 1 ? '' : 's'}` : esc(s.error || 'sem resposta')}</div></div>
-        <button class="icon-btn" data-del title="Deixar de usar este servidor">${bs.I.x}</button></div>`).join('')
-    + (r ? '' : '<div class="pl-hint">Consultando os servidores…</div>')
-    + `<form class="pl-add" data-add><input name="url" placeholder="Endereço do servidor (ex.: http://servidor:4900)" spellcheck="false" required><button class="chip">Adicionar</button></form>`;
-  const box = document.createElement('div'); box.className = 'pl-store'; box.innerHTML = html; body.appendChild(box);
-  box.querySelectorAll('[data-rid]').forEach(el => { const p = rp.get(el.dataset.rid); el.querySelector('[data-inst]').onclick = () => install([p]); });
-  box.querySelector('[data-recheck]').onclick = () => check(true, false);
-  box.querySelectorAll('.pl-srv').forEach(el => {
-    const url = el.dataset.url;
-    el.querySelector('[data-del]').onclick = () => setServers(servers().filter(s => s.url !== url).map(s => ({ url: s.url })));
-  });
-  box.querySelector('[data-add]').onsubmit = (e) => {
-    e.preventDefault(); const f = e.target;
-    const add = { url: f.url.value.trim() };
-    toast('Consultando ' + add.url + '…', '', 'plug-srv');
-    setServers([...servers().map(s => ({ url: s.url })), add]);
-  };
   // o painel abriu e a última consulta é velha: pergunta de novo
-  if (!r || Date.now() - P.at > 120000) { P.at = Date.now(); check(false); }
+  if (!P.loading && (!P.remote || Date.now() - P.at > 120000)) { P.at = Date.now(); check(false); }
 }
 // itens extras no botão direito de um plugin instalado
 function menu(p) {
-  const items = [];
-  const o = P.remote && P.remote.plugins.find(x => x.id === p.id);
+  const o = catalog().find(x => x.id === p.id), items = [];
   if (o && o.update) items.push({ label: `Atualizar para v${o.version}`, icon: bs.I.refresh, action: () => install([o]) });
+  if (o) items.push({ label: 'Ver na loja', icon: IC.store, action: () => open(o.id) });
   return items.length ? ['-', ...items] : [];
 }
 
-bs.pluginStore = { check, decorate, menu, install, get state() { return P.remote; } };
-// consulta logo depois de abrir, de meia em meia hora e ao voltar para a janela depois de um tempo
+// ----- a loja (aba fixa do painel Plugins) -----
+const TABS = [['all', 'Todos'], ['inst', 'Instalados'], ['upd', 'Atualizações'], ['nodes', 'Com nós']];
+const matches = (p) => {
+  if (P.tab === 'inst' && !p.installed) return false;
+  if (P.tab === 'upd' && !p.update) return false;
+  if (P.tab === 'nodes' && !p.nodes) return false;
+  const q = P.q.trim().toLowerCase();
+  return !q || q.split(/\s+/).every(w => [p.name, p.description, p.author, p.id].join(' ').toLowerCase().includes(w));
+};
+const stateBtn = (p, big) => {
+  const busy = P.busy.has(p.id);
+  if (busy) return `<button class="chip primary ps-act" disabled><span class="spin"></span>${p.installed ? 'Atualizando…' : 'Instalando…'}</button>`;
+  if (p.update) return `<button class="chip primary ps-act" data-a="install" title="v${esc(p.installed)} → v${esc(p.version)}">${IC.up}Atualizar${big ? ' para v' + esc(p.version) : ''}</button>`;
+  if (p.installed) return `<span class="ps-done">${IC.ok}Instalado</span>`;
+  return `<button class="chip primary ps-act" data-a="install">${IC.down}Instalar</button>`;
+};
+const tags = (p) => `${p.nodes ? `<span class="ps-tag node" title="Acrescenta ${plural(p.nodes, 'nó', 'nós')} ao Automator">${IC.node}${plural(p.nodes, 'nó', 'nós')}</span>` : ''}${p.runtime ? `<span class="ps-tag" title="O servidor do plugin roda com ${esc(p.runtime)}">${esc(p.runtime)}</span>` : ''}`;
+function card(p) {
+  return `<article class="ps-card${P.sel === p.id ? ' sel' : ''}${p.update ? ' upd' : ''}" data-id="${esc(p.id)}" tabindex="0">
+    <header>${bs.plugIcon(p)}<div class="ps-nm"><b>${esc(p.name)}</b><small>v${esc(p.installed && p.update ? p.installed : p.version)}${p.author ? ' · ' + esc(p.author) : ''}</small></div></header>
+    <p>${esc(p.description || 'Sem descrição.')}</p>
+    <footer><span class="ps-tags">${tags(p)}</span>${stateBtn(p)}</footer>
+  </article>`;
+}
+function paint() {
+  const el = P.el; if (!el || !el.isConnected) return;
+  const st = P.remote && P.remote.store, all = catalog();
+  el.querySelectorAll('.ps-seg button').forEach(b => { b.classList.toggle('on', b.dataset.tab === P.tab); if (b.dataset.tab === 'upd') { const n = updates().length; b.innerHTML = 'Atualizações' + (n ? `<i>${n}</i>` : ''); } });
+  const note = el.querySelector('.ps-note');
+  note.innerHTML = [
+    P.error ? `<p class="bad">Não deu para consultar a loja: ${esc(P.error)}</p>` : '',
+    st && !st.ok ? `<p class="bad">Não deu para falar com o GitHub: ${esc(st.error || 'sem resposta')}. <a data-a="retry">Tentar de novo</a></p>` : '',
+    st && st.stale ? `<p>Sem conexão com o GitHub (${esc(st.stale)}): mostrando o catálogo guardado da última vez. <a data-a="retry">Tentar de novo</a></p>` : '',
+    st && st.local ? '<p>Catálogo lido de uma pasta local (BLUESCREEN_PLUGIN_REPO), não do GitHub.</p>' : '',
+  ].join('');
+  note.hidden = !note.innerHTML;
+  const list = all.filter(matches), grid = el.querySelector('.ps-grid'), empty = el.querySelector('.ps-empty');
+  el.querySelector('.ps-count').textContent = P.remote ? (list.length === all.length ? plural(all.length, 'plugin', 'plugins') : `${list.length} de ${all.length}`) : '';
+  grid.innerHTML = list.map(card).join('');
+  grid.hidden = !list.length; empty.hidden = !!list.length;
+  if (!list.length) empty.innerHTML = !P.remote ? '<span class="spin"></span><p>Abrindo a loja…</p>'
+    : !all.length ? `<b>A loja não respondeu</b><p>Confira a conexão e tente de novo.</p><button class="chip primary" data-a="retry">${bs.I.refresh}Tentar de novo</button>`
+    : `<p>${P.tab === 'upd' ? 'Tudo em dia: nenhum plugin instalado tem versão nova.' : P.tab === 'inst' ? (P.q ? 'Nenhum instalado com esse nome.' : 'Nenhum plugin da loja está instalado ainda.') : 'Nenhum plugin com esse nome.'}</p>`;
+  paintDetail();
+}
+function paintDetail() {
+  const el = P.el; if (!el) return;
+  const p = P.sel && catalog().find(x => x.id === P.sel), box = el.querySelector('.ps-detail');
+  el.firstElementChild.classList.toggle('has-detail', !!p);
+  if (!p) { box.innerHTML = ''; return; }
+  const a = P.about.get(p.id + '@' + p.version), local = bs.plugins.list.find(x => x.id === p.id);
+  box.innerHTML = `<div class="ps-dhead">
+      <button class="icon-btn ps-back" data-a="close" title="Voltar para a loja (Esc)">${IC.back}</button>
+      ${bs.plugIcon(p, 'lg')}
+      <div class="ps-dnm"><h2>${esc(p.name)}</h2><small>v${esc(p.version)}${p.author ? ' · ' + esc(p.author) : ''}${p.installed && p.update ? ` · você tem a v${esc(p.installed)}` : ''}</small></div>
+      <div class="ps-dact">${stateBtn(p, true)}${local && local.user ? `<button class="icon-btn" data-a="remove" title="Remover ${esc(p.name)}">${'<svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>'}</button>` : ''}</div>
+    </div>
+    <div class="ps-dbody">
+      <p class="ps-desc">${esc(p.description || '')}</p>
+      <div class="ps-meta">${tags(p)}<span class="ps-tag">${plural(p.files || 0, 'arquivo', 'arquivos')} · ${size(p.size || 0)}</span>${p.requires && p.requires.length ? `<span class="ps-tag" title="Precisa destes plugins ligados">precisa de ${p.requires.map(esc).join(', ')}</span>` : ''}${a && a.web ? `<a class="ps-tag link" href="${esc(a.web)}" target="_blank" rel="noopener">${IC.link}Código no GitHub</a>` : ''}</div>
+      ${a && a.nodes && a.nodes.length ? `<section class="ps-nodes"><h3>Nós no Automator</h3><div>${a.nodes.map(n => `<div class="ps-node" title="${esc(n.desc || '')}">${IC.node}<b>${esc(n.name || '')}</b><span>${esc(n.category || '')}</span></div>`).join('')}</div></section>` : ''}
+      <article class="md ps-readme">${a ? '' : '<div class="empty"><span class="spin"></span></div>'}</article>
+    </div>`;
+  const art = box.querySelector('.ps-readme');
+  if (a) {
+    if (a.readme && a.readme.trim()) {
+      art.innerHTML = window.DOMPurify ? DOMPurify.sanitize(window.marked ? marked.parse(a.readme, { gfm: true, breaks: false }) : `<pre>${esc(a.readme)}</pre>`, { ADD_ATTR: ['target'] }) : esc(a.readme);
+      // o README costuma abrir com a mesma frase da descrição: uma vez só
+      const d = (p.description || '').replace(/\s+/g, ' ').trim().slice(0, 60); if (d && art.textContent.replace(/\s+/g, ' ').includes(d)) box.querySelector('.ps-desc')?.remove();
+      // imagens e links relativos apontam para o repositório; os outros abrem no navegador
+      const raw = (a.web || '').replace('github.com', 'raw.githubusercontent.com').replace('/tree/', '/');
+      art.querySelectorAll('img').forEach(img => { const s = img.getAttribute('src') || ''; if (raw && !/^([a-z]+:|\/\/|data:)/i.test(s)) img.src = raw + '/' + s.replace(/^\.?\//, ''); img.loading = 'lazy'; });
+      art.querySelectorAll('a[href]').forEach(l => { const h = l.getAttribute('href'); if (h.startsWith('#')) return l.removeAttribute('href'); if (!/^[a-z]+:/i.test(h) && a.web) l.href = a.web + '/' + h.replace(/^\.?\//, ''); l.target = '_blank'; l.rel = 'noopener'; });
+      const h1 = art.querySelector('h1'); if (h1 && h1.textContent.trim().toLowerCase() === String(p.name).toLowerCase()) h1.remove(); // o nome já está no topo
+    } else art.innerHTML = '<div class="empty">Este plugin não tem README.</div>';
+  } else about(p);
+}
+async function about(p) {
+  const k = p.id + '@' + p.version; if (P.about.has(k)) return;
+  try { P.about.set(k, await bs.api('plugins/about', { id: p.id }, { quiet: true })); } catch (e) { P.about.set(k, { readme: '', nodes: [], error: e.message }); }
+  if (P.sel === p.id) paintDetail();
+}
+function open(id) {
+  P.sel = id; bs.openTool('plugins'); bs.pages.open('plugins'); paint();
+  P.el && P.el.querySelector('.ps-detail').scrollTo(0, 0);
+}
+function mount(el) {
+  P.el = el; el.classList.add('ps');
+  el.innerHTML = `<div class="ps-wrap"><div class="ps-main">
+      <header class="ps-top">
+        <div class="ps-title"><h1>Loja de plugins</h1><a href="https://github.com/martindevbr/BlueScreen-Plugins" target="_blank" rel="noopener" title="Abrir o repositório no navegador">martindevbr/BlueScreen-Plugins</a><span class="ps-count"></span></div>
+        <div class="ps-bar">
+          <label class="ps-search">${IC.search}<input type="search" placeholder="Buscar plugin" aria-label="Buscar plugin" spellcheck="false"></label>
+          <span class="seg ps-seg">${TABS.map(([k, t]) => `<button type="button" data-tab="${k}">${t}</button>`).join('')}</span>
+          <button class="icon-btn" data-a="retry" title="Consultar a loja de novo">${bs.I.refresh}</button>
+        </div>
+      </header>
+      <div class="ps-note" hidden></div>
+      <div class="ps-scroll"><div class="ps-grid"></div><div class="ps-empty" hidden></div></div>
+    </div>
+    <aside class="ps-detail"></aside></div>`;
+  const q = el.querySelector('.ps-search input');
+  q.oninput = () => { P.q = q.value; paint(); };
+  q.onkeydown = (e) => { if (e.key === 'Escape' && q.value) { e.stopPropagation(); q.value = ''; P.q = ''; paint(); } };
+  el.addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-tab]'); if (tab) { P.tab = tab.dataset.tab; return paint(); }
+    const a = e.target.closest('[data-a]'), c = e.target.closest('.ps-card');
+    const p = catalog().find(x => x.id === (c ? c.dataset.id : P.sel));
+    if (a) {
+      const act = a.dataset.a;
+      if (act === 'install' && p) return install([p]);
+      if (act === 'retry') return check(true, false);
+      if (act === 'close') { P.sel = null; return paint(); }
+      if (act === 'remove' && p) { const l = bs.plugins.list.find(x => x.id === p.id); return l && bs.pluginRemove(l); }
+      return;
+    }
+    if (c && !e.target.closest('a')) { P.sel = P.sel === c.dataset.id ? null : c.dataset.id; paint(); }
+  });
+  el.addEventListener('keydown', (e) => {
+    const c = e.target.closest && e.target.closest('.ps-card');
+    if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); P.sel = c.dataset.id; paint(); }
+    if (e.key === 'Escape' && P.sel) { e.stopPropagation(); P.sel = null; paint(); }
+  });
+  el.addEventListener('contextmenu', (e) => {
+    const c = e.target.closest('.ps-card'); if (!c) return;
+    const p = catalog().find(x => x.id === c.dataset.id); if (!p) return;
+    bs.showMenu(e, [
+      ...(p.update ? [{ label: `Atualizar para v${p.version}`, icon: IC.up, action: () => install([p]) }] : !p.installed ? [{ label: 'Instalar', icon: IC.down, action: () => install([p]) }] : []),
+      { label: 'Ver detalhes', icon: IC.store, action: () => { P.sel = p.id; paint(); } },
+      '-', { label: 'Copiar id', icon: bs.I.copy, action: () => bs.copyText(p.id) },
+    ], `${p.name} v${p.version}`);
+  });
+  paint();
+}
+
+bs.pluginStore = { check, decorate, menu, install, open, get state() { return P.remote; } };
 if (!bs.doc) {
+  // a loja é a aba fixa do painel Plugins: o painel (app.js) ganha a tela
+  const tool = bs.tools.get('plugins'); if (tool) tool.page = 'plugins';
+  bs.pages.register({ id: 'plugins', title: 'Loja de plugins', icon: IC.store, pinned: true, render: mount, show() { paint(); if (!P.loading && (!P.remote || Date.now() - P.at > 120000)) check(false); } });
+  // consulta logo depois de abrir, de meia em meia hora e ao voltar para a janela depois de um tempo
   setTimeout(() => check(false), 4000);
   setInterval(() => check(true), 30 * 60000);
   window.addEventListener('focus', () => { if (Date.now() - P.at > 10 * 60000) check(true); });
 }
-bs.actions.add([{ label: 'Plugins: procurar atualizações nos servidores', icon: bs.I.plug, run: () => check(true, false) }]);
+bs.actions.add([
+  { label: 'Loja de plugins', icon: IC.store, run: () => { bs.openTool('plugins'); } },
+  { label: 'Plugins: procurar atualizações', icon: bs.I.plug, run: () => check(true, false) },
+]);
 })(window.BS);

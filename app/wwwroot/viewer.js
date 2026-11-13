@@ -197,16 +197,22 @@ function vwReload(t) {
 // Para o ícone na barra da esquerda: bs.tools.register({ id, title, icon, order, page: '<id da tela>' }).
 // Com render() nesse registro, o painel da esquerda é da tela: aparece no lugar do painel de arquivos enquanto a aba
 // dela está na frente e devolve o lugar ao painel anterior quando outra aba entra.
+// Aba fixa (pinned: true): a tela é o lado grande de um painel da esquerda. A aba dela fica sempre na primeira posição,
+// sem o X, e existe só enquanto o painel dono ({ page, render }) é o painel escolhido: abrir outro arquivo não troca o
+// painel (a lista da esquerda continua lá) e escolher outro painel tira a aba. O elemento é guardado, então o estado
+// volta quando o painel é escolhido de novo. Plugins, Alterações, Automator e QAutils são assim.
 (function pgInit() {
   const PG = { defs: new Map(), back: new Map() };
   const tabOf = (id) => S.tabs.find(t => t.page === id) || null;
   // painel da esquerda que pertence a uma tela ({ page, render }): acompanha a aba
   const toolOf = (page) => [...BS.tools.defs.values()].find(d => d.render && d.page === page) || null;
-  const toolBack = () => { const cur = BS.tools.get(S.tool); if (!cur || !cur.page || !cur.render) return; S.tool = PG.prevTool && BS.tools.get(PG.prevTool) ? PG.prevTool : 'project'; PG.prevTool = null; btnState(); renderTool(); };
+  const pinnedTool = (id = S.tool) => { const d = BS.tools.get(id); return !!(d && d.page && d.render && PG.defs.get(d.page)?.pinned); };
+  // page: só devolve o lugar se o painel atual é o dessa tela (fechar a aba fixa de um painel não mexe no painel novo)
+  const toolBack = (page) => { const cur = BS.tools.get(S.tool); if (!cur || !cur.page || !cur.render || (page && cur.page !== page)) return; S.tool = PG.prevTool && BS.tools.get(PG.prevTool) ? PG.prevTool : 'project'; PG.prevTool = null; btnState(); renderTool(); };
   BS.hooks.on('tab:activate', (t) => {
     const tool = t.page && toolOf(t.page);
-    if (!tool) return toolBack();
-    if (S.tool !== tool.id) { PG.prevTool = S.tool; S.tool = tool.id; btnState(); renderTool(); }
+    if (!tool) { if (pinnedTool()) return; return toolBack(); } // painel com aba fixa: fica onde está
+    if (S.tool !== tool.id) { PG.prevTool = pinnedTool() ? PG.prevTool : S.tool; S.tool = tool.id; btnState(); renderTool(); }
   });
   BS.pages = {
     get: (id) => PG.defs.get(id) || null,
@@ -218,7 +224,7 @@ function vwReload(t) {
       VW.custom['page:' + def.id] = {
         build(t, pane) { pane.className = 'vw-pane vw-page'; pane.appendChild(el); },
         show() { try { def.show && def.show(); } catch (e) { console.error('page ' + def.id, e); } },
-        close() { toolBack(); el.remove(); try { def.hide && def.hide(); } catch (e) { console.error('page ' + def.id, e); } },
+        close() { toolBack(def.id); el.remove(); try { def.hide && def.hide(); } catch (e) { console.error('page ' + def.id, e); } },
         // o salvamento automático (trocar de aba, fechar) não grava a tela de um plugin: só quando o usuário pede
         save(t, auto) { if (auto === true || !def.save) return; return def.save(); },
         discard() { return def.discard && def.discard(); },
@@ -237,16 +243,28 @@ function vwReload(t) {
     },
     open(id, quiet) {
       const def = PG.defs.get(id); if (!def) return;
-      if (document.body.classList.contains('welcome')) { toast('Abra um projeto ou entre no Estúdio para usar ' + def.title); return; }
+      if (document.body.classList.contains('welcome')) { if (!def.pinned) toast('Abra um projeto ou entre no Estúdio para usar ' + def.title); return; } // aba fixa: sem projeto, fica só o painel
       ensureEditors();
-      let tab = tabOf(id);
+      let tab = tabOf(id), moved = false;
+      // aba fixa: o painel dono vira o painel escolhido antes de a aba entrar (sync tira as abas dos outros painéis)
+      if (def.pinned && !STUDIO) { const o = toolOf(id); if (o && S.tool !== o.id) { PG.prevTool = pinnedTool() ? PG.prevTool : S.tool; S.tool = o.id; moved = true; } }
       if (!tab) {
-        tab = { key: 'page:' + id, page: id, path: def.title, title: def.title, mode: 'view', kind: 'page:' + id, project: null, virtual: true, lang: '', editable: false, size: 0, view: { fit: false, zoom: 1 } };
-        S.tabs.push(tab); BS.hooks.run('tab:open', tab);
+        tab = { key: 'page:' + id, page: id, path: def.title, title: def.title, mode: 'view', kind: 'page:' + id, project: null, virtual: true, lang: '', editable: false, size: 0, view: { fit: false, zoom: 1 }, pinned: !!def.pinned && !STUDIO }; // no Estúdio a tela fecha pelo X, como sempre
+        // fixa: primeira da fila (só existe a do painel escolhido; as outras saem em sync)
+        if (tab.pinned) S.tabs.unshift(tab); else S.tabs.push(tab);
+        BS.hooks.run('tab:open', tab);
       }
       if (quiet && S.active) renderTabs(); else activate(tab);
+      if (moved) { btnState(); renderTool(); }
     },
     close(id) { const t = tabOf(id); if (t) askClose(t); },
+    isPinned: (id) => !!PG.defs.get(id)?.pinned,
+    // o painel escolhido mudou (btnState): as abas fixas dos outros painéis saem, sem perguntar (a tela guarda o estado)
+    sync() {
+      if (PG.syncing) return; PG.syncing = true;
+      try { for (const t of S.tabs.filter(x => x.pinned)) { const o = toolOf(t.page); if (o && S.tool !== o.id) { t.dirty = false; closeTab(t); } } }
+      finally { PG.syncing = false; }
+    },
     isOpen: (id) => !!tabOf(id),
     isActive: (id) => !!S.active && S.active.page === id && $('#welcome').hidden,
     dirty(id, on) { const t = tabOf(id); if (!t || !!t.dirty === !!on) return; t.dirty = !!on; renderTabs(); },

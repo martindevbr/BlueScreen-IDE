@@ -1,11 +1,11 @@
-# Automator, Agenda e Biblioteca
+# Automator e Agenda
 
-Quatro plugins que vêm com o BlueScreen.
+Plugins que vêm com o BlueScreen.
 
-- O **Automator** é uma tela inteira: tem um ícone na barra da esquerda e abre numa aba do editor, ao lado dos arquivos. Enquanto essa aba está na frente, a lista de fluxos fica no painel da esquerda, no lugar do painel de arquivos; ao voltar para um arquivo, o painel anterior volta.
-- **Agenda**, **Agentes** e **Biblioteca** abrem cada um numa janela do balão flutuante (o botão de menu no canto da tela), que dá para mover, maximizar ou arrastar pelo topo até uma região da IDE.
+- O **Automator** é uma tela inteira: tem um ícone na barra da esquerda e abre numa aba fixa, a primeira das abas. A lista de fluxos fica no painel da esquerda. A aba fica enquanto o painel Automator é o painel escolhido e sai quando você escolhe outro painel; o fluxo aberto continua como estava.
+- **Agenda** e **Agentes** abrem cada um numa janela do balão flutuante (o botão de menu no canto da tela), que dá para mover, maximizar ou arrastar pelo topo até uma região da IDE.
 
-Todos também abrem pelo **Buscar em tudo** (`Shift` `Shift`): "Automator", "Agenda", "Agentes", "Biblioteca".
+Todos também abrem pelo **Buscar em tudo** (`Shift` `Shift`): "Automator", "Agenda", "Agentes".
 
 ## Automator
 
@@ -153,7 +153,7 @@ Cada nó diz o que recebe e o que devolve. Na paleta aparece uma linha como `Tex
 | Iniciar manualmente | Começa quando você clica em **Executar**. Entrega o texto de exemplo. |
 | Agenda | Começa sozinho: a cada intervalo (em minutos) ou num horário, nos dias da semana marcados. |
 | Ao abrir o BlueScreen | Começa sozinho quando o BlueScreen é aberto. |
-| Quando um arquivo mudar | Começa quando o arquivo, ou algo no primeiro nível da pasta, é criado ou alterado. Entrega `path`, `name` e `files`. A conferência é a cada cinco segundos. |
+| Quando um arquivo mudar | Começa quando o arquivo, ou algo no primeiro nível da pasta, é criado ou alterado. Entrega `path` e `name` (o primeiro que mudou) e `files`, com todos: para tratar cada um, ligue um **Para cada item** em `{{input.files}}`. A conferência é a cada cinco segundos, e um arquivo só conta quando parou de mudar (igual em duas conferências seguidas), para uma cópia grande não disparar com o arquivo pela metade. Arquivos que chegam enquanto o fluxo espera a vez entram no mesmo disparo. |
 | Endpoint HTTP | Começa quando alguém chama o endereço do fluxo, e o fluxo responde. Veja [Crie um endpoint](#crie-um-endpoint). |
 
 **Lógica**
@@ -176,6 +176,7 @@ Cada nó diz o que recebe e o que devolve. Na paleta aparece uma linha como `Tex
 | Juntar lista | Junta os itens de uma lista num texto só. |
 | Ajustar texto | Maiúsculas, minúsculas, primeira letra maiúscula, sem espaços nas pontas ou sem linhas vazias. |
 | Contar texto | Entrega `chars`, `words` e `lines`. |
+| Formatar número | Escreve um número como `R$ 1.234,56`, `1.234,56` ou `12,5%`. |
 
 **Dados**
 
@@ -188,6 +189,11 @@ Cada nó diz o que recebe e o que devolve. Na paleta aparece uma linha como `Tex
 | Filtrar lista | Fica com os itens que passam numa comparação. |
 | Resumir números | Entrega `count`, `sum`, `avg`, `min` e `max` de uma lista. |
 | Montar tabela | Transforma uma lista numa tabela em Markdown, CSV ou HTML, para um relatório. |
+| Ler planilha Excel | Lê um arquivo `.xlsx` (sem precisar do Excel instalado) e entrega uma linha por item, com os nomes das colunas como campos. Escolha a aba pelo nome, ou fique com a primeira. Datas chegam como `25/12/2026`. O formato antigo `.xls` não é lido: salve como `.xlsx`. |
+| Gravar planilha Excel | Grava uma lista num `.xlsx`: cada item vira uma linha e cada campo, uma coluna, com os nomes em negrito na primeira linha. Números entram como números, para o Excel somar. |
+| Calcular | Uma conta com dois números: mais, menos, vezes, dividido, "10 por cento de 200", "20 é quantos por cento de 200", arredondar, o maior e o menor. Aceita `1.234,56`, `R$ 10,50` e `12%`. |
+| Remover repetidos | Fica com um só de cada item repetido, comparando o item inteiro ou um campo (maiúsculas e espaços nas pontas não contam). |
+| Procurar na lista | Acha o item em que um campo tem o valor procurado, como o PROCV do Excel. Sai por **sim** com o item achado, ou por **não**. |
 
 **JSON**
 
@@ -219,6 +225,7 @@ Quando a saída de um nó é JSON, o painel dele mostra atalhos em **Última exe
 | Listar arquivos | Entrega a lista dos arquivos de uma pasta, com filtro (`*.pdf`). |
 | Arquivo existe? | Segue por **sim** ou por **não**. |
 | Copiar, mover ou excluir | Copia ou move um arquivo, ou manda para a Lixeira. |
+| Compactar ou descompactar | Junta um arquivo ou uma pasta inteira num `.zip`, ou abre um `.zip` numa pasta. Sem destino, grava ao lado do original. |
 
 **Windows**
 
@@ -232,12 +239,13 @@ Quando a saída de um nó é JSON, o painel dele mostra atalhos em **Última exe
 | Alarme | Abre um alerta no canto da tela, por cima de tudo e sem tirar o foco de onde você está, com um som da biblioteca do Windows (o botão ao lado toca o escolhido) ou um `.wav` seu. Dá para escolher o tipo e a cor, tocar uma vez ou sem parar, fechar sozinho depois de um tempo, um ou dois botões, o canto da tela, a largura, o fundo, a opacidade e a borda piscando. Com **Espera o alarme fechar**, o nó entrega `closed`: o botão clicado, ou `timeout`. Alarmes abertos ao mesmo tempo no mesmo canto se empilham em vez de se cobrir: o novo entra por cima, a pilha desliza quando um fecha e abre outra coluna se não couber na altura da tela. |
 | Saúde do PC | Entrega o uso de CPU e de memória, o espaço nos discos e há quantas horas o PC está ligado. |
 | Programa está rodando? | Segue por **sim** ou por **não**. |
+| Capturar a tela | Tira uma foto de todos os monitores e grava num `.png` (sem destino, na pasta Imagens, com a data e a hora no nome). |
 
 **Rede**
 
 | Nó | O que faz |
 |---|---|
-| Requisição HTTP | Chama um endereço e entrega a resposta. Resposta em JSON chega como objeto. Status fora de 2xx falha o fluxo. |
+| Requisição HTTP | Chama um endereço e entrega a resposta. Resposta em JSON chega como objeto. Status fora de 2xx falha o fluxo. Em **Login no serviço**, escolha **Token**, **Usuário e senha** ou **Chave num cabeçalho** e informe a credencial: o Automator monta o cabeçalho certo, sem você escrever `Authorization`. |
 | Baixar arquivo | Baixa um endereço e grava num arquivo. |
 | Ferramenta MCP | Chama uma ferramenta de um servidor MCP por HTTP. |
 | Responder ao endpoint | Define o código, o formato e o corpo que o **Endpoint HTTP** devolve. |
@@ -430,7 +438,7 @@ A categoria **Conexões** fala com o que está fora do PC. Usuário e senha vêm
 O que vale saber:
 
 - **SSH** usa o OpenSSH que vem com o Windows. Na primeira conexão o servidor é anotado no `known_hosts` da sua pasta `.ssh`; se a identidade dele mudar depois, o nó recusa. Com chave, o campo Senha é a senha da chave.
-- **E-mail e FTP** usam o `curl` que vem com o Windows. No Gmail e no Outlook com verificação em duas etapas, a senha é a "senha de app" criada na conta.
+- **E-mail e FTP** usam o `curl` que vem com o Windows. Em **Provedor**, escolha Gmail, Outlook, Yahoo ou iCloud e o servidor, a porta e a segurança já vêm certos; **Outro** mostra esses campos. A senha é a "senha de app" criada na conta (a senha normal é recusada). Contas da Microsoft só entram se a conta ou a empresa permitir esse tipo de login.
 - **Ler e-mails** marca como lida a mensagem que leu, a menos que você escolha deixar como estava. Num fluxo com Agenda, "só as não lidas" faz cada mensagem ser tratada uma vez.
 - **Banco de dados:** valores que vêm de fora vão no campo **Valores**, não colados no SQL. No SQL Server use `@p1`, `@p2`…; no ODBC, um `?` para cada um.
 - Para SFTP use o nó de SSH, não o de FTP. Slack, Teams e Discord continuam em Integrações.
@@ -476,7 +484,7 @@ O nó **Navegador** (categoria Navegador) abre o Edge, ou o Chrome, e faz no sit
 
 Quando o fluxo termina, a janela fecha (ou fica aberta, se o nó pedir).
 
-**Onde fica cada coisa, sem código.** O campo **Onde** de um passo aceita três jeitos: `texto=Entrar` acha pelo texto que aparece na tela; `rotulo=Tempo de resposta` acha o valor que fica ao lado desse texto (o campo do rótulo, a célula seguinte, o número embaixo do título); e, para quem conhece, um seletor CSS (`#senha`). O gravador escolhe sozinho: ao clicar, prefere o texto do botão; em **Ler campo**, prefere o rótulo vizinho. O motor procura também dentro de quadros (iframes) da mesma origem e de componentes da página, onde os painéis de sistemas grandes costumam ficar.
+**Onde fica cada coisa, sem código.** O campo **Onde** de um passo aceita três jeitos: `texto=Entrar` acha pelo texto que aparece na tela; `rotulo=Tempo de resposta` acha o valor que fica ao lado desse texto (o campo do rótulo, a célula seguinte, o número embaixo do título); e, para quem conhece, um seletor CSS (`#senha`). O gravador escolhe sozinho: ao clicar, prefere o texto do botão; em **Ler campo**, prefere o rótulo vizinho. O motor procura também dentro dos quadros (iframes) da página, do mesmo site ou de outro, e dos componentes dela, onde os painéis de sistemas grandes costumam ficar. O gravador grava dentro dos quadros da mesma origem; num quadro de outro endereço, escreva o passo à mão com `texto=` ou `rotulo=`.
 
 **O que nem sempre aparece.** Cada passo tem a escolha **Tem que achar** ou **Se não achar, pula**. Use a segunda para o login (que não aparece quando você já está dentro), o aviso de cookies, uma janela de novidades: o passo espera poucos segundos e, se o elemento não aparecer, o fluxo segue, pulando também os passos desse tipo que vêm logo em seguida. A saída do nó traz `skipped`, com os números dos passos pulados.
 
@@ -601,6 +609,8 @@ A IA recebe um guia dos nós escrito para ela (o que cada um faz, o formato que 
 
 O que aparecer volta para a IA corrigir, até duas vezes. No fim, uma janela mostra o que ainda merece atenção: as credenciais guardadas, o que a IA deixou para você preencher e o que a conferência ainda achou. Nada roda nem é salvo sem você conferir.
 
+A mesma janela avisa, em âmbar, quando o fluxo **mexe no seu PC ou fala por você**: roda um script ou programa (com o começo dele), deixa um agente de IA alterar arquivos ou rodar comandos, manda arquivos para a Lixeira, altera dados num banco, envia e-mail ou mensagem, manda uma credencial para um endereço que o seu pedido não citou, ou usa num comando o que chega por um Endpoint HTTP. Um fluxo que estava **Ligado** é desligado ao ser ajustado pela IA: execute uma vez e ligue de novo.
+
 **Senhas no pedido.** Pode escrever a senha ou o token na frase ("entre no portal com a senha X"). O BlueScreen tira o valor do texto antes de ele ir para a IA, guarda em **Credenciais** e manda só o nome (`{{cred:senha-portal}}`). Ele reconhece tokens de formato conhecido (GitHub, GitLab, OpenAI, Slack, AWS, JWT) e o que vem depois de "senha", "token" ou "chave" quando parece um valor: entre aspas, depois de `:` ou `=`, ou com número ou símbolo no meio. Uma senha só de letras, sem aspas, passa por esse filtro; aí a IA é instruída a não copiá-la para o fluxo e a apontá-la, e a janela do resultado avisa que a IA viu o valor. Para ter certeza, escreva a senha entre aspas ou guarde-a antes em Credenciais.
 
 ### Edite scripts com IA
@@ -615,7 +625,7 @@ Um nó de plugin ganha o mesmo botão com `"code": "linguagem"` num campo `area`
 
 - **Guardar:** dê um nome (`senha-portal`) e clique em **Guardar…**. O usuário e a senha são digitados numa janela do BlueScreen, fora da página. Senhas escritas num pedido à IA vêm parar aqui sozinhas.
 - **Usar:** `{{cred:nome}}` em qualquer campo de um nó; `{{cred:nome.user}}` é o usuário. O menu **+ dado** dos campos lista as credenciais.
-- **O valor não aparece:** nenhuma tela ou rota o devolve. Na execução ele entra no nó e é trocado por `••••••` no que o nó devolve, na saída e no erro, antes de seguir para os próximos nós e para o histórico.
+- **O valor não aparece:** nenhuma tela ou rota o devolve. Na execução ele entra no nó e é trocado por `••••••` no que o nó devolve, na saída e no erro, antes de seguir para os próximos nós e para o histórico. Uma senha curta (menos de 8 caracteres, como `2026` ou `admin`) some do histórico e dos erros, mas não da saída que segue para os próximos nós: ela apareceria por acaso em datas e nomes e apagaria dados seus. Prefira senhas de 8 caracteres ou mais.
 - **Em scripts:** no Script PowerShell, escreva `{{cred:nome}}` fora de aspas simples; o valor chega por variável de ambiente e não fica escrito no arquivo do script. Em **Executar programa**, credencial em argumento é recusada, porque outros programas do PC leem os argumentos.
 - **Em nós de plugin** (Testar site, Automatizar site): o valor chega ao programa do nó por variável de ambiente, como os segredos do Cofre.
 - Um campo que cita uma credencial que não existe mostra o aviso com **Guardar agora**.
@@ -673,15 +683,9 @@ Fechar a janela principal esconde o BlueScreen na área de notificação, para a
 
 Janelas abertas com `--doc` continuam fechando normalmente. Nos modos `--web` e `--no-open` não há ícone nem aviso do Windows: os eventos ficam só no log.
 
-## Biblioteca de plugins
+## Loja de plugins
 
-A Biblioteca mostra em cartões o catálogo dos servidores de plugins, os mesmos da aba **Plugins** (`Alt+7`), com busca e os filtros **Todos**, **Favoritos** e **Instalados**.
-
-- A estrela marca um favorito.
-- **⋯ › Exportar coleção** gera um arquivo com os favoritos e os servidores deles.
-- **⋯ › Importar coleção** põe os plugins do arquivo nos seus favoritos. Se a coleção aponta servidores que você ainda não tem, a IDE mostra os endereços antes de aceitar. Nada é instalado na importação: a faixa **favoritos ainda não instalados** instala todos de uma vez.
-
-Download, conferência de versão e de hash são os do núcleo. Para hospedar o catálogo da equipe, veja [Servidor de plugins](../app/plugin-server/README.md).
+A Biblioteca de plugins deu lugar à **Loja de plugins**, que abre junto com o painel Plugins (`Alt+7`). Veja [Loja de plugins](PLUGINS.md#loja-de-plugins).
 
 ## Dados e testes
 

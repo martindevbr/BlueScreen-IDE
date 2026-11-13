@@ -1,8 +1,12 @@
-//! Servidores de plugins (app/plugin-server): a IDE aponta para um ou mais servidores, lista o que eles têm,
-//! instala e atualiza plugins na pasta do usuário. O servidor é só de leitura: nada é publicado pela IDE.
-//! Os servidores ficam em ~/.bluescreen/plugins.json (`servers: [{ url }]`). Plugin instalado de um servidor
-//! leva um `.origin.json` na pasta ({ server, version, sha256, installed }); a interface pergunta de tempos em
-//! tempos (`plugins/remote`) e mostra o aviso de atualização enquanto houver versão maior em algum servidor.
+//! Loja de plugins: o catálogo oficial é o repositório github.com/martindevbr/BlueScreen-Plugins (cada pasta de
+//! `plugins/` é um plugin). A IDE baixa o zip do branch num pedido só, guarda em ~/.bluescreen/store-cache com o
+//! ETag (sem mudança no repositório, o GitHub responde 304 e nada é baixado de novo; sem rede, vale o guardado),
+//! lista, instala e atualiza na pasta do usuário. BLUESCREEN_PLUGIN_REPO aponta uma pasta local no lugar do GitHub
+//! (um clone do repositório, para testar um plugin antes de publicar).
+//! Servidores de plugins de equipe (app/plugin-server) continuam valendo se estiverem em ~/.bluescreen/plugins.json
+//! (`servers: [{ url }]`): os plugins deles entram no mesmo catálogo. Plugin instalado leva um `.origin.json` na
+//! pasta ({ server, version, sha256, installed }); a interface pergunta de tempos em tempos (`plugins/remote`) e
+//! mostra o aviso de atualização enquanto houver versão maior.
 use super::{RouteFn, ok, route_fn};
 use crate::server::host;
 use crate::util::*;
@@ -13,7 +17,7 @@ use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -54,12 +58,156 @@ async fn index(url: String) -> Result<Value, String> {
     if v["plugins"].is_array() { Ok(v) } else { Err(format!("{url} não é um servidor de plugins do BlueScreen")) }
 }
 
-/// Plugins de todos os servidores, comparados com os instalados. O mesmo id em dois servidores: vale a maior versão.
-async fn check() -> Value {
+// ---------- a loja oficial: o repositório de plugins no GitHub ----------
+/// como a loja aparece no `.origin.json` e no campo `server` de cada plugin do catálogo
+pub const STORE: &str = "github:martindevbr/BlueScreen-Plugins";
+const STORE_WEB: &str = "https://github.com/martindevbr/BlueScreen-Plugins";
+const STORE_ZIP: &str = "https://codeload.github.com/martindevbr/BlueScreen-Plugins/zip/refs/heads/main";
+/// maior arquivo e maior repositório aceitos (descompactados)
+const MAX_FILE: u64 = 64 << 20;
+const MAX_REPO: u64 = 512 << 20;
+
+struct Pkg { id: String, manifest: Value, files: Vec<(String, Vec<u8>)> }
+/// `stale`: a rede falhou e a lista é a guardada da última vez (o aviso vai para a tela)
+struct Snap { pkgs: Vec<Pkg>, stale: Option<String> }
+static SNAP: LazyLock<Mutex<Option<(Instant, Arc<Snap>)>>> = LazyLock::new(|| Mutex::new(None));
+
+/// arquivos soltos ("plugins/<id>/<caminho>") viram um pacote por plugin; pasta sem plugin.json válido fica de fora
+fn group(files: Vec<(String, Vec<u8>)>) -> Vec<Pkg> {
+    let mut by: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
+    for (p, d) in files {
+        let Some(rest) = p.strip_prefix("plugins/") else { continue };
+        let Some((id, rel)) = rest.split_once('/') else { continue };
+        if !valid_id(id) || !safe_rel(rel) || rel == ".origin.json" { continue; }
+        by.entry(id.to_string()).or_default().push((rel.to_string(), d));
+    }
+    let mut out: Vec<Pkg> = by.into_iter().filter_map(|(id, mut files)| {
+        let m: Value = files.iter().find(|f| f.0 == "plugin.json").and_then(|f| serde_json::from_slice(f.1.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&f.1)).ok())?;
+        if m["id"].as_str().map(str::trim) != Some(id.as_str()) { return None; }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        Some(Pkg { id, manifest: m, files })
+    }).collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+/// o zip do GitHub: tudo dentro de uma pasta "<repo>-<branch>/"
+fn from_zip(bytes: &[u8]) -> Result<Vec<Pkg>, String> {
+    use std::io::Read;
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("o pacote da loja não abriu: {e}"))?;
+    let (mut files, mut total) = (vec![], 0u64);
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).map_err(|e| e.to_string())?;
+        if !f.is_file() { continue; }
+        let Ok(name) = f.name().map(|n| n.replace('\\', "/")) else { continue };
+        let Some((_, rel)) = name.split_once('/') else { continue };
+        if !rel.starts_with("plugins/") { continue; }
+        total += f.size();
+        if f.size() > MAX_FILE || total > MAX_REPO { return Err("o repositório de plugins passou do tamanho aceito".into()); }
+        let mut d = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut d).map_err(|e| format!("{rel}: {e}"))?;
+        files.push((rel.to_string(), d));
+    }
+    Ok(group(files))
+}
+/// uma pasta local com a mesma forma do repositório (BLUESCREEN_PLUGIN_REPO)
+fn from_dir(root: &Path) -> Result<Vec<Pkg>, String> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, Vec<u8>)>, total: &mut u64) -> Result<(), String> {
+        for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if n == ".git" || n == "node_modules" || n == ".origin.json" { continue; }
+            let r = format!("{rel}/{n}");
+            let Ok(t) = e.file_type() else { continue };
+            if t.is_dir() { walk(&e.path(), &r, out, total)?; }
+            else if t.is_file() {
+                let d = std::fs::read(e.path()).map_err(|e| format!("{r}: {e}"))?;
+                *total += d.len() as u64;
+                if d.len() as u64 > MAX_FILE || *total > MAX_REPO { return Err("a pasta de plugins passou do tamanho aceito".into()); }
+                out.push((r, d));
+            }
+        }
+        Ok(())
+    }
+    let (mut files, mut total) = (vec![], 0u64);
+    walk(&root.join("plugins"), "plugins", &mut files, &mut total)?;
+    Ok(group(files))
+}
+/// baixa o zip (ou confirma pelo ETag que o guardado ainda vale). Sem rede, devolve o guardado com o aviso.
+async fn download() -> Result<(Vec<u8>, Option<String>), String> {
+    let dir = user_dir().join("store-cache");
+    let (zip_file, etag_file) = (dir.join("repo.zip"), dir.join("etag"));
+    let cached = || std::fs::read(&zip_file).ok().filter(|b| !b.is_empty());
+    let etag = std::fs::read_to_string(&etag_file).ok().filter(|_| zip_file.is_file());
+    let mut req = http(120)?.get(STORE_ZIP);
+    if let Some(e) = &etag { req = req.header("If-None-Match", e.trim()); }
+    let offline = |why: String| match cached() { Some(b) => Ok((b, Some(why))), None => Err(why) };
+    let r = match req.send().await { Ok(r) => r, Err(e) => return offline(net_error("o GitHub", e)) };
+    if r.status() == reqwest::StatusCode::NOT_MODIFIED && let Some(b) = cached() { return Ok((b, None)); }
+    if !r.status().is_success() { return offline(format!("o GitHub respondeu {}", r.status())); }
+    let new_etag = r.headers().get("etag").and_then(|v| v.to_str().ok()).map(String::from);
+    let body = match r.bytes().await { Ok(b) => b.to_vec(), Err(e) => return offline(net_error("o GitHub", e)) };
+    let _ = std::fs::create_dir_all(&dir);
+    if std::fs::write(&zip_file, &body).is_ok() { match new_etag { Some(e) => { let _ = std::fs::write(&etag_file, e); } None => { let _ = std::fs::remove_file(&etag_file); } } }
+    Ok((body, None))
+}
+/// O catálogo da loja. Vale por dez minutos (`fresh` pergunta de novo: com o ETag, custa um pedido sem corpo).
+async fn snapshot(fresh: bool) -> Result<Arc<Snap>, String> {
+    if !fresh && let Some((t, s)) = SNAP.lock().clone() && t.elapsed() < Duration::from_secs(600) { return Ok(s); }
+    let local = std::env::var_os("BLUESCREEN_PLUGIN_REPO").filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
+    let snap = match local {
+        Some(dir) => { let pkgs = tokio::task::spawn_blocking(move || from_dir(&dir)).await.map_err(|e| e.to_string())??; Snap { pkgs, stale: None } }
+        None => {
+            let (bytes, stale) = download().await?;
+            let pkgs = tokio::task::spawn_blocking(move || from_zip(&bytes)).await.map_err(|e| e.to_string())??;
+            Snap { pkgs, stale }
+        }
+    };
+    let snap = Arc::new(snap);
+    *SNAP.lock() = Some((Instant::now(), snap.clone()));
+    Ok(snap)
+}
+impl Pkg {
+    fn file(&self, name: &str) -> Option<&[u8]> { self.files.iter().find(|f| f.0 == name).map(|f| f.1.as_slice()) }
+    fn text(&self, name: &str) -> Option<String> { self.file(name).map(|d| String::from_utf8_lossy(d.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(d)).into_owned()) }
+    /// o mesmo ícone da aba Plugins (store::icon_uri), lido do pacote
+    fn icon(&self) -> Option<String> {
+        let named = self.manifest["icon"].as_str().map(|s| s.trim().replace('\\', "/")).filter(|s| !s.is_empty());
+        let pick = match named { Some(n) => n, None => ["icon.svg", "icon.png"].into_iter().find(|f| self.file(f).is_some())?.to_string() };
+        let mime = match pick.rsplit('.').next()?.to_ascii_lowercase().as_str() { "svg" => "image/svg+xml", "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "webp" => "image/webp", _ => return None };
+        let d = self.file(&pick).filter(|d| !d.is_empty() && d.len() <= 64 * 1024)?;
+        Some(format!("data:{mime};base64,{}", B64.encode(d)))
+    }
+    /// os nós que o plugin acrescenta ao Automator (automator.json): nome, categoria e descrição
+    fn nodes(&self) -> Vec<Value> {
+        let v: Value = self.file("automator.json").and_then(|d| serde_json::from_slice(d.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(d)).ok()).unwrap_or(Value::Null);
+        v["nodes"].as_array().into_iter().flatten().map(|n| json!({ "name": n["name"], "category": n["category"], "desc": n["desc"] })).collect()
+    }
+    /// o que o servidor do plugin precisa para rodar (o cartão avisa antes de instalar)
+    fn runtime(&self) -> Option<&'static str> {
+        let named = self.manifest["server"].as_str().map(str::to_string);
+        let has = |ext: &str| named.as_deref().is_some_and(|n| n.ends_with(ext)) || self.files.iter().any(|f| f.0 == format!("server{ext}"));
+        if has(".js") || has(".mjs") || has(".cjs") { Some("Node.js") } else if has(".py") { Some("Python") } else if has(".ps1") { Some("PowerShell") } else { None }
+    }
+    fn entry(&self) -> Value {
+        let m = &self.manifest;
+        json!({
+            "id": self.id, "name": m["name"].as_str().unwrap_or(&self.id), "description": m["description"].as_str().unwrap_or(""),
+            "version": m["version"].as_str().unwrap_or("0"), "author": m["author"].as_str().unwrap_or(""), "icon": self.icon(), "server": STORE,
+            "requires": m["requires"], "nodes": self.nodes().len(), "readme": self.file("README.md").is_some(), "runtime": self.runtime(),
+            "size": self.files.iter().map(|f| f.1.len()).sum::<usize>(), "files": self.files.len(),
+        })
+    }
+}
+
+/// A loja e os servidores de equipe, comparados com os instalados. O mesmo id em dois lugares: vale a maior versão.
+async fn check(fresh: bool) -> Value {
     let list = servers();
-    let results = futures_util::future::join_all(list.iter().map(|s| index(s.url.clone()))).await;
+    let (snap, results) = tokio::join!(snapshot(fresh), futures_util::future::join_all(list.iter().map(|s| index(s.url.clone()))));
     let installed: HashMap<String, (String, Value, bool)> = host().get().list.iter().map(|p| (p.id.clone(), (p.version.clone(), p.origin.clone(), p.user))).collect();
     let mut best: HashMap<String, Value> = HashMap::new();
+    let store = match &snap {
+        Ok(s) => { for p in &s.pkgs { best.insert(p.id.clone(), p.entry()); } json!({ "ok": true, "url": STORE_WEB, "count": s.pkgs.len(), "stale": s.stale, "local": std::env::var_os("BLUESCREEN_PLUGIN_REPO").is_some() }) }
+        Err(e) => json!({ "ok": false, "url": STORE_WEB, "error": e }),
+    };
     let mut out_servers = vec![];
     for (s, r) in list.iter().zip(results) {
         match r {
@@ -91,7 +239,22 @@ async fn check() -> Value {
     }).collect();
     plugins.sort_by(|a, b| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()));
     let updates = plugins.iter().filter(|p| p["update"] == json!(true)).count();
-    json!({ "servers": out_servers, "plugins": plugins, "updates": updates, "checked": now_ms() })
+    json!({ "store": store, "servers": out_servers, "plugins": plugins, "updates": updates, "checked": now_ms() })
+}
+
+/// instala da loja: os arquivos já estão no catálogo baixado (se o plugin não está nele, pergunta de novo ao GitHub)
+async fn install_store(id: &str) -> Result<Value, String> {
+    let mut snap = snapshot(false).await?;
+    if !snap.pkgs.iter().any(|p| p.id == id) { snap = snapshot(true).await?; }
+    let p = snap.pkgs.iter().find(|p| p.id == id).ok_or(format!("a loja não tem o plugin {id}"))?;
+    let files = p.files.clone();
+    let version = p.manifest["version"].as_str().unwrap_or("").to_string();
+    let origin = json!({ "server": STORE, "version": version, "sha256": bundle_hash(&files), "installed": now_ms() });
+    let id2 = id.to_string();
+    tokio::task::spawn_blocking(move || place(&id2, &files, &origin)).await.map_err(|e| e.to_string())??;
+    *LAST.lock() = None;
+    log(format!("plugin {id} {version} instalado da loja"));
+    Ok(json!({ "id": id, "version": version }))
 }
 
 fn stamp() -> String { format!("{}-{}", now_ms() as u64, std::process::id()) }
@@ -130,6 +293,7 @@ fn place(id: &str, files: &[(String, Vec<u8>)], origin: &Value) -> Result<(), St
 const MAX_PACKAGE: usize = 256 << 20;
 async fn install(server: &str, id: &str, version: Option<&str>) -> Result<Value, String> {
     if !valid_id(id) { return Err(format!("id inválido: {id}")); }
+    if server.is_empty() || server == STORE { return install_store(id).await; }
     let server = norm_url(server)?;
     // só dos servidores que o usuário cadastrou (Plugins › Servidores), nunca de um endereço vindo no pedido
     if !servers().iter().any(|s| norm_url(&s.url).is_ok_and(|u| u.eq_ignore_ascii_case(&server))) { return Err(format!("{server} não está na lista de servidores de plugins")); }
@@ -205,9 +369,24 @@ pub fn routes() -> Vec<(&'static str, RouteFn)> {
         ("plugins/remote", route_fn(|r| async move {
             r.local_only()?;
             if !r.flag("fresh") { if let Some((t, v)) = LAST.lock().clone() { if t.elapsed() < Duration::from_secs(60) { return ok(v); } } }
-            let v = check().await;
+            let v = check(r.flag("fresh")).await;
             *LAST.lock() = Some((Instant::now(), v.clone()));
             ok(v)
+        })),
+        // a página de um plugin na loja: o README, os nós do Automator e os arquivos. Sem o plugin na loja (os que vêm
+        // com o BlueScreen, os seus), o README da pasta instalada
+        ("plugins/about", route_fn(|r| async move {
+            r.local_only()?;
+            let id = r.q_or("id", "").to_string();
+            if !valid_id(&id) { return Err(fail("id inválido", 400)); }
+            if let Ok(s) = snapshot(false).await && let Some(p) = s.pkgs.iter().find(|p| p.id == id) {
+                return ok(json!({ "id": id, "readme": p.text("README.md"), "nodes": p.nodes(), "files": p.files.iter().map(|f| json!({ "path": f.0, "size": f.1.len() })).collect::<Vec<_>>(), "web": format!("{STORE_WEB}/tree/main/plugins/{id}") }));
+            }
+            let local = host().get().list.iter().find(|p| p.id == id).map(|p| p.path.clone()).ok_or_else(|| fail("plugin desconhecido", 404))?;
+            let dir = std::path::PathBuf::from(local);
+            let nodes: Value = read_json(&dir.join("automator.json"));
+            ok(json!({ "id": id, "readme": std::fs::read_to_string(dir.join("README.md")).ok(),
+                "nodes": nodes["nodes"].as_array().into_iter().flatten().map(|n| json!({ "name": n["name"], "category": n["category"], "desc": n["desc"] })).collect::<Vec<_>>(), "files": [] }))
         })),
         // POST { server, id, version? }: baixa, confere e instala (ou atualiza) na pasta do usuário
         ("plugins/install", route_fn(|r| async move {
@@ -237,5 +416,20 @@ mod tests {
         assert_eq!(norm_url("meu-pc:4900/").unwrap(), "http://meu-pc:4900");
         assert_eq!(norm_url(" https://x.com ").unwrap(), "https://x.com");
         assert!(norm_url("ftp://x").is_err() && norm_url("a b").is_err());
+    }
+    #[test]
+    fn pacotes_do_repositorio() {
+        let f = |p: &str, d: &str| (p.to_string(), d.as_bytes().to_vec());
+        let pk = group(vec![
+            f("README.md", "raiz"), f("plugins/ola/plugin.json", r#"{"id":"ola","name":"Olá","version":"1.2.0","server":"server.mjs"}"#), f("plugins/ola/ui.js", "x"), f("plugins/ola/icon.svg", "<svg/>"),
+            f("plugins/ola/automator.json", r#"{"nodes":[{"type":"a","name":"A","category":"Texto","desc":"d"}]}"#), f("plugins/ola/.origin.json", "{}"), f("plugins/ola/../fora.txt", "x"),
+            f("plugins/outro/plugin.json", r#"{"id":"nao-bate"}"#), f("plugins/sem-manifesto/ui.js", "x"),
+        ]);
+        assert_eq!(pk.len(), 1);
+        let p = &pk[0];
+        assert_eq!(p.files.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(), vec!["automator.json", "icon.svg", "plugin.json", "ui.js"]);
+        let e = p.entry();
+        assert_eq!((e["name"].as_str(), e["version"].as_str(), e["nodes"].as_u64(), e["runtime"].as_str()), (Some("Olá"), Some("1.2.0"), Some(1), Some("Node.js")));
+        assert!(e["icon"].as_str().unwrap().starts_with("data:image/svg+xml;base64,"));
     }
 }

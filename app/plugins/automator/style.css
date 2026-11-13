@@ -502,3 +502,4 @@
 /* "se não achar, pula": a escolha de cada passo fica discreta, embaixo dos campos dele */
 .am-step-cells select:last-child:not(:first-child) { height: 22px; padding: 0 4px; border-color: transparent; background-color: transparent; color: var(--muted); font-size: 11px; }
 .am-step-cells select:last-child:not(:first-child):hover, .am-step-cells select:last-child:not(:first-child):focus { border-color: var(--line); color: var(--fg); }
+.am-risk li { color: #E0A23A; }

@@ -40,8 +40,8 @@ BlueScreen.exe --doc dados.xlsx    # só o documento, numa janela leve (.csv, .t
 | `Ctrl+Alt+L` | lint do arquivo |
 | `Alt+F12` | terminal |
 | `Ctrl+Shift+V` | visualização de Markdown e HTML ao lado |
-| `Alt+2` | alterações: locais, commit a commit (`Alt+PageUp`/`Alt+PageDown`) e Comparar duas versões quaisquer |
-| `Alt+3` | histórico (busca, arquivos de cada commit, histórico do arquivo aberto) |
+| `Alt+2` | alterações: locais, histórico (commit a commit com `Alt+PageUp`/`Alt+PageDown`) e Comparar duas versões; na área grande, a linha do tempo de todos os repositórios da pasta e o Investigar incidente |
+| `Alt+3` | o mesmo painel, já no histórico |
 | `Alt+Shift+B` | quem mudou esta linha: o commit e o diff dela |
 | `Ctrl+Alt+U` | arquivo minificado: alterna entre o original e o desminificado, na mesma posição |
 | `Alt+6` / `Alt+7` | Build / Plugins |
@@ -73,9 +73,9 @@ Outra ferramenta ou outro caminho: liste em `~/.bluescreen/tools.json`.
 
 ## O que vem pronto
 
-- **Automações e produtividade:** [Automator, Agenda e Biblioteca](docs/AUTOMACOES.md). Monte fluxos em nós, no modelo do HexLab, com laços, tentativas e variáveis, um navegador que automatiza sites inteiros (com gravador de passos) e conexões por SSH, SFTP, e-mail, FTP, banco de dados e MQTT, que rodam quando você manda, na hora marcada, ao abrir a IDE ou quando um arquivo muda, ou quando chamam o endpoint do fluxo, com nós de arquivos, texto, imagem, áudio, vídeo, PowerShell, HTTP, segurança de endpoint, auditoria de sites, Dynatrace, agentes de IA e de sites (abrir, clicar, digitar, ler), e plugins podem acrescentar outros; receba lembretes pelo Windows; peça ao Codex e ao Claude Code para revisar uma decisão; e compartilhe coleções de plugins com a equipe. Ao fechar a janela principal, a IDE continua na bandeja: **Sair do BlueScreen**, no ícone, encerra.
+- **Automações e produtividade:** [Automator e Agenda](docs/AUTOMACOES.md). Monte fluxos em nós, no modelo do HexLab, com laços, tentativas e variáveis, um navegador que automatiza sites inteiros (com gravador de passos) e conexões por SSH, SFTP, e-mail, FTP, banco de dados e MQTT, que rodam quando você manda, na hora marcada, ao abrir a IDE ou quando um arquivo muda, ou quando chamam o endpoint do fluxo, com nós de arquivos, texto, imagem, áudio, vídeo, PowerShell, HTTP, segurança de endpoint, auditoria de sites, Dynatrace, agentes de IA e de sites (abrir, clicar, digitar, ler), e plugins podem acrescentar outros; receba lembretes pelo Windows; peça ao Codex e ao Claude Code para revisar uma decisão; e compartilhe coleções de plugins com a equipe. Ao fechar a janela principal, a IDE continua na bandeja: **Sair do BlueScreen**, no ícone, encerra.
 
-- **Git e SVN:** alterações, diff lado a lado editável, histórico, marcas na margem.
+- **Git e SVN:** [alterações, histórico e incidentes](docs/ALTERACOES.md) num painel só, diff lado a lado editável, marcas na margem. Uma pasta cheia de repositórios vira uma linha do tempo única, e o **Investigar incidente** ordena os commits por suspeita a partir da hora do problema e do erro colado.
 - **Build:** o painel `Alt+6` (embaixo do editor, como o Terminal: tarefas à esquerda, saída à direita) reconhece Maven, Gradle, npm/Yarn/pnpm, Cargo, .NET, CMake, Go, Python (uv, Poetry...) e mais de 60 ferramentas, usando o wrapper do projeto (`mvnw`, `gradlew`).
 - **Runtimes e executar o main:** ao abrir um arquivo, a IDE confere se o runtime da linguagem está instalado (JDK, Node.js, Python, Go, .NET, Rust, compilador C/C++, Ruby, PHP e mais 20) e se atende à versão que o projeto pede (`pom.xml`, `build.gradle`, `.nvmrc`, `go.mod`, `global.json`...). Se faltar, oferece baixar pela IDE, escolher outra versão, apontar uma pasta já instalada ou instalar com winget. Cada `main` (`public static void main`, `fun main`, `if __name__ == "__main__"`, `func main`, `fn main`, `static void Main`...) ganha um ▶ na margem, como no IntelliJ. Ele executa pelo Maven, Gradle, Cargo, dotnet ou direto, com entrada para o programa no console (plugin [`runtimes`](app/plugins/runtimes/README.md)).
 - **Dependências:** se o `package.json`, o `requirements.txt`, o `.csproj` ou outro manifesto ainda não foi instalado, um aviso oferece o comando certo.
@@ -88,6 +88,7 @@ Outra ferramenta ou outro caminho: liste em `~/.bluescreen/tools.json`.
 - **Tela dividida do seu jeito:** arraste a aba de qualquer painel (Terminal, Build, Depurar, Problemas, painéis de plugins), o topo de uma janela flutuante ou o cabeçalho do painel de arquivos para cima, para os lados ou para uma janela flutuante. Uma rosa de alvos mostra onde ele vai ficar, e a IDE lembra a arrumação.
 - **QAutils (`Alt+9`), o kit do QA:** plugin [`qautils`](app/plugins/qautils/README.md), com duas abas:
   - **Cenários (Gherkin/Cucumber):** painel por pasta e por chamado, nova feature no padrão do time, autocompletar com os passos do projeto, passo parecido, `Contexto` automático, execução manual (Passou/Falhou/Bloqueado, com a cor na margem do cenário) com evidências coladas, relatório de evidências (HTML) e casos de teste (CSV); em projetos automatizados, step definitions, F12, gerar a definição e ▶ executar.
+  - **Quadro de execução (aba fixa do painel):** os cenários em colunas por status (arrastar o cartão muda o status), filtros por chamado, tag e pasta, cobertura com as piores primeiro, relatório e CSV do que está filtrado.
   - **Kit:** dados de teste com dígito válido (CPF, CNPJ, RG, PIS, CNH, título, Renavam, placa, CEP, celular, cartão de teste), massa de dados, validar documentos, valores limite, entradas especiais, JSON, Base64/URL/JWT, data e hora, texto com N caracteres, hash, regex, comparar textos, relatório de bug e ambientes.
 - **Renomear arquivos e pastas:** botão direito › **Renomear…**, `F2` ou `Shift+F6` na árvore (ou no menu da aba). As abas abertas acompanham, e em Java/Kotlin a classe de mesmo nome é renomeada junto.
 - **Planilhas:** `.csv` e `.xlsx` abrem numa tabela editável, com fórmulas e formatação (plugin [`sheets`](app/plugins/sheets/README.md)). No Windows, o BlueScreen aparece no **Abrir com** desses arquivos e abre só o documento, numa janela leve, sem mexer na IDE aberta (`BlueScreen.exe --doc arquivo.xlsx`). Para ser o programa padrão, marque "Sempre usar este aplicativo".
@@ -124,7 +125,7 @@ Um plugin é uma pasta em `app/plugins/<id>` ou `~/.bluescreen/plugins/<id>` com
 
 **Cofre de credenciais** (chave na barra da esquerda, `Alt+8`): tokens (GitHub, OpenAI, Jira...) que você guarda uma vez e libera para os plugins que quiser. Ficam cifrados neste PC, e os plugins usam sem ver o valor, só nos sites e programas que você liberar. Cada liberação pede confirmação numa caixa do Windows. Detalhes: [docs/PLUGINS.md#cofre](docs/PLUGINS.md#cofre).
 
-Para distribuir plugins numa equipe, rode o [servidor de plugins](app/plugin-server/README.md) e adicione o endereço em **Plugins › Servidores de plugins**.
+A **Loja de plugins** abre junto com o painel Plugins (`Alt+7`): é o catálogo do repositório [martindevbr/BlueScreen-Plugins](https://github.com/martindevbr/BlueScreen-Plugins), com busca, a página de cada plugin e instalação sem recarregar a janela. Veja [Loja de plugins](docs/PLUGINS.md#loja-de-plugins).
 
 ## Configurações
 

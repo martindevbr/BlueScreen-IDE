@@ -562,7 +562,7 @@ function projectMenu(e, p) {
       '-',
       { label: 'Ver alterações locais', icon: I.local, action: () => go(() => openTool('changes')) },
       { label: 'Ver último commit', icon: I.commit, action: () => go(async () => { S.changeMode = 'last'; S.rev = null; store.set('changeMode', 'last'); await refreshProject(); openTool('changes'); }) },
-      { label: 'Histórico', icon: I.hist, action: () => go(() => openTool('history')) },
+      { label: 'Histórico', icon: I.hist, action: () => go(() => showHistory()) },
       { label: 'Lint das alterações', icon: I.lint, action: () => go(() => lintAll()) },
     ] : []),
     '-',
@@ -693,6 +693,7 @@ function deletePath(rel, isDir) {
   });
 }
 function tabMenu(e, t) {
+  if (t.pinned) return showMenu(e, [{ label: 'Fechar as outras abas', icon: I.x, action: () => askClose(S.tabs.filter(x => x !== t)) }], t.title + ' · aba fixa do painel');
   if (t.page) return showMenu(e, [{ label: 'Fechar', icon: I.x, k: 'Ctrl+W', action: () => askClose(t) }, { label: 'Fechar outras', action: () => askClose(S.tabs.filter(x => x !== t)) }, { label: 'Fechar todas', action: () => askClose(S.tabs.slice()) }], t.title);
   showMenu(e, BS.hooks.apply('menu:tab', [
     { label: t.mode === 'diff' ? 'Abrir como editor' : 'Ver diff', icon: t.mode === 'diff' ? I.edit : I.diff, action: () => openFile(t.path, t.mode === 'diff' ? 'editor' : 'diff', undefined, undefined, t.project) },
@@ -722,7 +723,7 @@ function studioItems() {
   // a descrição do plugin é longa; o cartão fica com a primeira frase, sem o parêntese de detalhes
   const brief = (d) => { d = String(d || '').replace(/\s*\([^)]*\)/g, '').trim(); const m = d.match(/^.*?[.:;](\s|$)/); return (m ? m[0] : d).replace(/[.:;]\s*$/, ''); };
   return [
-    ...BS.tools.list().filter(t => t.page).map(t => ({ id: t.id, icon: t.icon, title: t.title, desc: brief(about(t.plugin || t.id)), big: true, go: () => setTool(t.id) })),
+    ...BS.tools.list().filter(t => t.page && t.plugin).map(t => ({ id: t.id, icon: t.icon, title: t.title, desc: brief(about(t.plugin || t.id)), big: true, go: () => setTool(t.id) })),
     ...(BS.bubble && BS.bubble.list ? BS.bubble.list().filter(w => !w.footer).map(w => ({ id: w.id, icon: w.icon, title: w.title, desc: brief(about(w.plugin || w.id)), go: () => BS.bubble.open(w.id) })) : []),
   ].map((it, i) => ({ ...it, hue: STUDIO_HUES[i % STUDIO_HUES.length] }));
 }
@@ -1058,6 +1059,8 @@ function toolKeys() {
   }
   for (const k of boundToolKeys) BS.keys.remove(k); boundToolKeys.clear();
   for (const d of list) if (d.key) { const id = d.id; BS.keys.add(d.key, () => setTool(id)); boundToolKeys.add(d.key); }
+  // Alt+3 era o painel Histórico: se nenhum painel ficou com a tecla, ela abre o Histórico dentro de Alterações
+  if (!BS.keys.map.has('Alt+3')) { BS.keys.add('Alt+3', () => showHistory()); boundToolKeys.add('Alt+3'); }
 }
 function setTool(t) {
   const def = BS.tools.get(t); if (!def) return;
@@ -1065,7 +1068,10 @@ function setTool(t) {
     // ícone de uma tela de plugin: abre a aba. Se o painel também é dele (render), a lista fica no lugar do painel
     // de arquivos; com a tela já na frente e o painel à mostra, o clique recolhe o painel, como nos outros
     if (!def.render) return BS.pages.open(def.page);
-    if (BS.pages.isActive(def.page) && S.tool === t && !$('#app').classList.contains('no-tool')) { $('#app').classList.add('no-tool'); btnState(); BS.hooks.run('tool:show', t, false); return; }
+    // aba fixa já aberta: o clique no ícone só recolhe e mostra a lista, sem tirar da frente o arquivo que está aberto
+    const pinOpen = BS.pages.isPinned(def.page) && BS.pages.isOpen(def.page) && S.tool === t, hidden = $('#app').classList.contains('no-tool');
+    if ((BS.pages.isActive(def.page) || pinOpen) && S.tool === t && !hidden) { $('#app').classList.add('no-tool'); btnState(); BS.hooks.run('tool:show', t, false); return; }
+    if (pinOpen && hidden) { $('#app').classList.remove('no-tool'); btnState(); renderTool(); BS.hooks.run('tool:show', t, true); return; }
     BS.pages.open(def.page); $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true);
     return;
   }
@@ -1073,11 +1079,12 @@ function setTool(t) {
   if (S.tool === t && !$('#app').classList.contains('no-tool')) { $('#app').classList.add('no-tool'); btnState(); BS.hooks.run('tool:show', t, false); return; }
   $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true);
 }
-function openTool(t) { const def = BS.tools.get(t); if (!def) return; if (def.page) { BS.pages.open(def.page); if (!def.render) return; } if (def.toggle) { BS.dock && BS.dock.claim(t); def.toggle(true); return; } $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true); }
+function openTool(t) { const def = BS.tools.get(t); if (!def) return; if (def.page) { if (!(def.render && S.tool === t && BS.pages.isPinned(def.page) && BS.pages.isOpen(def.page))) BS.pages.open(def.page); if (!def.render) return; } if (def.toggle) { BS.dock && BS.dock.claim(t); def.toggle(true); return; } $('#app').classList.remove('no-tool'); S.tool = t; btnState(); renderTool(); BS.hooks.run('tool:show', t, true); }
 function btnState() {
   const shown = !$('#app').classList.contains('no-tool');
   document.querySelectorAll('#strip [data-tool]').forEach(b => { const d = BS.tools.get(b.dataset.tool), pg = d && !d.render && d.page; b.classList.toggle('on', pg ? !!BS.pages && BS.pages.isActive(pg) : b.dataset.tool === S.tool && shown); });
   const p = $('#btnPanel'); if (p) { p.classList.toggle('on', shown); p.setAttribute('aria-expanded', shown); }
+  if (BS.pages && BS.pages.sync) BS.pages.sync(); // abas fixas: só fica a do painel escolhido (viewer.js)
 }
 function renderTool() {
   const t = BS.tools.get(S.tool) || BS.tools.get('project'); S.tool = t.id;
@@ -1475,21 +1482,21 @@ function activate(tab) {
 }
 function renderTabs() {
   $('#editor').classList.toggle('no-tabs', !S.tabs.length);
-  $('#tabs').innerHTML = S.tabs.map(t => `<div class="tab ${t === S.active ? 'on' : ''} ${t.dirty ? 'dirty' : ''} ${t.conflict || t.gone ? 'ext-c' : ''} ${t.virtual && !t.page ? 'virtual' : ''}" data-k="${esc(t.key)}" title="${esc(t.page ? t.title : t.virtual ? t.title + ' (só leitura)' : t.path)}" draggable="true" role="tab">${t.page ? `<span class="pg-ic">${BS.pages.icon(t.page)}</span>` : treeIcon({ name: t.path.split('/').pop() })}${t.mode === 'diff' ? `<span class="mode${t.owner ? ' ext' : ''}">${t.owner ? (t.cmpLabel || 'EXTERNO') : t.changeMode === 'working' ? 'DIFF' : t.changeMode === 'range' ? 'COMPARAR' : 'COMMIT'}</span>` : ''}<span class="nm${t.project === S.project?.path ? codeCls(t.path) : ''}">${esc(t.path.split('/').pop())}</span><button class="x" title="${t.dirty ? 'Não salvo. Fechar' : 'Fechar'}"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join('');
+  $('#tabs').innerHTML = S.tabs.map(t => `<div class="tab ${t === S.active ? 'on' : ''} ${t.dirty ? 'dirty' : ''} ${t.conflict || t.gone ? 'ext-c' : ''} ${t.virtual && !t.page ? 'virtual' : ''} ${t.pinned ? 'pinned' : ''}" data-k="${esc(t.key)}" title="${esc(t.page ? t.title : t.virtual ? t.title + ' (só leitura)' : t.path)}" draggable="${!t.pinned}" role="tab">${t.page ? `<span class="pg-ic">${BS.pages.icon(t.page)}</span>` : treeIcon({ name: t.path.split('/').pop() })}${t.mode === 'diff' ? `<span class="mode${t.owner ? ' ext' : ''}">${t.owner ? (t.cmpLabel || 'EXTERNO') : t.changeMode === 'working' ? 'DIFF' : t.changeMode === 'range' ? 'COMPARAR' : 'COMMIT'}</span>` : ''}<span class="nm${t.project === S.project?.path ? codeCls(t.path) : ''}">${esc(t.path.split('/').pop())}</span>${t.pinned ? (t.dirty ? '<span class="pin-dot" title="Não salvo"></span>' : '') : `<button class="x" title="${t.dirty ? 'Não salvo. Fechar' : 'Fechar'}"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`}</div>`).join('');
   $('#tabs').querySelectorAll('.tab').forEach(el => {
     const t = S.tabs.find(x => x.key === el.dataset.k);
     el.onclick = (e) => e.shiftKey ? askClose(t) : activate(t);
-    el.querySelector('.x').onclick = (e) => { e.stopPropagation(); askClose(t); };
+    const x = el.querySelector('.x'); if (x) x.onclick = (e) => { e.stopPropagation(); askClose(t); };
     el.onauxclick = (e) => { if (e.button === 1) askClose(t); };
     el.oncontextmenu = (e) => tabMenu(e, t);
     // arrastar para reordenar
-    el.ondragstart = (e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/bs-tab', t.key); el.classList.add('drag'); };
+    el.ondragstart = (e) => { if (t.pinned) return e.preventDefault(); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/bs-tab', t.key); el.classList.add('drag'); };
     el.ondragend = () => { el.classList.remove('drag'); document.querySelectorAll('.tab.drop-l,.tab.drop-r').forEach(x => x.classList.remove('drop-l', 'drop-r')); };
     el.ondragover = (e) => { if (!e.dataTransfer.types.includes('text/bs-tab')) return; e.preventDefault(); const r = el.getBoundingClientRect(); const left = e.clientX < r.left + r.width / 2; el.classList.toggle('drop-l', left); el.classList.toggle('drop-r', !left); };
     el.ondragleave = () => el.classList.remove('drop-l', 'drop-r');
     el.ondrop = (e) => {
       e.preventDefault(); const from = S.tabs.find(x => x.key === e.dataTransfer.getData('text/bs-tab')); if (!from || from === t) return renderTabs();
-      const r = el.getBoundingClientRect(); const after = e.clientX >= r.left + r.width / 2;
+      const r = el.getBoundingClientRect(); const after = t.pinned || e.clientX >= r.left + r.width / 2; // nada entra antes da aba fixa
       S.tabs.splice(S.tabs.indexOf(from), 1); S.tabs.splice(S.tabs.indexOf(t) + (after ? 1 : 0), 0, from); renderTabs();
     };
   });
@@ -1541,7 +1548,7 @@ window.BS_APP_QUIT = async () => {
   });
 };
 function askClose(list) {
-  list = [].concat(list).filter(t => t && S.tabs.includes(t));
+  list = [].concat(list).filter(t => t && S.tabs.includes(t) && !t.pinned); // a aba fixa sai quando o painel dela sai
   const risky = list.filter(losesWork);
   if (!risky.length) return list.forEach(t => S.tabs.includes(t) && closeTab(t));
   const one = risky.length === 1, name = one ? risky[0].path.split('/').pop() : '';
@@ -1933,7 +1940,7 @@ function seFind(kind, raw, limit) {
 function seActions() {
   const A = (label, k, run, icon) => ({ label, k, run, icon });
   return [
-    A('Projeto (árvore)', 'Alt+1', () => openTool('project'), I.open), A('Alterações', 'Alt+2', () => openTool('changes'), I.diff), A('Histórico', 'Alt+3', () => openTool('history'), I.hist),
+    A('Projeto (árvore)', 'Alt+1', () => openTool('project'), I.open), A('Alterações', 'Alt+2', () => openTool('changes'), I.diff), A('Histórico (commits)', 'Alt+3', () => showHistory(), I.hist),
     A('Problemas', 'Alt+4', () => openTool('problems'), I.lint), A('Plugins', 'Alt+7', () => openTool('plugins'), I.plug),
     A('Trocar projeto', 'Alt+P', () => quickProject(), I.open), A('Lista de projetos', '', () => { S.showProjects = true; openTool('project'); }, I.open),
     A('Abrir projeto…', '', () => openProjectDialog(), I.open), ...(S.remote ? [] : [A('Novo projeto…', '', () => newProjectDialog(), I.newp)]), A('Fechar projeto', '', () => closeProject(), I.x),
@@ -2519,8 +2526,8 @@ async function openOutside(root, rel, line) {
 
 // ----- painéis do núcleo -----
 BS.tools.register({ id: 'project', title: 'Projeto', icon: I.open, key: 'Alt+1', order: 10, render: renderProject });
-BS.tools.register({ id: 'changes', title: 'Alterações', icon: I.changes, key: 'Alt+2', order: 20, render: () => renderChanges() }); // vcs.js
-BS.tools.register({ id: 'history', title: 'Histórico', icon: I.hist, key: 'Alt+3', order: 30, render: () => renderHistory() });
+// Alterações junta o que não foi commitado, o histórico e o comparar (vcs.js); a tela grande dele é a aba fixa de changes.js
+BS.tools.register({ id: 'changes', title: 'Alterações', icon: I.changes, key: 'Alt+2', order: 20, render: () => renderChanges() });
 BS.tools.register({ id: 'problems', title: 'Problemas', icon: I.problems, key: 'Alt+4', order: 80, bottom: true, render() {}, toggle(open) { $('#problems').hidden = open === true ? false : !$('#problems').hidden; } });
 BS.tools.register({ id: 'plugins', title: 'Plugins', icon: I.plug, key: 'Alt+7', order: 1000, bottom: true, render: renderPlugins });
 
@@ -2536,7 +2543,7 @@ function renderPlugins() {
   const vault = BS.vault ? BS.vault.banner() : '';
   body.innerHTML = vault + (list.length ? `<div class="plugs">${list.map(p => `<div class="plug ${p.enabled ? '' : 'off'} ${p.error ? 'bad' : ''}" data-id="${esc(p.id)}">
       ${plugIcon(p)}
-      <div class="tx"><div class="nm"><span class="pl-name">${esc(p.name)}</span></div>
+      <div class="tx"><div class="nm" style="--side:${pluginButtons(p).length + (p.settingsSchema && p.settingsSchema.length ? 1 : 0) + (p.user ? 1 : 0)}"><span class="pl-name">${esc(p.name)}</span></div>
         ${p.description ? `<div class="ds">${esc(p.description)}</div><button class="pl-more" hidden>mais</button>` : ''}
         ${p.requires && p.requires.length ? `<div class="pl-req">Precisa de: ${p.requires.map(esc).join(', ')}</div>` : ''}
         ${p.error ? `<div class="er">${esc(p.error)}</div>` : ''}</div>
@@ -2559,7 +2566,7 @@ function renderPlugins() {
       ...(() => { const b = pluginButtons(p); return b.length ? ['-', ...b] : []; })()], `${p.name} v${p.version}`);
   });
   plugClamp(body);
-  // servidores de plugins (plugstore.js): atualizações, catálogo e a lista de servidores
+  // a loja (plugstore.js): versão e "Atualizar" nos instalados; o catálogo fica na aba fixa do painel
   if (BS.pluginStore) BS.pluginStore.decorate(body);
 }
 // ícone do plugin: a imagem do plugin.json ou, sem ela, um padrão com as iniciais numa cor tirada do id
@@ -2688,7 +2695,7 @@ function renderDashboard() {
         ${p.vcs ? (S.workFiles.slice(0, 6).map(f => chgRow(f)).join('') || '<div class="empty">Nada pendente.</div>') + (S.workFiles.length > 6 ? `<a data-go="changes" data-mode="working" class="more">ver todas (${S.workFiles.length})</a>` : '') : '<div class="empty">Sem Git nem SVN nesta pasta.</div>'}` },
     ...(p.vcs ? [{ id: 'commit', order: 20, html: `<div class="t">${I.commit}Último commit<span class="meta">${last ? `<code>${esc(last.hash)}</code><span>${esc(last.when)}</span>` : ''}</span></div>
         ${last ? `<div class="subj" title="${esc(last.subject)}">${esc(last.subject)}</div><div class="m"><span>${esc(last.author)}</span></div>` + S.lastFiles.slice(0, 4).map(f => chgRow(f, 'last')).join('') + (S.lastFiles.length > 4 ? `<a data-go="changes" data-mode="last" class="more">ver todos (${S.lastFiles.length})</a>` : '') : '<div class="empty">Sem commits.</div>'}` },
-      { id: 'history', order: 30, html: `<div class="t">${I.hist}Histórico<span class="meta"><a data-go="history">ver tudo</a></span></div>
+      { id: 'history', order: 30, html: `<div class="t">${I.hist}Histórico<span class="meta"><a data-go="changes" data-mode="last">ver tudo</a></span></div>
         ${S.log.slice(0, 5).map(cm => `<div class="row" data-rev="${esc(cm.id)}" title="${esc(cm.subject)}"><span class="name" style="flex:1">${esc(cm.subject)}</span><span class="meta"><span>${esc(cm.when)}</span></span></div>`).join('') || '<div class="empty">Sem histórico.</div>'}` }] : []),
   ];
   const plug = BS.dashboard.cards.map(c => { let html = ''; try { html = c.html() || ''; } catch (e) { console.error(e); html = `<div class="errbox"><b>Card ${esc(c.id)} falhou.</b><div>${esc(e.message)}</div></div>`; } return { ...c, html, plugin: true }; }).filter(c => c.html);

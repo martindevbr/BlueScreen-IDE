@@ -501,6 +501,175 @@ pub async fn local_ref(dir: &Path, vcs: Option<&str>) -> serde_json::Value {
     }
 }
 
+// ---------- vários repositórios e linha do tempo (o painel Alterações em tela grande e o "Investigar incidente") ----------
+#[derive(Serialize, Clone)]
+pub struct Repo {
+    pub path: String,
+    /// caminho a partir da pasta pesquisada ("" quando a própria pasta é o repositório)
+    pub rel: String,
+    pub name: String,
+    pub vcs: &'static str,
+    pub branch: String,
+    pub dirty: usize,
+    pub last: Option<Commit>,
+}
+/// Checkouts Git/SVN dentro de `root` (ela mesma, se for um), até `depth` níveis. Dentro de um repositório achado não
+/// procura mais (só a raiz pesquisada pode ter outros dentro). Pastas de build e ocultas ficam de fora.
+pub fn find_repos(root: &Path, depth: usize) -> Vec<(PathBuf, &'static str)> {
+    fn walk(dir: &Path, depth: usize, top: bool, out: &mut Vec<(PathBuf, &'static str)>, seen: &mut usize) {
+        if out.len() >= 300 || *seen > 30_000 { return; }
+        if let Some(v) = here(dir) { out.push((dir.to_path_buf(), v)); if !top { return; } }
+        if depth == 0 { return; }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut subs: Vec<PathBuf> = rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter(|e| { let n = e.file_name().to_string_lossy().to_string(); !n.starts_with('.') && !IGNORED_DIRS.contains(n.as_str()) })
+            .map(|e| e.path()).collect();
+        subs.sort();
+        for s in subs { *seen += 1; walk(&s, depth - 1, false, out, seen); }
+    }
+    let (mut out, mut seen) = (vec![], 0);
+    walk(root, depth.min(6), true, &mut out, &mut seen);
+    out
+}
+/// Os repositórios de uma pasta com o resumo de cada um (branch, alterações locais, último commit), até 8 por vez.
+pub async fn repos(root: &Path, depth: usize) -> Vec<Repo> {
+    let r2 = root.to_path_buf();
+    let found = tokio::task::spawn_blocking(move || find_repos(&r2, depth)).await.unwrap_or_default();
+    let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+    let jobs: Vec<_> = found.into_iter().map(|(p, v)| {
+        let (gate, root) = (gate.clone(), root.to_path_buf());
+        tokio::spawn(async move {
+            let _g = gate.acquire().await;
+            let s = summary(&p).await;
+            let rel = norm(&rel(&root, &p));
+            Repo { name: p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string_lossy().to_string()), path: p.to_string_lossy().into(), rel, vcs: v, branch: s.branch, dirty: s.dirty, last: s.last }
+        })
+    }).collect();
+    let mut out = vec![];
+    for j in jobs { if let Ok(r) = j.await { out.push(r); } }
+    out
+}
+
+#[derive(Serialize, Clone)]
+pub struct TimelineCommit {
+    #[serde(flatten)]
+    pub c: Commit,
+    /// branches e tags que apontam para o commit (as tags costumam ser as versões implantadas)
+    pub refs: Vec<String>,
+    pub merge: bool,
+    pub files: Vec<ChangedFile>,
+}
+fn iso_utc(ts: i64) -> String { chrono::DateTime::from_timestamp(ts, 0).map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string()).unwrap_or_default() }
+static SVN_PATHS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"<path\b([^>]*)>([\s\S]*?)</path>"#).unwrap());
+static SVN_ACTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"action="(\w)""#).unwrap());
+/// Os commits de um período (`since`/`until` em segundos unix), do mais novo para o mais antigo, cada um com os
+/// arquivos que mudou. Um processo só por repositório. No SVN não vêm as linhas somadas e removidas.
+pub async fn timeline(dir: &Path, since: i64, until: Option<i64>, max: usize) -> Vec<TimelineCommit> {
+    let n = max.clamp(1, 2000).to_string();
+    match detect(dir) {
+        Some("git") => {
+            let (s, u) = (format!("--since=@{since}"), until.map(|u| format!("--until=@{u}")));
+            let mut a = vec!["log", "-n", &n, &s];
+            if let Some(u) = &u { a.push(u); }
+            a.extend(["--format=%x1e%H%x1f%h%x1f%an%x1f%ct%x1f%D%x1f%P%x1f%s", "--raw", "--numstat", "--", "."]);
+            let (r, pre) = tokio::join!(git_t(dir, &a, 45000), git_prefix(dir));
+            r.out.split('\x1e').filter_map(|chunk| {
+                let (head, rest) = chunk.split_once('\n').unwrap_or((chunk, ""));
+                let f: Vec<&str> = head.split('\x1f').collect();
+                if f.len() < 7 || f[0].is_empty() { return None; }
+                let refs = f[4].split(", ").map(|x| x.trim().trim_start_matches("HEAD -> ").to_string()).filter(|x| !x.is_empty() && x != "HEAD").collect();
+                Some(TimelineCommit {
+                    c: Commit { id: Some(f[0].into()), hash: f[1].into(), author: f[2].into(), when: rel_time_unix(f[3]), subject: f[6].into(), ts: f[3].trim().parse().ok(), path: None },
+                    refs, merge: f[5].split_whitespace().count() > 1, files: parse_raw_numstat(rest, &pre),
+                })
+            }).collect()
+        }
+        Some("svn") => {
+            let range = format!("{}:{{{}}}", until.map(|u| format!("{{{}}}", iso_utc(u))).unwrap_or_else(|| "HEAD".into()), iso_utc(since));
+            let (la, ia) = (["log", "-r", &range, "-l", &n, "--xml", "-v"], ["info", "--show-item", "relative-url"]);
+            let (r, base) = tokio::join!(svn_t(dir, &la, 45000), svn(dir, &ia));
+            // "^/trunk/projeto": os caminhos do log vêm a partir da raiz do repositório
+            let base = base.out.trim().trim_start_matches('^').trim_end_matches('/').to_string();
+            LOG_ENTRY.captures_iter(&r.out).filter_map(|m| {
+                let c = parse_svn_log(&m[0]).into_iter().next()?;
+                let ts = c.ts?;
+                if ts < since || until.is_some_and(|u| ts > u) { return None; } // {data} sem commit no dia devolve o anterior
+                let files = SVN_PATHS.captures_iter(&m[2]).filter_map(|p| {
+                    let full = html_unescape(p[2].trim());
+                    let path = if base.is_empty() { full.trim_start_matches('/').to_string() } else { full.strip_prefix(&base)?.trim_start_matches('/').to_string() };
+                    if path.is_empty() { return None; }
+                    Some(ChangedFile { path, code: SVN_ACTION.captures(&p[1]).map(|a| a[1].to_string()).unwrap_or_else(|| "M".into()), staged: None, add: None, del: None })
+                }).collect();
+                Some(TimelineCommit { c: Commit { id: Some(c.hash.clone()), hash: format!("r{}", c.hash), ..c }, refs: vec![], merge: false, files })
+            }).collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// Uma linha somada ou removida, num commit do período, que contém um dos termos procurados.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Hit { pub commit: String, pub file: String, pub line: usize, pub sign: char, pub term: String, pub text: String }
+/// Lê a saída de "git log -p -U0" (commits marcados com \x1e + hash) ou de "svn log --diff" e devolve as linhas
+/// que mudaram e contêm um termo. Até 3 por termo em cada arquivo de cada commit, `max` no total.
+fn scan_patch(out: &str, terms: &[String], pre: &str, max: usize) -> Vec<Hit> {
+    static HUNK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@@ -(\d+)(?:,\d+)? \+(\d+)").unwrap());
+    static SVN_REV: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^r(\d+) \| ").unwrap());
+    let (mut commit, mut file, mut old_file) = (String::new(), None::<String>, None::<String>);
+    let (mut lo, mut ln, mut in_hunk) = (0usize, 0usize, false);
+    let mut per: HashMap<(String, String, String), usize> = HashMap::new();
+    let mut hits = vec![];
+    let path = |p: &str| strip_prefix(unquote(p.split('\t').next().unwrap_or(p).trim()), pre);
+    for l in out.lines() {
+        if let Some(h) = l.strip_prefix('\x1e') { commit = h.trim().to_string(); file = None; in_hunk = false; continue; }
+        if !in_hunk || !(l.starts_with('+') || l.starts_with('-') || l.starts_with(' ') || l.starts_with('\\')) {
+            if let Some(c) = SVN_REV.captures(l) { commit = c[1].to_string(); file = None; in_hunk = false; continue; }
+            if let Some(p) = l.strip_prefix("--- ") { old_file = p.strip_prefix("a/").and_then(path); in_hunk = false; continue; }
+            if let Some(p) = l.strip_prefix("+++ ") { file = if p.starts_with("/dev/null") { old_file.clone() } else { path(p.strip_prefix("b/").unwrap_or(p)) }; in_hunk = false; continue; }
+            if let Some(p) = l.strip_prefix("Index: ") { file = path(p); in_hunk = false; continue; }
+            if let Some(c) = HUNK.captures(l) { lo = c[1].parse().unwrap_or(1); ln = c[2].parse().unwrap_or(1); in_hunk = true; continue; }
+            in_hunk = false; continue;
+        }
+        let (sign, at) = match l.as_bytes()[0] { b'+' => { ln += 1; ('+', ln - 1) } b'-' => { lo += 1; ('-', lo - 1) } b' ' => { lo += 1; ln += 1; continue } _ => continue };
+        let Some(f) = &file else { continue };
+        let body = &l[1..];
+        if body.len() > 2000 { continue; } // linha minificada: não é ali que alguém vai ler
+        let low = body.to_lowercase();
+        for t in terms {
+            if !low.contains(t.as_str()) { continue; }
+            let k = per.entry((commit.clone(), f.clone(), t.clone())).or_insert(0);
+            if *k >= 3 { continue; }
+            *k += 1;
+            hits.push(Hit { commit: commit.clone(), file: f.clone(), line: at, sign, term: t.clone(), text: body.trim().chars().take(220).collect() });
+            if hits.len() >= max { return hits; }
+        }
+    }
+    hits
+}
+/// Procura os termos (um erro colado, o nome de uma classe, uma tabela) nas linhas que os commits do período somaram
+/// ou removeram. Termos com menos de 3 letras ficam de fora; no máximo 12.
+pub async fn scan(dir: &Path, since: i64, until: Option<i64>, terms: &[String], max: usize) -> Vec<Hit> {
+    let mut terms: Vec<String> = terms.iter().map(|t| t.trim().to_lowercase()).filter(|t| t.chars().count() >= 3).collect();
+    terms.sort(); terms.dedup(); terms.truncate(12);
+    if terms.is_empty() { return vec![]; }
+    match detect(dir) {
+        Some("git") => {
+            let (s, u) = (format!("--since=@{since}"), until.map(|u| format!("--until=@{u}")));
+            let mut a = vec!["log", "-n", "400", &s];
+            if let Some(u) = &u { a.push(u); }
+            a.extend(["--format=%x1e%H", "-p", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--", "."]);
+            let (r, pre) = tokio::join!(git_t(dir, &a, 60000), git_prefix(dir));
+            scan_patch(&r.out, &terms, &pre, max)
+        }
+        Some("svn") => {
+            let range = format!("{}:{{{}}}", until.map(|u| format!("{{{}}}", iso_utc(u))).unwrap_or_else(|| "HEAD".into()), iso_utc(since));
+            let r = svn_t(dir, &["log", "-r", &range, "-l", "100", "--diff", "-x", "-U0"], 90000).await;
+            scan_patch(&r.out, &terms, "", max)
+        }
+        _ => vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,6 +683,53 @@ mod tests {
         assert_eq!(f[0].del, Some(1));
     }
 
+    #[test]
+    fn termos_nas_linhas_que_mudaram() {
+        let out = "aaa111
+diff --git a/sub/Pedido.java b/sub/Pedido.java
+--- a/sub/Pedido.java
++++ b/sub/Pedido.java
+@@ -10,2 +10,3 @@ class Pedido {
+-    int total = soma();
+-    return total;
++    BigDecimal total = somaComDesconto();
++    log.info(\"total\");
++    return total;
+bbb222
+diff --git a/fora.txt b/fora.txt
+--- a/fora.txt
++++ b/fora.txt
+@@ -1 +1 @@
+-somaComDesconto
++x
+diff --git a/sub/velho.sql b/sub/velho.sql
+--- a/sub/velho.sql
++++ /dev/null
+@@ -3 +0,0 @@
+-DROP TABLE desconto;
+";
+        let h = scan_patch(out, &["somacomdesconto".into(), "drop table".into()], "sub/", 50);
+        assert_eq!(h.len(), 2, "{h:?}");
+        assert_eq!((h[0].commit.as_str(), h[0].file.as_str(), h[0].line, h[0].sign), ("aaa111", "Pedido.java", 10, '+'));
+        assert_eq!((h[1].commit.as_str(), h[1].file.as_str(), h[1].line, h[1].sign, h[1].term.as_str()), ("bbb222", "velho.sql", 3, '-', "drop table"));
+        // svn log --diff: revisão na linha "r12 | autor | data", arquivo em "Index:"
+        let svn = "------------------------------------------------------------------------
+r12 | ana | 2024-01-02 03:04:05 +0000 (Tue, 02 Jan 2024) | 1 line
+
+msg
+
+Index: src/a.rs
+===================================================================
+--- src/a.rs	(revision 11)
++++ src/a.rs	(revision 12)
+@@ -5 +5 @@
+-let x = 1;
++let x = timeout_ms;
+";
+        let h = scan_patch(svn, &["timeout_ms".into()], "", 50);
+        assert_eq!(h.len(), 1, "{h:?}");
+        assert_eq!((h[0].commit.as_str(), h[0].file.as_str(), h[0].line), ("12", "src/a.rs", 5));
+    }
     #[test]
     fn log_do_svn() {
         let xml = r#"<log><logentry revision="12"><author>ana</author><date>2024-01-02T03:04:05.000000Z</date><msg>corrige &amp; testa

@@ -2,7 +2,20 @@
 
 Cenários de QA no BlueScreen, em Gherkin (Cucumber). É um plugin nativo e só tem interface: usa o índice e a busca do núcleo, a pasta de dados do plugin e o console de Build. Não sobe nenhum servidor.
 
-O painel **QAutils** (`Alt+9`, se nenhum outro plugin usar a tecla) mostra os cenários do projeto.
+O painel **QAutils** (`Alt+9`, se nenhum outro plugin usar a tecla) mostra os cenários do projeto. Com ele escolhido, a área do editor ganha a aba fixa **QAutils**, na primeira posição: o quadro de execução.
+
+## Quadro de execução (aba fixa)
+
+- **Indicadores:** cenários, % executado, passou, falhou, bloqueado e não executado do que está filtrado.
+- **Quadro:** uma coluna por status (Não executado, Passou, Falhou, Bloqueado), com um cartão por cenário: CT, chamado, título, feature, tags, anotação, evidências e a data da execução.
+  - **Arrastar o cartão** para outra coluna muda o status. É o mesmo status do painel e do editor: os três andam juntos.
+  - **Clique** (ou `Enter`) abre a feature na linha do cenário. Clique no chamado abre o link ou copia; clique na tag filtra por ela.
+  - **Botão direito:** status, anotação, relatório de bug, evidências, copiar o cenário, chamado e, em projeto automatizado, executar.
+  - Cada coluna desenha 60 cartões de cada vez (**Mais…** traz os seguintes).
+- **Filtros:** busca (cenário, passo, `@tag`, arquivo ou chamado), chamado, tag e pasta. Um filtro com uma opção só não aparece.
+- **Cobertura:** uma linha por chamado, tag ou pasta, com a barra passou/falhou/bloqueado/não executado e os números. As piores vêm primeiro (mais falhas, mais bloqueios, menos executado). Clique na linha para ver só ela no quadro.
+- **Relatório** e **CSV:** o relatório de evidências e os casos de teste só dos cenários filtrados, na pasta comum das features deles.
+- Em área estreita as colunas se empilham e a tela rola inteira.
 
 ## Bug a partir de um cenário
 
