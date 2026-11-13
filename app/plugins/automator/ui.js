@@ -1112,11 +1112,25 @@ function field(n, f) {
     if (f.code) above = el('div.am-rec-line', el('button.chip.am-ai-btn', { type: 'button', onclick: () => nodeLocked(n.id) ? denied(flowLocked() ? '' : 'node') : scriptAi(n, f, input, set) }, el('span', { html: IC.spark }), el('span', String(cur ?? '').trim() ? 'Editar com IA' : 'Escrever com IA')));
   } else {
     input = el('input', { type: 'text', value: cur ?? '', placeholder: f.placeholder || '', spellcheck: false }); input.oninput = () => set(input.value);
-    if (Array.isArray(f.choices)) {
-      const known = f.choices.some(c => c.value === cur);
-      const sel = el('select', { 'aria-label': f.label }, f.choices.map(c => el('option', { value: c.value, selected: c.value === cur }, c.label)), el('option', { value: '\u0001', selected: !known }, 'Outro…'));
-      input.hidden = known;
+    // escolhas fixas (`choices`) ou pedidas a uma rota de plugin (`choicesFrom`, que devolve { choices: [{ value, label }] })
+    if (Array.isArray(f.choices) || f.choicesFrom) {
+      const sel = el('select', { 'aria-label': f.label });
+      let shown = [];
+      const fill = (list, loading) => {
+        shown = list;
+        const v = input.value, known = list.some(c => c.value === v), none = !v && !loading && list.length > 0;
+        sel.replaceChildren(...(none ? [el('option', { value: '', selected: true, disabled: true }, 'Escolha…')] : []), ...(loading && !v ? [el('option', { value: '', selected: true, disabled: true }, 'Carregando…')] : []),
+          ...list.map(c => el('option', { value: c.value, selected: c.value === v }, c.label)), el('option', { value: '\u0001', selected: !known && !none && !(loading && !v) }, 'Outro…'));
+        input.hidden = known || none || (loading && !v);
+      };
+      fill(f.choices || [], !!f.choicesFrom);
+      if (f.choicesFrom) {
+        const [route, qs] = String(f.choicesFrom).split('?');
+        bs.api(route, Object.fromEntries(new URLSearchParams(qs || '')), { quiet: true }).then(r => fill([...(f.choices || []), ...((r && r.choices) || [])])).catch(() => fill(f.choices || []));
+      }
       sel.onchange = () => { if (sel.value === '\u0001') { input.hidden = false; input.focus(); } else { input.hidden = true; input.value = sel.value; set(sel.value); } };
+      // "+ dado" escreve no campo escondido: um valor fora da lista mostra o campo com "Outro…"
+      input.addEventListener('input', () => { if (input.hidden && !shown.some(c => c.value === input.value)) { input.hidden = false; sel.value = '\u0001'; } });
       wrap = el('div.am-choice', sel, input);
     }
   }

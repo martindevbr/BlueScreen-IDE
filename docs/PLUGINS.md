@@ -31,7 +31,7 @@ Cada pasta tem:
 | Arquivo | |
 |---|---|
 | `plugin.json` | `{ "id", "name", "description", "version", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }` |
-| `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
+| `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Um campo com `"choicesFrom": "<id>/<rota>"` vira uma lista preenchida por uma rota do servidor do plugin (`{ choices: [{ value, label }] }`). Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
 | `bs.footer.set(id, { icon, text, title, run })` | um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso); `bs.footer.remove(id)` tira. Janela registrada com `footer: true` em `bs.bubble.register` é a janela de um item do rodapé: não entra na lista do balão, não ganha ícone nem cartão no Estúdio e abre no meio da tela |
 | `icon.svg` ou `icon.png` (opcional) | o ícone na aba Plugins e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
 | `ui.js` (opcional) | roda na página dentro de `function (bs, plugin) { ... }` e enxerga tudo do núcleo (`S`, `api`, `$`, `esc`, `toast`, `store`, `I`, `TI`, `monaco`, `editor`, `openFile`, `openTool`...) |
