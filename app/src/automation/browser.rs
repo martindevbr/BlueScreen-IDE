@@ -19,25 +19,28 @@ pub(super) fn catalog() -> Value {
     // (ação, nome, grupo): o grupo dá a cor da etiqueta na lista de passos
     let actions: Vec<Value> = [("click", "Clicar", "act"), ("type", "Digitar", "act"), ("select", "Escolher opção", "act"), ("check", "Marcar ou desmarcar", "act"), ("key", "Apertar tecla", "act"), ("hover", "Passar o mouse", "act"),
         ("upload", "Enviar arquivo", "act"), ("scroll", "Rolar a página", "act"), ("goto", "Ir para endereço", "act"), ("back", "Voltar uma página", "act"), ("tab", "Ir para a aba que abriu", "act"), ("js", "Rodar JavaScript", "act"),
-        ("read", "Ler campo (devolver)", "read"), ("list", "Ler todos (lista)", "read"), ("shot", "Capturar tela", "read"),
-        ("wait", "Esperar aparecer", "wait"), ("gone", "Esperar sumir", "wait"), ("sleep", "Esperar (segundos)", "wait"),
+        ("read", "Ler campo (devolver)", "read"), ("list", "Ler todos (lista)", "read"), ("table", "Ler tabela", "read"), ("page", "Ler o texto da página", "read"), ("shot", "Capturar tela", "read"),
+        ("wait", "Esperar aparecer", "wait"), ("gone", "Esperar sumir", "wait"), ("idle", "Esperar a página carregar", "wait"), ("sleep", "Esperar (segundos)", "wait"),
+        ("ask", "Pedir para você digitar", "wait"), ("pause", "Esperar você continuar", "wait"),
         ("text", "Conferir texto", "check"), ("see", "Conferir que aparece", "check"), ("url", "Conferir endereço", "check"), ("title", "Conferir título", "check"), ("count", "Conferir quantidade", "check")]
         .iter().map(|(v, l, t)| json!({"value": v, "label": l, "tone": t})).collect();
     json!([
         {"type":"browser.run","name":"Navegador","category":"Navegador","desc":"Abre um site e faz por você: clica, digita, lê, confere. Os nós Navegador de um fluxo continuam na mesma página, do começo ao fim.","inputs":["in"],"outputs":["out"],
-         "params":{"url":"","steps":[],"show":"yes","profile":"keep","device":"desktop","after":"close","wait_s":15},
+         "params":{"url":"","steps":[],"show":"yes","profile":"keep","device":"desktop","speed":"normal","after":"close","wait_s":15},
          "fields":[
             {"name":"url","label":"Endereço","kind":"text","placeholder":"https://… (vazio: continua na página em que o nó anterior parou)"},
             {"name":"steps","label":"Passos","kind":"rows","add":"Passo","recorder":true,
-             "help":"Gravar abre o site: use ele normalmente e cada ação vira um passo. Onde: um seletor CSS (#senha, .botao) ou texto=Entrar para achar pelo texto. Em Ler campo, o valor é o nome do campo na saída. Senhas: {{cred:nome}}, guardadas em Credenciais.",
+             "help":"Gravar abre o site: use ele normalmente e cada ação vira um passo. Onde: texto=Entrar acha pelo texto da tela; rotulo=Tempo de resposta acha o valor ao lado desse texto. Nos passos de leitura, o valor é o nome do campo na saída. Senhas: {{cred:nome}}. Se não achar, pula: para o que nem sempre aparece (o login, um aviso de cookies). Pedir para você digitar: o fluxo para e mostra a pergunta do valor (o código do celular, por exemplo).",
              "columns":[
                 {"name":"do","kind":"select","options":actions},
-                {"name":"on","placeholder":"Onde: #id ou texto=Entrar","hide":{"do":["key","goto","sleep","shot","url","title","back","tab"]}},
-                {"name":"value","placeholder":"Valor","hide":{"do":["click","wait","see","gone","hover","back","tab"]}}
+                {"name":"on","placeholder":"Onde: texto=Entrar","hide":{"do":["key","goto","sleep","shot","url","title","back","tab","idle","pause"]}},
+                {"name":"value","placeholder":"Valor","hide":{"do":["click","wait","see","gone","hover","back","tab","idle"]}},
+                {"name":"opt","kind":"select","options":[{"value":"","label":"Tem que achar"},{"value":"skip","label":"Se não achar, pula"}],"hide":{"do":["goto","sleep","key","back","idle","pause","shot","tab","js"]}}
              ]},
             {"name":"show","label":"Janela do navegador","kind":"select","options":[{"value":"yes","label":"Mostrar"},{"value":"no","label":"Não mostrar"}]},
             {"name":"profile","label":"Sessão","kind":"select","options":[{"value":"keep","label":"Lembrar dos logins entre as execuções"},{"value":"clean","label":"Começar sempre do zero (sem cookies)"}],"help":"Vale o que o primeiro nó Navegador do fluxo pedir."},
             {"name":"device","label":"Tela","kind":"select","options":[{"value":"desktop","label":"Computador (1280 × 900)"},{"value":"wide","label":"Monitor grande (1920 × 1080)"},{"value":"tablet","label":"Tablet (820 × 1180)"},{"value":"phone","label":"Celular (390 × 844)"}]},
+            {"name":"speed","label":"Velocidade","kind":"select","options":[{"value":"normal","label":"Normal"},{"value":"fast","label":"Rápida (não baixa imagens, vídeos nem fontes)"}],"help":"A rápida serve para ler dados de painéis pesados. Se o site mostrar imagem para confirmar que você é uma pessoa, use a normal. Vale o que o primeiro nó Navegador do fluxo pedir."},
             {"name":"after","label":"Quando o fluxo terminar","kind":"select","show":{"show":["yes"]},"options":[{"value":"close","label":"Fechar o navegador"},{"value":"keep","label":"Deixar aberto"}]},
             {"name":"wait_s","label":"Esperar cada elemento por até (segundos)","kind":"number","min":1,"max":300}
          ],
@@ -46,25 +49,100 @@ pub(super) fn catalog() -> Value {
 }
 pub(super) fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
     (kind == "browser.run").then(|| ("Qualquer dado, para usar no endereço e nos passos com {{input}}.",
-        "Objeto com o endereço final, o título da página e o que os passos Ler campo e Ler todos guardaram (em values).",
-        json!({"url": "https://exemplo.com/conta", "title": "Minha conta", "values": {"saldo": "R$ 120,00"}})))
+        "Objeto com o endereço final, o título da página e o que os passos de leitura guardaram (em values): Ler campo dá um texto, Ler todos uma lista de textos, Ler tabela uma lista de objetos (um por linha, com os títulos das colunas como campos) e Ler o texto da página o texto inteiro.",
+        json!({"url": "https://exemplo.com/conta", "title": "Minha conta", "values": {"saldo": "R$ 120,00", "tabela": [{"Serviço": "checkout", "Tempo de resposta": "120 ms"}]}, "skipped": []})))
 }
 
 // Procura o elemento na página. "texto=Entrar" acha pelo texto visível (botões e links primeiro); o resto é seletor CSS.
+// Primeiro olha a página; se não achar, entra nos componentes (shadow DOM aberto) e nos quadros (iframes) da mesma
+// origem, que é onde os painéis de aplicações grandes costumam morar.
 const FIND: &str = r#"(sel) => {
-  const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
+  const roots = () => { const out = []; const walk = (root) => { out.push(root); for (const e of root.querySelectorAll('*')) { if (e.shadowRoot) walk(e.shadowRoot); else if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') { try { if (e.contentDocument && e.contentDocument.documentElement) walk(e.contentDocument); } catch (x) { } } } }; walk(document); return out; };
+  let deepRoots = null;
+  const rootsOf = (deep) => deep ? (deepRoots || (deepRoots = roots())) : [document];
+  const all = (q, deep) => { if (!deep) return [...document.querySelectorAll(q)]; const out = []; for (const r of rootsOf(true)) { try { out.push(...r.querySelectorAll(q)); } catch (x) { } } return out; };
+  const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && ((e.ownerDocument && e.ownerDocument.defaultView) || window).getComputedStyle(e).visibility !== 'hidden'; };
+  // rotulo=Tempo de resposta: o valor que fica ao lado de um texto fixo da tela (o campo do rótulo, a célula seguinte, o próximo texto)
+  const rl = /^r[oó]tulo\s*=\s*(.+)$/i.exec(sel);
+  if (rl) {
+    const n = (t) => String(t || '').trim().replace(/\s+/g, ' ').replace(/:$/, '').toLowerCase(), want = n(rl[1]);
+    const leaf = (e) => ![...e.children].some((c) => (c.innerText || '').trim());
+    const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const near = (root) => {
+      for (const L of root.querySelectorAll('label,dt,th,td,span,div,p,strong,b,h3,h4,h5,h6')) {
+        if ((L.textContent || '').length > 200 || !leaf(L) || n(L.innerText) !== want || !vis(L)) continue;
+        if (L.htmlFor && root.getElementById && root.getElementById(L.htmlFor)) return root.getElementById(L.htmlFor);
+        if (L.id) { const x = root.querySelector('[aria-labelledby~="' + CSS.escape(L.id) + '"]'); if (x) return x; }
+        for (let A = L.parentElement, up = 0; A && up < 4; A = A.parentElement, up++)
+          for (const e of A.querySelectorAll('*'))
+            if ((L.compareDocumentPosition(e) & 4) && !L.contains(e) && vis(e) && (/^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName) || (leaf(e) && n(e.innerText) && n(e.innerText) !== want))) return e;
+      }
+      return null;
+    };
+    for (const deep of [false, true]) for (const r of rootsOf(deep)) { const v = near(r); if (v) return v; }
+    return null;
+  }
   const m = /^texto\s*=\s*(.+)$/i.exec(sel);
-  if (!m) { const list = [...document.querySelectorAll(sel)]; return list.find(seen) || list[0] || null; }
-  const want = m[1].trim().toLowerCase();
+  if (!m) { for (const deep of [false, true]) { const list = all(sel, deep); const hit = list.find(seen) || list[0]; if (hit) return hit; } return null; }
+  const want = m[1].trim().replace(/\s+/g, ' ').toLowerCase();
   const label = (e) => [e.innerText, e.value, e.getAttribute('aria-label'), e.getAttribute('placeholder'), e.getAttribute('title'), e.getAttribute('name')].filter(x => typeof x === 'string').map(x => x.trim().replace(/\s+/g, ' ').toLowerCase());
-  const groups = ['button, a, input[type=submit], input[type=button], [role=button], [role=link], [role=tab], [role=menuitem]', 'input, textarea, select, label, summary', 'h1, h2, h3, h4, li, td, th, span, p, div'];
-  for (const exact of [true, false]) for (const g of groups) {
-    const hit = [...document.querySelectorAll(g)].filter(seen).filter(e => label(e).some(t => exact ? t === want : t.includes(want)));
-    if (hit.length) return hit.sort((a, b) => a.innerText.length - b.innerText.length)[0];
+  const groups = ['button, a, input[type=submit], input[type=button], [role=button], [role=link], [role=tab], [role=menuitem], [role=option], [role=checkbox], [role=switch], [role=treeitem]', 'input, textarea, select, label, summary', 'h1, h2, h3, h4, li, td, th, span, p, div'];
+  // o texto exato vale mais que o parecido, esteja na página ou dentro de um quadro
+  for (const exact of [true, false]) for (const deep of [false, true]) for (const g of groups) {
+    const hit = all(g, deep).filter(e => (e.textContent || '').length < 2000 && label(e).some(t => exact ? t === want : t.includes(want)) && seen(e));
+    // o mais de dentro: a caixa em volta de um botão tem o mesmo texto que ele
+    if (hit.length) return hit.filter(e => !hit.some(o => o !== e && e.contains(o))).sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0];
   }
   return null;
 }"#;
-const TEXT_OF: &str = "String('value' in el && el.value !== undefined && el.tagName !== 'LI' ? el.value : el.innerText || el.textContent || '').trim()";
+// Todos os elementos que casam com o seletor: os da página ou, se ela não tiver nenhum, os de dentro dos componentes e quadros.
+const ALL: &str = r#"(q) => {
+  const first = [...document.querySelectorAll(q)]; if (first.length) return first;
+  const out = []; const walk = (root, self) => { if (self) { try { out.push(...root.querySelectorAll(q)); } catch (x) { } } for (const e of root.querySelectorAll('*')) { if (e.shadowRoot) walk(e.shadowRoot, true); else if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') { try { if (e.contentDocument && e.contentDocument.documentElement) walk(e.contentDocument, true); } catch (x) { } } } };
+  walk(document, false);
+  return out;
+}"#;
+// A tabela (ou grade) como lista de objetos: os títulos das colunas viram os nomes dos campos. `el`: a tabela, algo
+// dentro dela ou em volta dela; sem `el`, a maior tabela à vista.
+const TABLE: &str = r#"(el, all) => {
+  const Q = 'table, [role=grid], [role=table], [role=treegrid]';
+  const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const rowsOf = (t) => [...t.querySelectorAll('tr, [role=row]')].filter(r => r.closest(Q) === t);
+  const t = el ? (el.closest(Q) || el.querySelector(Q)) : all(Q).filter(shown).sort((a, b) => rowsOf(b).length - rowsOf(a).length)[0];
+  if (!t) return { missing: true };
+  const txt = (c) => (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+  const rows = rowsOf(t).map(r => ({ head: !!r.querySelector('th, [role=columnheader]') && !r.querySelector('td, [role=cell], [role=gridcell]'), cells: [...r.querySelectorAll('th, td, [role=columnheader], [role=cell], [role=gridcell], [role=rowheader]')].filter(c => c.closest('tr, [role=row]') === r).map(txt) })).filter(r => r.cells.length);
+  if (!rows.length) return { rows: [] };
+  const first = rows[0].head ? rows.shift().cells : rows[0].cells.map(() => '');
+  const names = []; first.forEach((h, i) => { let n = h || 'coluna' + (i + 1); while (names.includes(n)) n += ' ' + (i + 1); names.push(n); });
+  return { rows: rows.filter(r => !r.head).map(r => Object.fromEntries(r.cells.map((c, i) => [names[i] || 'coluna' + (i + 1), c]))) };
+}"#;
+// A caixa do passo em que a pessoa participa: fica por cima do site (em shadow DOM, para o CSS dele não mexer) e
+// guarda a resposta em window.__bsAsk. `field`: com campo de digitar; sem ele, só o botão Continuar. Chamada de novo
+// (a cada sondagem), só devolve o estado; se a página trocou, a caixa volta.
+const ASK: &str = r#"(text, field) => {
+  const st = window.__bsAsk || (window.__bsAsk = { done: false, value: '' });
+  if (st.done) { const h = document.getElementById('bs-ask'); if (h) h.remove(); return st; }
+  if (document.getElementById('bs-ask') || !document.documentElement) return st;
+  const host = document.createElement('div'); host.id = 'bs-ask';
+  host.style.cssText = 'all:initial;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483647;';
+  const sh = host.attachShadow({ mode: 'open' });
+  sh.innerHTML = '<style>.box{display:flex;flex-direction:column;gap:10px;width:min(420px,86vw);padding:14px 16px;border-radius:14px;background:#14161cf7;color:#e6e8ee;font:14px "Segoe UI",system-ui,sans-serif;box-shadow:0 14px 40px rgba(0,0,0,.5),0 0 0 2px #4c8dff}' +
+    '.top{display:flex;align-items:center;gap:8px;color:#9fb7ff;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}.dot{width:9px;height:9px;border-radius:50%;background:#4c8dff;animation:p 1.4s infinite}@keyframes p{50%{opacity:.35}}' +
+    'p{margin:0;line-height:1.4;white-space:pre-wrap}form{display:flex;gap:8px}input{all:unset;flex:1;min-width:0;padding:9px 11px;border-radius:9px;background:#fff;color:#111;font:16px "Segoe UI",system-ui,sans-serif}' +
+    'button{all:unset;cursor:pointer;padding:9px 16px;border-radius:9px;background:#4c8dff;color:#fff;font-weight:600;text-align:center}button:hover{background:#6aa0ff}</style>' +
+    '<div class="box"><div class="top"><span class="dot"></span><span>O fluxo está esperando você</span></div><p></p><form><input autocomplete="off"><button type="submit"></button></form></div>';
+  sh.querySelector('p').textContent = text;
+  const input = sh.querySelector('input'), form = sh.querySelector('form');
+  sh.querySelector('button').textContent = field ? 'Enviar' : 'Continuar';
+  if (!field) input.remove();
+  form.addEventListener('submit', (e) => { e.preventDefault(); if (field && !input.value.trim()) { input.focus(); return; } st.value = field ? input.value : ''; st.done = true; host.remove(); });
+  for (const k of ['keydown', 'keyup', 'keypress']) host.addEventListener(k, (e) => e.stopPropagation());
+  document.documentElement.appendChild(host);
+  if (field) setTimeout(() => input.focus(), 50);
+  return st;
+}"#;
+const TEXT_OF: &str = "String(/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el.value : el.innerText || el.textContent || '').trim()";
 const RECORDER: &str = include_str!("recorder.js");
 /// tecla -> (key, código, texto que ela digita)
 fn key_of(name: &str) -> Option<(&'static str, u32, &'static str)> {
@@ -77,7 +155,7 @@ fn key_of(name: &str) -> Option<(&'static str, u32, &'static str)> {
 }
 fn action_name(k: &str) -> &'static str {
     match k { "goto" => "Ir para", "click" => "Clicar", "type" => "Digitar", "wait" => "Esperar aparecer", "read" => "Ler campo", "list" => "Ler todos", "key" => "Apertar tecla", "sleep" => "Esperar", "shot" => "Capturar tela",
-        "select" => "Escolher opção", "check" => "Marcar ou desmarcar", "hover" => "Passar o mouse", "upload" => "Enviar arquivo", "scroll" => "Rolar a página", "back" => "Voltar", "tab" => "Ir para a aba que abriu", "js" => "Rodar JavaScript",
+        "table" => "Ler tabela", "page" => "Ler o texto da página", "idle" => "Esperar a página carregar", "ask" => "Pedir para você digitar", "pause" => "Esperar você continuar", "select" => "Escolher opção", "check" => "Marcar ou desmarcar", "hover" => "Passar o mouse", "upload" => "Enviar arquivo", "scroll" => "Rolar a página", "back" => "Voltar", "tab" => "Ir para a aba que abriu", "js" => "Rodar JavaScript",
         "see" => "Conferir que aparece", "gone" => "Esperar sumir", "text" => "Conferir texto", "url" => "Conferir endereço", "title" => "Conferir título", "count" => "Conferir quantidade", _ => "Passo" }
 }
 fn device(name: &str) -> (u32, u32, bool) { match name { "wide" => (1920, 1080, false), "tablet" => (820, 1180, true), "phone" => (390, 844, true), _ => (1280, 900, false) } }
@@ -109,7 +187,7 @@ impl Cdp {
                 let Ok(v) = serde_json::from_str::<Value>(text) else { continue };
                 if let Some(id) = v["id"].as_u64() {
                     if let Some(tx) = w.lock().remove(&id) { let _ = tx.send(if v["error"].is_null() { Ok(v["result"].clone()) } else { Err(v["error"]["message"].as_str().unwrap_or("erro do navegador").to_string()) }); }
-                } else if v["method"].is_string() { let _ = ev.send(v); }
+                } else if v["method"].as_str().is_some_and(|m| !m.starts_with("Network.")) { let _ = ev.send(v); }
             }
             alive.store(false, Ordering::Relaxed);
             w.lock().clear();
@@ -150,14 +228,21 @@ impl Cdp {
         let mut ev = self.events.subscribe();
         let r = self.send("Page.navigate", json!({"url": to})).await?;
         if let Some(e) = r["errorText"].as_str().filter(|e| !e.is_empty()) { return Err(fail(format!("o endereço não abriu ({e})"), 422)); }
-        let loaded = async { loop { match ev.recv().await { Ok(v) if v["method"] == "Page.loadEventFired" => break, Err(tokio::sync::broadcast::error::RecvError::Closed) => break, _ => {} } } };
-        let _ = tokio::time::timeout(Duration::from_secs(30), loaded).await;
+        if r["loaderId"].is_null() { tokio::time::sleep(Duration::from_millis(150)).await; return Ok(()); }
+        // segue assim que a página está montada; quem ainda carrega imagens e painéis ganha mais um instante, não 30 s:
+        // cada passo já espera o elemento dele aparecer
+        let ready = async { loop { match ev.recv().await { Ok(v) if v["method"] == "Page.loadEventFired" => break true, Ok(v) if v["method"] == "Page.domContentEventFired" => break false, Err(tokio::sync::broadcast::error::RecvError::Closed) => break true, _ => {} } } };
+        let done = tokio::time::timeout(Duration::from_secs(30), ready).await.unwrap_or(true);
+        if !done {
+            let loaded = async { loop { match ev.recv().await { Ok(v) if v["method"] == "Page.loadEventFired" => break, Err(tokio::sync::broadcast::error::RecvError::Closed) => break, _ => {} } } };
+            let _ = tokio::time::timeout(Duration::from_millis(2500), loaded).await;
+        }
         Ok(())
     }
     /// Depois de um clique ou de uma tecla: dá tempo de a página reagir (ou trocar) antes do próximo passo.
     async fn settle(&self) {
-        tokio::time::sleep(Duration::from_millis(350)).await;
-        for _ in 0..40 { if self.eval("document.readyState").await.is_ok_and(|v| v != "loading") { return; } tokio::time::sleep(Duration::from_millis(150)).await; }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        for _ in 0..100 { if self.eval("document.readyState").await.is_ok_and(|v| v != "loading") { return; } tokio::time::sleep(Duration::from_millis(60)).await; }
     }
     async fn shot(&self) -> ApiResult<Vec<u8>> {
         let r = self.send("Page.captureScreenshot", json!({"format": "png"})).await?;
@@ -177,13 +262,13 @@ async fn launch(profile: &Path, hidden: bool, size: (u32, u32)) -> ApiResult<u16
     let _ = std::fs::remove_file(&port_file);
     let exe = find_browser().ok_or_else(|| fail("não achei o Microsoft Edge nem o Google Chrome neste PC", 404))?;
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg(format!("--user-data-dir={}", profile.display())).args(["--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--disable-search-engine-choice-screen"]).arg(format!("--window-size={},{}", size.0, size.1));
+    cmd.arg(format!("--user-data-dir={}", profile.display())).args(["--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--disable-search-engine-choice-screen", "--disable-sync", "--disable-component-update", "--disable-background-networking"]).arg(format!("--window-size={},{}", size.0, size.1));
     if hidden { cmd.arg("--headless=new"); }
     cmd.arg("about:blank").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     cmd.spawn().map_err(|e| fail(format!("não deu para abrir o navegador: {e}"), 500))?;
-    for _ in 0..120 {
+    for _ in 0..360 {
         if let Some(p) = read_port() && alive(p).await { return Ok(p); }
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     Err(fail("o navegador não abriu a porta de controle. Feche as janelas dele abertas pelo Automator e tente de novo.", 500))
 }
@@ -210,12 +295,18 @@ impl Session {
     async fn open(p: &Value) -> ApiResult<Session> {
         let hidden = p["show"] == "no";
         let clean = (p["profile"] == "clean").then(|| std::env::temp_dir().join(format!("bluescreen-navegador-{}", super::id())));
-        let profile = clean.clone().unwrap_or_else(|| data_dir().join(if hidden { "perfil-oculto" } else { "perfil" }));
+        let profile = clean.clone().unwrap_or_else(|| data_dir().join("perfil"));
         let dev = device(p["device"].as_str().unwrap_or("desktop"));
         let port = launch(&profile, hidden, (dev.0, dev.1)).await?;
         let (cdp, target) = new_tab(port).await?;
         if p["device"].as_str().is_some_and(|d| d != "desktop") {
             let _ = cdp.send("Emulation.setDeviceMetricsOverride", json!({"width": dev.0, "height": dev.1, "deviceScaleFactor": if dev.2 { 2 } else { 1 }, "mobile": dev.2})).await;
+        }
+        if p["speed"] == "fast" {
+            let _ = cdp.send("Network.enable", json!({"maxTotalBufferSize": 0, "maxResourceBufferSize": 0})).await;
+            let ext = ["png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3"];
+            let urls: Vec<String> = ext.iter().flat_map(|e| [format!("*.{e}"), format!("*.{e}?*")]).collect();
+            let _ = cdp.send("Network.setBlockedURLs", json!({"urls": urls})).await;
         }
         let _ = cdp.send("Page.bringToFront", json!({})).await;
         Ok(Session { port, hidden, clean, cdp: Mutex::new(cdp), target: Mutex::new(target), keep: AtomicBool::new(false) })
@@ -254,7 +345,7 @@ impl Steps {
             if self.cdp.call(sel, "const b = el.getBoundingClientRect(); return { ok: b.width > 0 && b.height > 0 };").await.is_ok_and(|r| r["ok"] == true) { return Ok(()); }
             if !self.cdp.open.load(Ordering::Relaxed) { return Err(closed()); }
             if Instant::now() > end { return Err(fail(format!("não apareceu em {} s", self.wait.as_secs()), 408)); }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(80)).await;
         }
     }
     /// Repete a leitura até `ok` valer ou o tempo acabar; devolve o que viu por último e se valeu.
@@ -265,7 +356,30 @@ impl Steps {
             if let Ok(v) = self.cdp.eval(expr).await { if ok(&v) { return Ok((v, true)); } seen = v; }
             if !self.cdp.open.load(Ordering::Relaxed) { return Err(closed()); }
             if Instant::now() > end { return Ok((seen, false)); }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    /// Limpa o campo pelo setter nativo (React e afins percebem) e digita como o teclado faria.
+    async fn type_into(&self, on: &str, value: &str) -> ApiResult<()> {
+        self.cdp.call(on, "el.scrollIntoView({ block: 'center' }); el.focus(); if ('value' in el) { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value'); d && d.set ? d.set.call(el, '') : (el.value = ''); el.dispatchEvent(new Event('input', { bubbles: true })); } else if (el.isContentEditable) el.textContent = ''; return {};").await?;
+        self.cdp.send("Input.insertText", json!({"text": value})).await?;
+        Ok(())
+    }
+    /// Para o fluxo e espera a pessoa: com `field`, ela digita um valor (o código do celular); sem, só clica em
+    /// Continuar depois de fazer à mão o que o site pediu. Espera até dez minutos.
+    async fn ask(&self, text: &str, field: bool, session: &Session) -> ApiResult<String> {
+        if session.hidden { return Err(fail("este passo precisa de você na frente do navegador: em Janela do navegador, escolha Mostrar", 400)); }
+        let _ = self.cdp.eval("delete window.__bsAsk").await;
+        let _ = self.cdp.send("Page.bringToFront", json!({})).await;
+        super::notify("O fluxo está esperando você", text);
+        let expr = format!("({ASK})({}, {field})", json!(text));
+        let end = Instant::now() + Duration::from_secs(600);
+        loop {
+            // a página pode trocar enquanto a pessoa age (um login que redireciona): a caixa volta na próxima sondagem
+            if let Ok(v) = self.cdp.eval(&expr).await && v["done"] == true { let _ = self.cdp.eval("delete window.__bsAsk").await; return Ok(v["value"].as_str().unwrap_or("").to_string()); }
+            if !self.cdp.open.load(Ordering::Relaxed) { return Err(closed()); }
+            if Instant::now() > end { let _ = self.cdp.eval("document.getElementById('bs-ask')?.remove()").await; return Err(fail("ninguém respondeu em dez minutos", 408)); }
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
     async fn step(&mut self, s: &Value, n: usize, session: &Session) -> ApiResult<()> {
@@ -306,15 +420,44 @@ impl Steps {
                 if !ok { return Err(fail(format!("continua na tela depois de {} s", self.wait.as_secs()), 422)); }
             }
             "count" => {
-                if on.to_lowercase().starts_with("texto") { return Err(fail("para contar, use um seletor CSS (ex.: .item, table tr)", 400)); }
+                if ["texto", "rotulo", "rótulo"].iter().any(|k| on.to_lowercase().starts_with(k)) { return Err(fail("para contar, use um seletor CSS (ex.: .item, table tr)", 400)); }
                 let want = value.trim().parse::<u64>().map_err(|_| fail("diga quantos devem existir (um número)", 400))?;
-                let (seen, ok) = self.until(&format!("document.querySelectorAll({}).length", json!(on)), |v| v.as_u64() == Some(want)).await?;
+                let (seen, ok) = self.until(&format!("({ALL})({}).length", json!(on)), |v| v.as_u64() == Some(want)).await?;
                 if !ok { return Err(fail(format!("esperava {want}, mas há {}", seen.as_u64().unwrap_or(0)), 422)); }
             }
             "list" => {
-                if on.is_empty() || on.to_lowercase().starts_with("texto") { return Err(fail("para ler todos, use um seletor CSS (ex.: .item, table tr)", 400)); }
-                let v = self.cdp.eval(&format!("[...document.querySelectorAll({})].map(el => {TEXT_OF}.replace(/\\s+/g, ' '))", json!(on))).await?;
+                if on.is_empty() || ["texto", "rotulo", "rótulo"].iter().any(|k| on.to_lowercase().starts_with(k)) { return Err(fail("para ler todos, use um seletor CSS (ex.: .item, table tr)", 400)); }
+                // painel que ainda está montando a lista: espera o primeiro item por uns segundos (lista vazia de verdade segue vazia)
+                let expr = format!("({ALL})({}).map(el => {TEXT_OF}.replace(/\\s+/g, ' '))", json!(on));
+                let end = Instant::now() + self.wait.min(Duration::from_secs(4));
+                let v = loop {
+                    let v = self.cdp.eval(&expr).await;
+                    if v.as_ref().is_ok_and(|v| v.as_array().is_some_and(|a| !a.is_empty())) || Instant::now() > end { break v?; }
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                };
                 self.values.insert(if value.trim().is_empty() { format!("lista{n}") } else { value.trim().to_string() }, v);
+            }
+            "table" => {
+                if !on.is_empty() { self.appear(&on).await?; }
+                let expr = if on.is_empty() { format!("({TABLE})(null, {ALL})") } else { format!("(() => {{ const el = ({FIND})({}); return el ? ({TABLE})(el, {ALL}) : null; }})()", json!(on)) };
+                // a tabela aparece antes das linhas: espera até ter pelo menos uma
+                let (seen, _) = self.until(&expr, |v| v["rows"].as_array().is_some_and(|a| !a.is_empty())).await?;
+                if seen["missing"] == true || seen.is_null() { return Err(fail(if on.is_empty() { "não achei nenhuma tabela nesta página" } else { "não há uma tabela nesse lugar da página" }, 422)); }
+                self.values.insert(if value.trim().is_empty() { "tabela".to_string() } else { value.trim().to_string() }, seen["rows"].clone());
+            }
+            "page" => {
+                if !on.is_empty() { self.appear(&on).await?; }
+                let expr = if on.is_empty() {
+                    "(() => { const parts = [document.body ? document.body.innerText : '']; const walk = (d) => { for (const f of d.querySelectorAll('iframe, frame')) { try { if (f.contentDocument && f.contentDocument.body) { parts.push(f.contentDocument.body.innerText); walk(f.contentDocument); } } catch (x) { } } }; walk(document); return parts.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 200000); })()".to_string()
+                } else { format!("(() => {{ const el = ({FIND})({}); return el ? String(el.innerText || el.textContent || '').trim().slice(0, 200000) : ''; }})()", json!(on)) };
+                let (seen, _) = self.until(&expr, |v| v.as_str().is_some_and(|t| !t.trim().is_empty())).await?;
+                self.values.insert(if value.trim().is_empty() { "pagina".to_string() } else { value.trim().to_string() }, json!(seen.as_str().unwrap_or("")));
+            }
+            "pause" => { self.ask(if value.trim().is_empty() { "Faça o que o site pede e clique em Continuar." } else { value.trim() }, false, session).await?; self.cdp.settle().await; }
+            "idle" => {
+                // nada entrou, saiu nem apareceu na tela por quase um segundo: o painel terminou de montar
+                let max = self.wait.as_millis().min(50_000);
+                let _ = self.cdp.eval(&format!("new Promise((res) => {{ let t; const done = () => {{ mo.disconnect(); res(true); }}; const kick = () => {{ clearTimeout(t); t = setTimeout(done, 800); }}; const mo = new MutationObserver(kick); const watch = (d) => {{ try {{ mo.observe(d.documentElement, {{ subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'aria-busy', 'aria-hidden'] }}); for (const f of d.querySelectorAll('iframe, frame')) {{ try {{ if (f.contentDocument && f.contentDocument.documentElement) watch(f.contentDocument); }} catch (x) {{ }} }} }} catch (x) {{ }} }}; watch(document); kick(); setTimeout(done, {max}); }})")).await;
             }
             "js" => {
                 if value.trim().is_empty() { return Err(fail("escreva o JavaScript no valor (use return para devolver algo)", 400)); }
@@ -342,17 +485,17 @@ impl Steps {
                 self.appear(&on).await?;
                 match k {
                     "wait" | "see" => {}
-                    "click" => { self.cdp.call(&on, "el.scrollIntoView({ block: 'center' }); el.click(); return {};").await?; self.cdp.settle().await; }
+                    "click" => { self.cdp.call(&on, "el.scrollIntoView({ block: 'center' }); const b = el.getBoundingClientRect(); const o = { bubbles: true, cancelable: true, composed: true, view: el.ownerDocument.defaultView, button: 0, buttons: 1, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, pointerId: 1, pointerType: 'mouse', isPrimary: true }; try { el.dispatchEvent(new PointerEvent('pointerdown', o)); el.dispatchEvent(new MouseEvent('mousedown', o)); if (el.focus) el.focus(); el.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 })); el.dispatchEvent(new MouseEvent('mouseup', { ...o, buttons: 0 })); } catch (x) { } el.click(); return {};").await?; self.cdp.settle().await; }
                     "scroll" => { self.cdp.call(&on, "el.scrollIntoView({ block: 'center' }); return {};").await?; }
                     "hover" => {
-                        let r = self.cdp.call(&on, "el.scrollIntoView({ block: 'center' }); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 };").await?;
+                        let r = self.cdp.call(&on, "el.scrollIntoView({ block: 'center' }); const b = el.getBoundingClientRect(); let x = b.left + b.width / 2, y = b.top + b.height / 2; for (let w = el.ownerDocument.defaultView; w && w.frameElement; w = w.parent) { const f = w.frameElement.getBoundingClientRect(); x += f.left; y += f.top; } return { x, y };").await?;
                         self.cdp.send("Input.dispatchMouseEvent", json!({"type": "mouseMoved", "x": r["x"], "y": r["y"]})).await?;
                         tokio::time::sleep(Duration::from_millis(250)).await;
                     }
-                    "type" => {
-                        // limpa pelo setter nativo (React e afins percebem) e digita como o teclado faria
-                        self.cdp.call(&on, "el.scrollIntoView({ block: 'center' }); el.focus(); if ('value' in el) { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value'); d && d.set ? d.set.call(el, '') : (el.value = ''); el.dispatchEvent(new Event('input', { bubbles: true })); } else if (el.isContentEditable) el.textContent = ''; return {};").await?;
-                        self.cdp.send("Input.insertText", json!({"text": value})).await?;
+                    "type" => self.type_into(&on, &value).await?,
+                    "ask" => {
+                        let typed = self.ask(if value.trim().is_empty() { "Digite o valor para continuar:" } else { value.trim() }, true, session).await?;
+                        self.type_into(&on, &typed).await?;
                     }
                     "select" => {
                         let r = self.cdp.call(&on, &format!("const want = {}; const o = [...(el.options || [])].find(o => o.value.toLowerCase() === want || o.text.trim().toLowerCase() === want); if (!o) return {{ none: true }}; el.value = o.value; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }})); return {{}};", json!(value.trim().to_lowercase()))).await?;
@@ -370,7 +513,14 @@ impl Steps {
                         self.cdp.send("DOM.setFileInputFiles", json!({"files": [file], "objectId": id})).await.map_err(|e| fail(format!("esse elemento não é um campo de arquivo ({e})"), 422))?;
                     }
                     "read" => {
-                        let r = self.cdp.call(&on, &format!("return {{ text: {TEXT_OF} }};")).await?;
+                        // painel que ainda está buscando o número mostra um traço ou "carregando": espera o valor de verdade por uns segundos
+                        let waiting = |t: &str| { let t = t.trim().to_lowercase(); t.is_empty() || t.chars().all(|c| "—–-.…· ".contains(c)) || t.starts_with("carregando") || t.starts_with("loading") || t == "n/a" };
+                        let end = Instant::now() + self.wait.min(Duration::from_secs(5));
+                        let r = loop {
+                            let r = self.cdp.call(&on, &format!("return {{ text: {TEXT_OF} }};")).await;
+                            if r.as_ref().is_ok_and(|v| !waiting(v["text"].as_str().unwrap_or(""))) || Instant::now() > end { break r?; }
+                            tokio::time::sleep(Duration::from_millis(120)).await;
+                        };
                         self.values.insert(if value.trim().is_empty() { format!("texto{n}") } else { value.trim().to_string() }, r["text"].clone());
                     }
                     "text" => {
@@ -403,9 +553,20 @@ pub(super) async fn node(_kind: &str, p: &Value) -> ApiResult<Value> {
     session.keep.store(p["after"] == "keep", Ordering::Relaxed);
     let mut run = Steps { cdp: session.cdp(), wait: Duration::from_secs(number_of(&p["wait_s"]).unwrap_or(15.0).clamp(1.0, 300.0) as u64), values: Default::default() };
     if !url.is_empty() { run.cdp.goto(&url).await?; }
+    let full = run.wait;
+    let (mut skipping, mut skipped) = (false, Vec::<usize>::new());
     for (i, s) in steps.iter().enumerate() {
         let n = i + 1;
-        if let Err(e) = run.step(s, n, &session).await {
+        // "se não achar, pula": o passo espera pouco; se o anterior desse tipo faltou, os seguintes em sequência nem esperam
+        // (o usuário, a senha e o botão Entrar de um login que não apareceu)
+        let optional = s["opt"] == "skip";
+        if !optional { skipping = false; }
+        if optional && skipping { skipped.push(n); continue; }
+        run.wait = if optional { full.min(Duration::from_secs(4)) } else { full };
+        let r = run.step(s, n, &session).await;
+        run.wait = full;
+        if optional && r.as_ref().is_err_and(|e| matches!(e.status, 408 | 422)) && run.cdp.open.load(Ordering::Relaxed) { skipping = true; skipped.push(n); continue; }
+        if let Err(e) = r {
             let kind = s["do"].as_str().unwrap_or("");
             let on = text_of(s, "on");
             // a evidência: como a tela estava na hora da falha
@@ -420,7 +581,7 @@ pub(super) async fn node(_kind: &str, p: &Value) -> ApiResult<Value> {
     }
     run.cdp.settle().await;
     let info = run.cdp.eval("({ url: location.href, title: document.title })").await.unwrap_or(Value::Null);
-    Ok(json!({"out": {"url": info["url"].as_str().unwrap_or(""), "title": info["title"].as_str().unwrap_or(""), "values": run.values}}))
+    Ok(json!({"out": {"url": info["url"].as_str().unwrap_or(""), "title": info["title"].as_str().unwrap_or(""), "values": run.values, "skipped": skipped}}))
 }
 
 // ---------- gravador ----------

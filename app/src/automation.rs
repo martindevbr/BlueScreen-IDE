@@ -241,7 +241,7 @@ fn builtin() -> Value {
          "fields":[
             {"name":"url","label":"Endereço","kind":"text"},
             {"name":"method","label":"Método","kind":"select","options":["GET","POST","PUT","PATCH","DELETE","HEAD"]},
-            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Objeto JSON. Tokens: {{cred:nome}} (Credenciais do Automator) ou {{vault:nome}} (Cofre da IDE)."},
+            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Um por linha: o nome e o valor. Tokens: {{cred:nome}} (Credenciais do Automator) ou {{vault:nome}} (Cofre da IDE)."},
             {"name":"body","label":"Corpo","kind":"area","show":{"method":["POST","PUT","PATCH","DELETE"]}},
             {"name":"timeout","label":"Tempo limite (ms)","kind":"number","min":1000,"max":600000}
          ]},
@@ -250,8 +250,8 @@ fn builtin() -> Value {
          "fields":[
             {"name":"url","label":"Endereço do servidor","kind":"text","placeholder":"https://…/mcp"},
             {"name":"tool","label":"Ferramenta","kind":"text"},
-            {"name":"arguments","label":"Argumentos","kind":"json","help":"Objeto JSON."},
-            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Objeto JSON. Tokens: {{vault:nome}}."}
+            {"name":"arguments","label":"Argumentos","kind":"json","help":"Um por linha: o nome e o valor."},
+            {"name":"headers","label":"Cabeçalhos","kind":"json","help":"Um por linha: o nome e o valor. Tokens: {{vault:nome}}."}
          ]},
         {"type":"agent.cli","name":"Agente de IA","category":"IA","desc":"Roda o Codex, o Claude Code ou outro agente numa pasta: responde, ou edita arquivos e roda comandos.","inputs":["in"],"outputs":["out"],
          "params":{"provider":"codex","prompt":"{{input}}","cwd":"","access":"read","model":"","effort":"","timeout_min":10},
@@ -286,11 +286,13 @@ fn more() -> Value {
          "params":{"path":""},
          "fields":[{"name":"path","label":"Arquivo ou pasta","kind":"text","pick":"any","placeholder":"C:\\pasta\\relatorio.csv","help":"Numa pasta, olha os arquivos do primeiro nível. O próximo nó recebe path, name e files."}]},
         {"type":"data.set","name":"Montar objeto","category":"Dados","desc":"Monta um objeto com os campos que você definir.","inputs":["in"],"outputs":["out"],
-         "params":{"value":{"campo":"{{input}}"}},"fields":[{"name":"value","label":"Campos","kind":"json","help":"Objeto JSON. Os valores aceitam expressões."}]},
+         "params":{"value":{"campo":"{{input}}"}},"fields":[{"name":"value","label":"Campos","kind":"json","help":"Um por linha: o nome do campo e o valor. Em + dado, o valor pode vir de outro passo."}]},
         {"type":"data.datetime","name":"Data e hora","category":"Dados","desc":"Entrega a data e a hora de agora, no formato pedido.","inputs":["in"],"outputs":["out"],
          "params":{"format":"%d/%m/%Y %H:%M","offset_days":0},
          "fields":[
-            {"name":"format","label":"Formato","kind":"text","help":"%d dia, %m mês, %Y ano, %H hora, %M minuto, %S segundo, %A dia da semana."},
+            {"name":"format","label":"Formato","kind":"text","help":"Em Outro: %d dia, %m mês, %Y ano, %H hora, %M minuto, %S segundo.",
+             "choices":[{"value":"%d/%m/%Y %H:%M","label":"25/12/2026 14:30"},{"value":"%d/%m/%Y","label":"25/12/2026"},{"value":"%H:%M","label":"14:30"},{"value":"%d/%m","label":"25/12"},
+                {"value":"%Y-%m-%d","label":"2026-12-25 (bom para nome de arquivo)"},{"value":"%Y-%m-%d_%H-%M","label":"2026-12-25_14-30 (bom para nome de arquivo)"},{"value":"%Y%m%d","label":"20261225"}]},
             {"name":"offset_days","label":"Somar dias","kind":"number","min":-36500,"max":36500}
          ]},
         {"type":"text.replace","name":"Substituir texto","category":"Texto","desc":"Troca um trecho por outro.","inputs":["in"],"outputs":["out"],
@@ -301,11 +303,17 @@ fn more() -> Value {
             {"name":"replace","label":"Trocar por","kind":"text"},
             {"name":"regex","label":"Como procurar","kind":"select","options":[{"value":"no","label":"Texto exato"},{"value":"yes","label":"Expressão regular"}]}
          ]},
-        {"type":"text.extract","name":"Extrair do texto","category":"Texto","desc":"Pega o trecho que casa com uma expressão regular.","inputs":["in"],"outputs":["out"],
-         "params":{"text":"{{input}}","pattern":"","all":"first"},
+        {"type":"text.extract","name":"Extrair do texto","category":"Texto","desc":"Pega um pedaço do texto: o que está entre dois trechos, um número, um e-mail, uma data, um link.","inputs":["in"],"outputs":["out"],
+         "params":{"text":"{{input}}","what":"between","after":"","before":"","contains":"","pattern":"","all":"first"},
          "fields":[
             {"name":"text","label":"Texto","kind":"area"},
-            {"name":"pattern","label":"Expressão regular","kind":"text","placeholder":"pedido (\\d+)","help":"Com parênteses, entrega só o que está dentro deles."},
+            {"name":"what","label":"O que pegar","kind":"select","options":[
+                {"value":"between","label":"O que está entre dois trechos"},{"value":"line","label":"A linha que contém um trecho"},{"value":"number","label":"Números"},{"value":"money","label":"Valores em dinheiro (R$)"},
+                {"value":"date","label":"Datas"},{"value":"email","label":"E-mails"},{"value":"url","label":"Links"},{"value":"doc","label":"CPF ou CNPJ"},{"value":"phone","label":"Telefones"},{"value":"regex","label":"Um padrão avançado (expressão regular)"}]},
+            {"name":"after","label":"Começa depois de","kind":"text","placeholder":"Pedido nº","show":{"what":["between"]},"help":"O trecho que vem logo antes do que você quer."},
+            {"name":"before","label":"Termina antes de","kind":"text","placeholder":"vazio: até o fim da linha","show":{"what":["between"]}},
+            {"name":"contains","label":"Trecho","kind":"text","placeholder":"Total:","show":{"what":["line"]}},
+            {"name":"pattern","label":"Expressão regular","kind":"text","placeholder":"pedido (\\d+)","show":{"what":["regex"]},"help":"Com parênteses, entrega só o que está dentro deles."},
             {"name":"all","label":"Entregar","kind":"select","options":[{"value":"first","label":"O primeiro que casar"},{"value":"all","label":"Todos, numa lista"}]}
          ]},
         {"type":"text.split","name":"Dividir em lista","category":"Texto","desc":"Divide um texto em itens.","inputs":["in"],"outputs":["out"],
@@ -504,7 +512,7 @@ fn ops_catalog() -> Value {
          "params":{"env":"","secret":"dynatrace","kind":"CUSTOM_DEPLOYMENT","title":"{{input}}","entity":"","properties":{}},
          "fields":[dt_env,dt_secret,{"name":"kind","label":"Tipo","kind":"select","options":[{"value":"CUSTOM_DEPLOYMENT","label":"Deploy"},{"value":"CUSTOM_ANNOTATION","label":"Anotação"},{"value":"CUSTOM_INFO","label":"Informação"},{"value":"CUSTOM_ALERT","label":"Alerta"}]},
             {"name":"title","label":"Título","kind":"text"},{"name":"entity","label":"Entidades","kind":"text","placeholder":"type(SERVICE),entityName(checkout)","help":"O entitySelector. Vazio: o ambiente todo."},
-            {"name":"properties","label":"Propriedades","kind":"json","help":"Objeto JSON com textos (versão, autor, link)."}]},
+            {"name":"properties","label":"Propriedades","kind":"json","help":"Um por linha: o nome e o valor (versão, autor, link)."}]},
 
         {"type":"data.csv","name":"Ler CSV","category":"Dados","desc":"Transforma um texto CSV numa lista, usando a primeira linha como nomes dos campos.","inputs":["in"],"outputs":["out"],
          "params":{"text":"{{input}}","sep":"auto"},
@@ -1033,8 +1041,13 @@ const GEN_RULES: &str = "# Regras
 - Senhas, tokens e chaves nunca ficam escritos no fluxo: use {{cred:nome}}, uma credencial do Automator ({{cred:nome.user}} é o usuário dela). Reaproveite as de 'Credenciais que já existem' quando servirem. O pedido pode trazer {{cred:nome}} no lugar de uma senha que o usuário escreveu: use exatamente essa referência onde a senha é usada. Se ainda houver uma senha ou token escrito no pedido, não o copie para o fluxo: dê um nome, use {{cred:nome}} e liste em 'secrets' como {\"name\":\"nome\",\"value\":\"o valor\"}.
 - {{cred:nome}} funciona nos campos dos nós e dentro do script de windows.powershell (fora de aspas simples). Não funciona nos argumentos de windows.command.
 - Dias e horários: para o fluxo rodar sozinho só em certos dias e horas, use trigger.schedule com 'days' e, no modo interval, window 'between' com 'from' e 'to'. Para decidir no meio do fluxo se agora é dia e hora de trabalho, use time.window (saídas true e false). Os dias são números: 1 segunda … 6 sábado, 0 domingo.\n- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho). Num script, o que chegou vem em $env:BS_INPUT e a saída é o que o script escrever.
-- Sites: para entrar num site, clicar, preencher e ler o que está na tela, use browser.run. Cada passo é {\"do\":ação,\"on\":onde,\"value\":valor}; 'on' é um seletor CSS ou texto=Rótulo do botão. Vários browser.run no mesmo fluxo continuam na mesma página (deixe 'url' vazio nos seguintes). Se não souber os seletores do site, deixe os passos que souber e avise em 'notes' que o usuário pode completar com o botão Gravar.
+- Sites: para entrar num site, clicar, preencher e ler o que está na tela, use browser.run. Cada passo é {\"do\":ação,\"on\":onde,\"value\":valor}; 'on' é um seletor CSS ou texto=Rótulo do botão. Vários browser.run no mesmo fluxo continuam na mesma página (deixe 'url' vazio nos seguintes). Se não souber os seletores do site, deixe os passos que souber e avise em 'notes' que o usuário pode completar com o botão Gravar. Para ler dados da tela: read (um valor; 'on' pode ser rotulo=Texto que fica ao lado do valor), table (a tabela vira lista de objetos em values.tabela) ou page (o texto inteiro da página em values.pagina, bom para um agent.cli extrair o que interessa). O que nem sempre aparece (o login quando a sessão já está aberta, o aviso de cookies) leva \"opt\":\"skip\" no passo. Código que chega no celular: passo ask ('value' é a pergunta, 'on' o campo do site). Painel pesado: speed 'fast' e um passo idle antes de ler.
 - Servidores e serviços: ssh.run e ssh.copy (SSH e SFTP), mail.send e mail.read (e-mail), ftp.files, db.query (SQL), mqtt.publish, notify.telegram. Usuário e senha deles vêm de uma credencial: {{cred:nome.user}} e {{cred:nome}}.
+- Tipos dos parâmetros: número vai sem aspas; campo de linhas é uma lista JSON; campo de objeto é um objeto, não texto; campo de passos ou regras é uma lista de objetos com as colunas indicadas. Não deixe valor de exemplo (example.com): o que só o usuário sabe fica vazio e vai em 'notes'.
+- O que cada saída entrega: 'item' é o item da vez; 'done' é a LISTA dos resultados (para um campo de cada um, json.pluck); 'ok' é o que o trecho protegido entregou; 'error' é {error, attempts, input}; true/false e os casos de logic.switch passam adiante a mesma entrada. {{nodes.ID}} lê a saída 'out': numa Condição use {{nodes.ID.true}}.
+- Duas conexões chegando no mesmo nó fazem {{input}} virar uma lista: ligue uma só, ou leia cada origem por {{nodes.ID.out}}.
+- Saída de programa, script, IA e arquivo é texto: para repetir por linha use text.split; para ler campos, json.parse.
+- agent.cli fica com access 'read', a não ser que o pedido diga que ele pode alterar arquivos. Não mande {{cred:nome}} para um endereço que o pedido não citou. Comando que apaga arquivos só com pedido explícito, e avisado em 'notes'.
 - Não execute nada nem altere arquivos agora: só descreva o fluxo.";
 const GEN_FORMAT: &str = "{\"name\":\"Nome\",\"description\":\"Para que serve\",\"notes\":[\"o que o usuário ainda precisa preencher ou conferir\"],\"secrets\":[],\"nodes\":[{\"id\":\"n1\",\"type\":\"trigger.manual\",\"title\":\"nome do passo\",\"params\":{\"sample\":\"\"},\"position\":[60,100]}],\"edges\":[{\"from\":\"n1\",\"from_port\":\"out\",\"to\":\"n2\",\"to_port\":\"in\"}]}";
 const GEN_EXAMPLE: &str = "Pedido: A cada 30 minutos, chamar https://api.exemplo.com/status com o token {{cred:token-exemplo}} e me avisar se o campo ok vier falso.
@@ -1283,11 +1296,22 @@ fn flow_issues(f: &Flow) -> Vec<String> {
         for (k, v) in n.params.as_object().into_iter().flatten() {
             if s["params"].get(k).is_none() { out.push(format!("{name}: o parâmetro '{k}' não existe neste nó")); continue; }
             let field = s["fields"].as_array().into_iter().flatten().find(|x| x["name"] == k.as_str());
+            let expr = v.as_str().is_some_and(|t| t.contains("{{"));
+            let want = match field.and_then(|x| x["kind"].as_str()).unwrap_or("") {
+                "number" if !v.is_number() => "um número, sem aspas",
+                "lines" | "checks" if !v.is_array() => "uma lista JSON, como [\"a\", \"b\"]",
+                "json" if !v.is_object() => "um objeto JSON { \"nome\": \"valor\" }, não um texto",
+                "rows" if !v.as_array().is_some_and(|a| a.iter().all(Value::is_object)) => "uma lista de objetos, um por linha",
+                _ => "",
+            };
+            if !want.is_empty() && !expr && !v.is_null() { out.push(format!("{name}: '{k}' tem que ser {want} (veio {})", v.to_string().chars().take(60).collect::<String>())); continue; }
             if let Some(o) = field.filter(|x| x["kind"] == "select").and_then(|x| x["options"].as_array()) {
                 let ok = o.iter().any(|x| stringify(x.get("value").unwrap_or(x)) == stringify(v));
                 if !ok && !stringify(v).contains("{{") { out.push(format!("{name}: '{k}' não aceita o valor {v}")); }
             }
         }
+        if let Some(p) = body_port(&n.kind) && !f.edges.iter().any(|e| e.from == n.id && e.from_port == p) { out.push(format!("{name}: nada está ligado na saída '{p}', que é o trecho que este nó repete ou protege")); }
+        if !n.disabled && !sources.is_empty() && sources.iter().all(|x| by_id.get(x).is_some_and(|o| o.disabled)) { out.push(format!("{name}: só recebe de um nó desligado, então nunca roda")); }
         // quem vem antes deste nó, por qualquer caminho
         let mut before: HashSet<&str> = HashSet::new();
         let mut stack = sources.clone();
@@ -1299,6 +1323,12 @@ fn flow_issues(f: &Flow) -> Vec<String> {
                 let id = &base[6..];
                 if !by_id.contains_key(id) { out.push(format!("{name}: {{{{{base}}}}} aponta para um nó que não existe")); continue; }
                 if !before.contains(id) { out.push(format!("{name}: {{{{{base}}}}} usa um nó que não vem antes deste no fluxo")); continue; }
+                // {{nodes.ID}} lê a saída 'out'; {{nodes.ID.x}} lê a saída 'x' (não um campo)
+                let port = path.split('.').next().filter(|p| !p.is_empty()).unwrap_or("out");
+                let ports: Vec<&str> = specs.get(&by_id[id].kind).and_then(|s| s["outputs"].as_array()).into_iter().flatten().filter_map(Value::as_str).collect();
+                if !ports.is_empty() && !ports.contains(&port) && !["index", "total", "errors", "attempt", "attempts", "rounds", "item"].contains(&port) {
+                    out.push(format!("{name}: o nó {id} não tem a saída '{port}' (tem: {}); para ler um campo use {{{{nodes.{id}.{}.{port}}}}}", ports.join(", "), ports[0])); continue;
+                }
                 // nodes.ID.porta.campo: o primeiro pedaço é a porta
                 (Some(id), path.split_once('.').map(|x| x.1).unwrap_or("").to_string())
             };
@@ -1886,12 +1916,105 @@ pub fn catalog() -> Value {
         if s["takes"].as_str().is_none_or(str::is_empty) { s["takes"] = json!(takes); }
         if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
     }
+    // o que a tela precisa saber de cada campo: tempo em milissegundos aparece em segundos, campo sem o qual o nó não
+    // roda é conferido antes de executar, e a busca da paleta acha o nó pelas palavras que a pessoa usaria
+    for s in &mut all {
+        let kind = s["type"].as_str().unwrap_or("").to_string();
+        let params = s["params"].clone();
+        if let Some(k) = keywords(&kind) { s["keywords"] = json!(k); }
+        for f in s["fields"].as_array_mut().into_iter().flatten() {
+            if let Some(l) = f["label"].as_str().filter(|l| l.contains("(ms)")).map(|l| l.replace("(ms)", "(segundos)")) { f["label"] = json!(l); f["unit"] = json!("ms"); }
+            let name = f["name"].as_str().unwrap_or("").to_string();
+            let empty = match &params[&name] { Value::String(t) => t.is_empty(), Value::Array(a) => a.is_empty() && name == "to", _ => false };
+            let optional = f["placeholder"].as_str().is_some_and(|p| p.contains("vazio"));
+            const NEEDED: [&str; 19] = ["path", "url", "host", "flow", "tool", "server", "topic", "mac", "token", "chat", "expected", "secret", "env", "find", "field", "local", "remote", "to", "from"];
+            if empty && !optional && (NEEDED.contains(&name.as_str()) || matches!((kind.as_str(), name.as_str()), ("sys.process", "name") | ("ai.openrouter", "model") | ("json.get", "path") | ("json.set", "path"))) { f["required"] = json!(true); }
+        }
+    }
     // a paleta mostra um grupo por categoria, nesta ordem; as categorias dos plugins vêm depois, na ordem em que chegam
     const ORDER: [&str; 19] = ["Gatilhos", "Lógica", "Data e hora", "Texto", "Dados", "JSON", "Arquivos", "Windows", "Navegador", "Rede", "Conexões", "QA", "Segurança", "Auditoria", "Integrações", "IA", "Imagem", "Áudio", "Vídeo"];
     let mut extra: Vec<String> = vec![];
     for s in &all { let c = s["category"].as_str().unwrap_or(""); if !ORDER.contains(&c) && !extra.iter().any(|e| e == c) { extra.push(c.to_string()); } }
     all.sort_by_key(|s| { let c = s["category"].as_str().unwrap_or(""); ORDER.iter().position(|o| *o == c).unwrap_or_else(|| ORDER.len() + extra.iter().position(|e| e == c).unwrap_or(0)) });
     Value::Array(all)
+}
+/// Palavras pelas quais a pessoa procuraria o nó sem saber o nome dele.
+fn keywords(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "trigger.schedule" => "horario todo dia toda semana cron timer relogio automatico agendar diario",
+        "trigger.file" => "pasta download chegou novo arquivo vigiar monitorar",
+        "trigger.webhook" => "api webhook url receber chamada integracao",
+        "trigger.startup" => "iniciar ligar abrir comecar",
+        "logic.if" => "se entao senao if comparar decidir filtro igual maior menor",
+        "logic.switch" => "varios caminhos opcoes casos escolher",
+        "logic.each" => "loop laco repetir lista cada todos for",
+        "logic.repeat" | "logic.while" => "loop laco repetir vezes ate",
+        "logic.try" => "erro falha tentar de novo retry proteger",
+        "logic.var" => "guardar memoria contador somar acumular",
+        "util.delay" => "pausa aguardar sleep tempo segundos",
+        "flow.call" => "subfluxo reutilizar outro fluxo",
+        "http.request" => "api site url chamar consultar web internet get post rest",
+        "http.download" => "baixar download salvar link",
+        "windows.notify" => "aviso alerta popup mensagem avisar lembrete",
+        "windows.alarm" => "aviso alerta som tocar lembrete despertador popup",
+        "windows.command" => "rodar executar abrir programa exe comando cmd terminal",
+        "windows.powershell" => "script comando terminal codigo",
+        "windows.open" => "abrir site pasta arquivo programa navegador",
+        "windows.clipboard" => "copiar colar ctrl c",
+        "file.read" => "abrir ler txt conteudo",
+        "file.write" => "salvar gravar criar txt log anotar",
+        "file.list" => "pasta arquivos listar procurar",
+        "file.manage" => "copiar mover apagar deletar excluir lixeira renomear backup",
+        "mail.send" => "email gmail outlook enviar mandar mensagem",
+        "mail.read" => "email gmail outlook caixa de entrada receber anexo",
+        "notify.telegram" | "notify.chat" => "mensagem avisar chat grupo canal slack teams discord telegram",
+        "browser.run" => "site web pagina clicar login portal dynatrace painel raspar ler tela automatizar chrome edge",
+        "db.query" => "banco de dados sql mysql postgres consulta tabela",
+        "ssh.run" | "ssh.copy" => "servidor linux remoto terminal sftp",
+        "data.csv" => "planilha excel tabela csv",
+        "data.table" => "relatorio tabela planilha html csv",
+        "data.filter" => "filtrar lista so os que",
+        "data.stats" => "somar soma media total minimo maximo contar",
+        "data.datetime" | "time.now" => "hoje agora data hora dia",
+        "text.extract" => "pegar achar numero email data trecho entre",
+        "text.replace" => "trocar substituir remover apagar trecho",
+        "json.get" => "pegar campo valor resposta",
+        "agent.cli" | "ai.openrouter" => "ia inteligencia artificial gpt claude codex resumir analisar perguntar",
+        "sys.info" => "disco memoria cpu espaco cheio lento saude",
+        "audit.http" => "site no ar caiu fora online monitorar",
+        "net.ping" => "online ligado responde rede",
+        _ => return None,
+    })
+}
+/// O que falta para o fluxo rodar bem, para a tela mostrar antes de executar: a estrutura (`validate`), o que a
+/// conferência da IA pega (`flow_issues`) e os campos sem os quais um nó não roda. Cada item: { node, text }.
+fn check_flow(f: &Flow) -> Vec<Value> {
+    let mut out = vec![];
+    if let Err(e) = validate(f) { out.push(json!({"node": "", "text": e.msg})); return out; }
+    let specs: HashMap<String, Value> = catalog().as_array().into_iter().flatten().map(|s| (s["type"].as_str().unwrap_or("").to_string(), s.clone())).collect();
+    for n in f.nodes.iter().filter(|n| !n.disabled) {
+        let Some(s) = specs.get(&n.kind) else { continue };
+        let value = |k: &str| n.params.get(k).filter(|v| !v.is_null()).unwrap_or(&s["params"][k]).clone();
+        for fd in s["fields"].as_array().into_iter().flatten().filter(|fd| fd["required"] == true) {
+            let shown = fd["show"].as_object().is_none_or(|o| o.iter().all(|(k, list)| { let cur = stringify(&value(k)); list.as_array().is_some_and(|a| a.iter().any(|x| stringify(x) == cur)) }));
+            let v = value(fd["name"].as_str().unwrap_or(""));
+            let empty = match &v { Value::String(t) => t.trim().is_empty(), Value::Array(a) => a.is_empty(), Value::Null => true, _ => false };
+            if shown && empty { out.push(json!({"node": n.id, "field": fd["name"], "text": format!("falta preencher \"{}\"", fd["label"].as_str().unwrap_or(""))})); }
+        }
+    }
+    // o primeiro Navegador do caminho precisa de um endereço (ou de um passo "Ir para endereço")
+    for n in f.nodes.iter().filter(|n| !n.disabled && n.kind == "browser.run") {
+        let (mut seen, mut stack, mut earlier) = (HashSet::new(), vec![n.id.as_str()], false);
+        while let Some(x) = stack.pop() { for e in f.edges.iter().filter(|e| e.to == x) { if seen.insert(e.from.as_str()) { earlier |= f.nodes.iter().any(|o| o.id == e.from && o.kind == "browser.run" && !o.disabled); stack.push(e.from.as_str()); } } }
+        let goes = n.params["steps"].as_array().is_some_and(|a| a.iter().any(|s| s["do"] == "goto"));
+        if !earlier && !goes && n.params["url"].as_str().is_none_or(|u| u.trim().is_empty()) { out.push(json!({"node": n.id, "field": "url", "text": "falta preencher \"Endereço\": é o primeiro Navegador do fluxo, então ele precisa saber que site abrir"})); }
+    }
+    for issue in flow_issues(f) {
+        // "id (Nome): texto" -> o nó e o texto
+        let hit = f.nodes.iter().find(|n| issue.starts_with(&format!("{} (", n.id)));
+        match hit.and_then(|n| issue.split_once("): ").map(|x| (n, x.1))) { Some((n, text)) => out.push(json!({"node": n.id, "text": text})), None => out.push(json!({"node": "", "text": issue})) }
+    }
+    out
 }
 fn spec(kind: &str) -> Option<Value> {
     catalog().as_array()?.iter().find(|s| s["type"] == kind).cloned()
@@ -2059,7 +2182,7 @@ fn truthy(v: &Value) -> bool {
         Value::Null => false,
         Value::Bool(b) => *b,
         Value::Number(n) => n.as_f64() != Some(0.0),
-        Value::String(s) => !matches!(s.trim().to_lowercase().as_str(), "" | "false" | "0" | "não" | "nao" | "no"),
+        Value::String(s) => !matches!(s.trim().to_lowercase().as_str(), "" | "false" | "0" | "não" | "nao" | "no" | "falso" | "f" | "n" | "off" | "null" | "nenhum" | "desligado"),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
     }
@@ -2068,8 +2191,10 @@ fn truthy(v: &Value) -> bool {
 fn condition(p: &Value) -> ApiResult<bool> {
     let (a, b) = (&p["value"], &p["equals"]);
     let (sa, sb) = (stringify(a), stringify(b));
-    let num = |s: &str| s.trim().replace(',', ".").parse::<f64>().ok();
-    let same = || a == b || sa.trim() == sb.trim() || matches!((num(&sa), num(&sb)), (Some(x), Some(y)) if x == y);
+    let num = br_num;
+    // "Sim" e "sim" são iguais para quem lê; código com zero na frente ("0123") não é comparado como número
+    let code = |s: &str| { let t = s.trim(); t.len() > 1 && t.starts_with('0') && t.as_bytes()[1].is_ascii_digit() };
+    let same = || a == b || sa.trim().to_lowercase() == sb.trim().to_lowercase() || (!code(&sa) && !code(&sb) && matches!((num(&sa), num(&sb)), (Some(x), Some(y)) if x == y));
     let empty = || a.is_null() || sa.trim().is_empty() || a.as_array().is_some_and(|v| v.is_empty()) || a.as_object().is_some_and(|v| v.is_empty());
     let pair = || num(&sa).zip(num(&sb)).ok_or_else(|| fail(format!("a condição compara números, mas recebeu \"{sa}\" e \"{sb}\""), 400));
     Ok(match p["op"].as_str().unwrap_or("eq") {
@@ -2659,13 +2784,73 @@ static AUDIT: LazyLock<reqwest::Client> = LazyLock::new(|| reqwest::Client::buil
 fn list_of(v: &Value) -> Vec<Value> {
     match v {
         Value::Array(a) => a.clone(),
-        Value::String(s) => match serde_json::from_str::<Value>(s) { Ok(Value::Array(a)) => a, _ if s.trim().is_empty() => vec![], _ => vec![json!(s)] },
+        // um texto de várias linhas é uma lista de linhas
+        Value::String(s) => match serde_json::from_str::<Value>(s) { Ok(Value::Array(a)) => a, _ if s.trim().is_empty() => vec![], _ if s.trim().contains('\n') => s.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| json!(l)).collect(), _ => vec![json!(s)] },
         Value::Null => vec![],
         o => vec![o.clone()],
     }
 }
 fn number_of(v: &Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().replace(',', ".").parse().ok()))
+    v.as_f64().or_else(|| v.as_str().and_then(br_num))
+}
+/// Número escrito do jeito daqui: "1.234,56", "R$ 10,50", "12%". Sem vírgula, o ponto é o decimal ("1.5"), a não ser
+/// que tenha cara de milhar ("1.500", "12.345.678").
+fn br_num(s: &str) -> Option<f64> {
+    static THOUSANDS: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^-?[1-9]\d{0,2}(\.\d{3})+$").unwrap());
+    let t = s.trim().trim_start_matches("R$").trim_end_matches('%').trim();
+    if t.is_empty() || !t.bytes().any(|b| b.is_ascii_digit()) { return None; }
+    let t = if t.contains(',') { t.replace('.', "").replace(',', ".") } else if THOUSANDS.is_match(t) { t.replace('.', "") } else { t.to_string() };
+    t.parse().ok()
+}
+/// O erro de um nó como "o que aconteceu e o que fazer"; o texto original segue junto, como detalhe. A tela separa os
+/// dois pelo marcador.
+const DETAIL: &str = "\nDetalhe técnico: ";
+fn friendly(kind: &str, msg: &str) -> String {
+    if msg.contains(DETAIL) || msg.trim().is_empty() { return msg.to_string(); }
+    let low = msg.to_lowercase();
+    let has = |ps: &[&str]| ps.iter().any(|p| low.contains(p));
+    static CODE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?:respondeu|recusou \(|openrouter)\s*(\d{3})\b").unwrap());
+    let http = CODE.captures(&low).and_then(|c| c[1].parse::<u16>().ok());
+    let tip = if kind.starts_with("mail.") && has(&["recusou o login", "535", "534", "username and password not accepted", "application-specific password", "authentication failed"]) {
+        "O servidor de e-mail recusou a senha. Gmail, Outlook e Yahoo não aceitam a senha normal: crie uma \"senha de app\" na sua conta e use ela no campo Senha."
+    } else if kind.starts_with("ssh.") && has(&["recusou o login", "permission denied"]) {
+        "O servidor recusou o login. Confira o usuário e a senha; se usa chave, confira o arquivo da chave."
+    } else if has(&["im002", "data source name not found", "nome da fonte de dados não encontrado", "driver especificado", "no default driver"]) {
+        "O driver do banco não está instalado neste PC. Instale o driver ODBC do seu banco (MySQL ODBC, PostgreSQL ODBC...) e confira o nome dele no texto de conexão."
+    } else if has(&["ffmpeg", "ffprobe"]) && has(&["não encontrado", "not found", "não deu para iniciar", "instale"]) {
+        "O FFmpeg não está instalado. Abra o Terminal do Windows, rode: winget install Gyan.FFmpeg e depois reabra o BlueScreen."
+    } else if has(&["dns error", "failed to lookup", "no such host", "não é conhecido", "could not resolve", "os error 11001", "getaddrinfo", "err_name_not_resolved"]) {
+        "Não achei esse endereço. Confira se ele está escrito certo e se o PC está com internet."
+    } else if has(&["certificate", "certificado", "unknown issuer", "self signed", "self-signed", "invalid peer"]) {
+        "O certificado de segurança do site não passou na conferência (vencido, caseiro ou de outro endereço). Confira o endereço; se o servidor é interno, peça a quem cuida dele para renovar o certificado."
+    } else if has(&["timed out", "tempo esgotado", "não respondeu a tempo", "os error 10060", "operation timed out"]) {
+        "O outro lado demorou demais para responder. Tente de novo; se continuar, aumente o tempo limite do nó ou confira a internet e o endereço."
+    } else if has(&["connection refused", "recusou a conexão", "recusou ativamente", "os error 10061", "err_connection_refused"]) {
+        "O servidor está fora do ar ou a porta está errada. Confira o endereço e a porta."
+    } else if matches!(http, Some(401 | 403)) {
+        "O serviço recusou o acesso: a senha, o token ou a chave estão errados, vencidos ou sem permissão. Confira a credencial usada neste nó."
+    } else if http == Some(404) {
+        "Esse endereço não existe no servidor. Confira o que vem depois do nome do site."
+    } else if http == Some(429) {
+        "Pedidos demais em pouco tempo: o serviço pediu para esperar. Ponha um nó Esperar entre as chamadas ou rode menos vezes."
+    } else if http.is_some_and(|c| c >= 500) {
+        "O serviço está com problema do lado dele. Não é erro seu: tente de novo mais tarde."
+    } else if has(&["error sending request", "error trying to connect"]) {
+        "Não deu para falar com o endereço. Confira a internet e se o endereço está certo."
+    } else if has(&["os error 32", "being used by another process", "sendo usado por outro processo"]) {
+        "O arquivo está aberto em outro programa. Feche ele (Excel, Word, um player) e rode de novo."
+    } else if has(&["os error 5", "access is denied", "acesso negado"]) {
+        "O Windows negou o acesso a esse arquivo ou pasta. Escolha uma pasta sua (Documentos, Área de Trabalho) e confira se o arquivo não é somente leitura."
+    } else if has(&["os error 112", "not enough space", "espaço insuficiente"]) {
+        "O disco está cheio. Libere espaço ou grave em outro disco."
+    } else if has(&["os error 2", "os error 3", "no such file", "cannot find the path", "não pode encontrar o caminho", "não pode encontrar o arquivo"]) {
+        "O arquivo ou a pasta não existe nesse caminho. Confira o nome, o final do nome (.txt, .pdf) e a pasta."
+    } else if has(&["expressão regular inválida"]) {
+        "O padrão de busca tem um símbolo especial mal fechado, como ( [ ou {. Revise o campo, ou troque para uma das buscas prontas."
+    } else if has(&["não é um json válido", "expected value at line", "eof while parsing"]) {
+        "O texto que chegou não está no formato de dados esperado (campos e valores). Confira o que o nó anterior entregou."
+    } else { return msg.to_string() };
+    format!("{tip}{DETAIL}{msg}")
 }
 fn parse_csv(text: &str, sep: char) -> Vec<Vec<String>> {
     let (mut rows, mut row, mut cell, mut quoted) = (vec![], vec![], String::new(), false);
@@ -3035,9 +3220,8 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
             let v = cli(
                 "automator",
                 p["provider"].as_str().unwrap_or("codex"),
-                p["prompt"]
-                    .as_str()
-                    .ok_or_else(|| fail("prompt deve ser texto", 400))?,
+                // o pedido pode ser só {{input}} com um objeto chegando (a resposta de uma chamada): vai como texto
+                &text_of(&p, "prompt"),
                 &p["cwd"],
                 &p,
             )
@@ -3096,9 +3280,28 @@ async fn execute_node(n: &Node, p: Value, input: Value) -> ApiResult<Value> {
         }
         "text.extract" => {
             let (text, pattern) = (text_of(&p, "text"), text_of(&p, "pattern"));
-            if pattern.is_empty() { return Err(fail("informe a expressão regular", 400)); }
+            let (after, before, contains) = (text_of(&p, "after"), text_of(&p, "before"), text_of(&p, "contains"));
+            // fluxo antigo: só tinha a expressão regular
+            let what = match p["what"].as_str() { Some("between") | None if after.is_empty() && before.is_empty() && !pattern.is_empty() => "regex", Some(w) => w, None => "between" };
+            let esc = |t: &str| regex::escape(t.trim());
+            let pattern = match what {
+                "regex" => { if pattern.is_empty() { return Err(fail("informe a expressão regular", 400)); } pattern }
+                "between" => {
+                    if after.trim().is_empty() && before.trim().is_empty() { return Err(fail("diga depois de qual trecho começa o que você quer (ou antes de qual termina)", 400)); }
+                    if before.trim().is_empty() { format!("(?mi){}[ \\t]*(.*)$", esc(&after)) } else if after.trim().is_empty() { format!("(?mi)^(.*?){}", esc(&before)) } else { format!("(?si){}(.*?){}", esc(&after), esc(&before)) }
+                }
+                "line" => { if contains.trim().is_empty() { return Err(fail("diga o trecho que a linha tem", 400)); } format!("(?mi)^.*{}.*$", esc(&contains)) }
+                "number" => r"-?\d+(?:[.,]\d+)*".to_string(),
+                "money" => r"R\$\s*-?\d+(?:\.\d{3})*(?:,\d{1,2})?".to_string(),
+                "date" => r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b".to_string(),
+                "email" => r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+".to_string(),
+                "url" => r#"https?://[^\s"'<>)]+"#.to_string(),
+                "doc" => r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}".to_string(),
+                "phone" => r"(?:\+?55\s?)?\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}".to_string(),
+                o => return Err(fail(format!("não sei pegar isso: {o}"), 400)),
+            };
             let re = regex::Regex::new(&pattern).map_err(|e| fail(format!("expressão regular inválida: {e}"), 400))?;
-            let pick = |c: &regex::Captures| c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let pick = |c: &regex::Captures| c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
             if p["all"] == "all" { json!(re.captures_iter(&text).map(|c| pick(&c)).collect::<Vec<_>>()) } else { json!(re.captures(&text).map(|c| pick(&c)).unwrap_or_default()) }
         }
         "text.split" => {
@@ -3383,7 +3586,7 @@ impl<'a> Run<'a> {
                     }
                     Err(Halt::Step(Step::Cancel)) => { self.patch(at, json!({"status":"cancelled","ms":ms})); return Step::Cancel; }
                     Err(Halt::Err(_)) if self.cancel.load(Ordering::Relaxed) => { self.patch(at, json!({"status":"cancelled","ms":ms})); return Step::Cancel; }
-                    Err(Halt::Err(e)) => { self.failed(at, n, ms, &e.to_string(), e.status); return Step::Fail(format!("{}: {e}", node_title(n))); }
+                    Err(Halt::Err(e)) => { let m = friendly(&n.kind, &e.to_string()); self.failed(at, n, ms, &m, e.status); return Step::Fail(format!("{}: {m}", node_title(n))); }
                     // a falha veio de um nó de dentro do trecho: a mensagem já diz qual
                     Err(Halt::Step(Step::Fail(msg))) => { self.failed(at, n, ms, &msg, 422); return Step::Fail(msg); }
                     Err(Halt::Step(s)) => { self.patch(at, json!({"status":"completed","ms":ms})); return s; }
@@ -3668,7 +3871,14 @@ async fn generate_flow(b: Value) -> ApiResult<Value> {
         let (request, mut secrets) = take_secrets(asked);
         // com `flow`, o pedido é para alterar o fluxo que está aberto
         let current = b.get("flow").filter(|f| f["nodes"].as_array().is_some_and(|a| !a.is_empty())).map(|f| json!({"id": f["id"].as_str().unwrap_or(""), "name": f["name"], "description": f["description"], "nodes": f["nodes"], "edges": f["edges"]}));
-        let prompt = gen_prompt(&request, current.as_ref());
+        let mut prompt = gen_prompt(&request, current.as_ref());
+        if let Some(seen) = b["seen"].as_object().filter(|o| !o.is_empty()) {
+            prompt.push_str("\n\n# O que cada nó entregou na última execução (dados reais: nas expressões, use os campos que aparecem aqui)\n");
+            for (k, v) in seen.iter().take(40) { prompt.push_str(&format!("- {k}: {}\n", stringify(v).chars().take(700).collect::<String>())); }
+        }
+        if let Some(e) = b["problem"].as_str().filter(|e| !e.trim().is_empty()) {
+            prompt.push_str(&format!("\n\n# Erro da última execução (o ajuste tem que resolver a causa dele)\n{}\n", e.chars().take(2500).collect::<String>()));
+        }
         ai_stage(&b, 0, if current.is_some() { "A IA está alterando o fluxo" } else { "A IA está montando o fluxo" });
         let mut answer = ai_ask(&b, prompt.clone()).await?;
         ai_stage(&b, 1, "Conferindo nós, ligações e expressões");
@@ -3798,6 +4008,14 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
         if !r.is_post() { return Err(fail("use POST", 405)); }
         let b: Value = r.body_json()?;
         ok(record(&b).await?)
+    }));
+    // POST { flow } -> { issues: [{ node, field?, text }] }: o que conferir antes de executar. Não roda nem grava nada.
+    m.insert("automator/check".into(), route_fn(|r| async move {
+        r.local_only()?; require_enabled("automator")?;
+        if !r.is_post() { return Err(fail("use POST", 405)); }
+        let b: Value = r.body_json()?;
+        let f: Flow = serde_json::from_value(b["flow"].clone()).map_err(|e| fail(format!("fluxo inválido: {e}"), 400))?;
+        ok(json!({"issues": check_flow(&f)}))
     }));
     m.insert(
         "automator/catalog".into(),

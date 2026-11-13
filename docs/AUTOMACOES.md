@@ -160,7 +160,7 @@ Cada nó diz o que recebe e o que devolve. Na paleta aparece uma linha como `Tex
 
 | Nó | O que faz |
 |---|---|
-| Condição | Compara um valor e segue por **sim** ou por **não**: igual, diferente, contém, maior, menor, vazio, verdadeiro. `"5"` e `5` contam como iguais. |
+| Condição | Compara um valor e segue por **sim** ou por **não**: igual, diferente, contém, maior, menor, vazio, verdadeiro. `"5"` e `5` contam como iguais, `Sim` e `sim` também. Números valem como se escreve aqui: `1.500`, `1.234,56` e `R$ 10,50` são lidos como números. |
 | Garantir que | Faz a mesma comparação, mas falha o fluxo, com a sua mensagem, se ela não valer. Serve de teste. |
 | Esperar | Pausa de 0 a 3.600 segundos. |
 | Parar com erro | Encerra o fluxo como falha, com a mensagem que você escrever. |
@@ -171,7 +171,7 @@ Cada nó diz o que recebe e o que devolve. Na paleta aparece uma linha como `Tex
 |---|---|
 | Texto | Monta um texto com o que chegou. |
 | Substituir texto | Troca um trecho por outro, por texto exato ou expressão regular. |
-| Extrair do texto | Pega o trecho que casa com uma expressão regular: o primeiro, ou todos numa lista. |
+| Extrair do texto | Pega um pedaço do texto sem escrever código: o que está entre dois trechos ("depois de `Pedido nº`"), a linha que contém um trecho, números, valores em dinheiro, datas, e-mails, links, CPF ou CNPJ e telefones. O primeiro, ou todos numa lista. Quem quiser ainda pode usar uma expressão regular. |
 | Dividir em lista | Divide um texto por linha, vírgula, ponto e vírgula ou outro separador. |
 | Juntar lista | Junta os itens de uma lista num texto só. |
 | Ajustar texto | Maiúsculas, minúsculas, primeira letra maiúscula, sem espaços nas pontas ou sem linhas vazias. |
@@ -318,6 +318,10 @@ Nos campos de texto, o link **+ dado** insere a expressão para você. Elas são
 | `{{nodes.ID.out.campo}}` | Um campo dessa saída. |
 | `{{vars.nome}}` | O valor guardado pelo nó Variável. Antes de ser definida, vale vazio. |
 
+Embaixo de cada campo que usa uma expressão, o painel diz em português o que ela é ("`{{input.ok}}` é o campo "ok" do que chegou") e, depois da primeira execução, o valor que ela teve.
+
+Campos de nome e valor (cabeçalhos, **Montar objeto**, argumentos) são preenchidos um por linha, com **+ Campo**; **editar como texto** mostra o JSON para quem preferir. Tempos limite são em segundos.
+
 Uma expressão sozinha no campo mantém o tipo (objeto, número). No meio de um texto, vira texto. Se o que chegou é um texto em JSON (a saída de um programa, por exemplo), o campo é lido de dentro dele.
 
 Para rodar um comando do PowerShell, use `powershell` como programa e, nos argumentos, uma linha para cada um:
@@ -329,6 +333,12 @@ Get-Date
 ```
 
 O programa é chamado direto, com os argumentos separados: não há shell no meio.
+
+### Confira antes de rodar, e conserte com IA
+
+**Executar** confere o fluxo antes de rodar. Se faltar preencher um campo sem o qual o nó não roda (marcado com `*`), ou se um campo usa um dado que não existe, aparece a lista do que conferir, um item por passo. Clicar num item leva até o campo; os passos com pendência ficam com a borda âmbar no quadro. **Executar assim mesmo** roda como está, e **Corrigir com IA** manda as pendências para a IA resolver.
+
+Quando um passo falha, o quadro vai até ele e o painel mostra o que aconteceu e o que fazer, em português ("O arquivo está aberto em outro programa. Feche ele e rode de novo."), com o texto original em **Ver o detalhe técnico**. O botão **Corrigir com IA** abre o **Ajustar com IA** já com o erro e com o que cada passo entregou naquela execução, para a IA consertar a causa. Esses dados vão para o agente escolhido; desmarque a caixa na janela se não quiser mandar.
 
 ### Rode sozinho
 
@@ -466,9 +476,21 @@ O nó **Navegador** (categoria Navegador) abre o Edge, ou o Chrome, e faz no sit
 
 Quando o fluxo termina, a janela fecha (ou fica aberta, se o nó pedir).
 
+**Onde fica cada coisa, sem código.** O campo **Onde** de um passo aceita três jeitos: `texto=Entrar` acha pelo texto que aparece na tela; `rotulo=Tempo de resposta` acha o valor que fica ao lado desse texto (o campo do rótulo, a célula seguinte, o número embaixo do título); e, para quem conhece, um seletor CSS (`#senha`). O gravador escolhe sozinho: ao clicar, prefere o texto do botão; em **Ler campo**, prefere o rótulo vizinho. O motor procura também dentro de quadros (iframes) da mesma origem e de componentes da página, onde os painéis de sistemas grandes costumam ficar.
+
+**O que nem sempre aparece.** Cada passo tem a escolha **Tem que achar** ou **Se não achar, pula**. Use a segunda para o login (que não aparece quando você já está dentro), o aviso de cookies, uma janela de novidades: o passo espera poucos segundos e, se o elemento não aparecer, o fluxo segue, pulando também os passos desse tipo que vêm logo em seguida. A saída do nó traz `skipped`, com os números dos passos pulados.
+
+**Quando o site pede você.** **Pedir para você digitar** para o fluxo e mostra uma caixa por cima do site com a sua pergunta ("Digite o código que chegou no celular"); o que você digitar vai para o campo de **Onde** e o fluxo continua. **Esperar você continuar** para até você clicar em **Continuar**, para fazer à mão o que o site pedir (um login com várias etapas, por exemplo). Os dois avisam pelo Windows, esperam até dez minutos e precisam da janela à vista.
+
+**Para painéis pesados.** Em **Velocidade**, **Rápida** não baixa imagens, vídeos nem fontes. **Esperar a página carregar** segura o fluxo até a tela parar de mudar, e **Ler campo** espera o número de verdade quando o painel ainda mostra um traço ou "carregando". O login vale com a janela à vista ou não: a sessão é a mesma.
+
 | Passo | O que faz |
 |---|---|
-| Clicar, Digitar, Escolher opção, Marcar ou desmarcar, Apertar tecla, Passar o mouse | As ações de sempre. **Onde** é um seletor CSS (`#senha`, `.botao`) ou `texto=Entrar`, que acha pelo texto visível. |
+| Clicar, Digitar, Escolher opção, Marcar ou desmarcar, Apertar tecla, Passar o mouse | As ações de sempre. **Onde** é `texto=Entrar`, `rotulo=Nome do campo` ou um seletor CSS (`#senha`, `.botao`). |
+| Ler tabela | Lê a tabela (a maior da tela, ou a de **Onde**) como uma lista com uma linha por item; os títulos das colunas viram os nomes dos campos. Vai para `values.tabela`. Ligue um **Montar tabela** para gravar como planilha. |
+| Ler o texto da página | Guarda tudo o que está escrito na tela (ou numa parte dela) em `values.pagina`. Bom para ligar um **Agente de IA** e pedir "me diga o tempo de resposta do serviço X". |
+| Esperar a página carregar | Segue quando a tela para de mudar. |
+| Pedir para você digitar, Esperar você continuar | O fluxo para e espera você, como descrito acima. |
 | Enviar arquivo | Põe um arquivo do PC num campo de arquivo do site. |
 | Ir para endereço, Voltar uma página, Rolar a página | Navegação. |
 | Ir para a aba que abriu | Passa para a aba nova, quando um link ou um login abre outra. |

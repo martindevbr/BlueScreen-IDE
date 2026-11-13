@@ -337,11 +337,19 @@ const chain = (name, description, nodes, extra = []) => ({ ...blank(name), descr
 const TEMPLATES = [
   { label: 'Lembrete de pausa', hint: 'a cada hora, um aviso', make: () => chain('Lembrete de pausa', 'Avisa de hora em hora para levantar um pouco.', [T('trigger.schedule', { mode: 'interval', every_minutes: 60 }), T('windows.notify', { title: 'Hora de uma pausa', message: 'Levante, alongue e descanse os olhos.' })]) },
   { label: 'Rodar um comando e avisar', hint: 'programa, depois notificação', make: () => chain('Comando com aviso', 'Roda um programa e mostra o que ele respondeu.', [T('trigger.manual', {}), T('windows.command', { program: 'powershell', args: ['-NoProfile', '-Command', 'Get-Date -Format "dd/MM/yyyy HH:mm"'] }), T('windows.notify', { title: 'Comando concluído', message: '{{input}}' })]) },
-  { label: 'Vigiar um site', hint: 'todo dia, avisa se cair', make: () => {
-    const t = T('trigger.schedule', { mode: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }), h = T('http.request', { url: 'https://example.com', method: 'GET' }), c = T('logic.if', { value: '{{input}}', op: 'empty', equals: '' }, 'Veio vazio?'), n = T('windows.notify', { title: 'Site sem resposta', message: 'A página respondeu vazia.' }), o = T('util.output', {});
-    const f = chain('Vigiar um site', 'Confere o endereço nos dias úteis e avisa se a resposta vier vazia. Se o site não responder, a execução falha e aparece no histórico.', [t, h, c]);
-    f.nodes.push(n, o); f.edges.push({ id: uid('e'), from: c.id, from_port: 'true', to: n.id, to_port: 'in' }, { id: uid('e'), from: c.id, from_port: 'false', to: o.id, to_port: 'in' });
-    return f;
+  { label: 'Vigiar um site', hint: 'no expediente, alarme se cair', make: () => {
+    const E = (x, port, y) => ({ id: uid('e'), from: x.id, from_port: port, to: y.id, to_port: 'in' });
+    const t = T('trigger.schedule', { mode: 'interval', every_minutes: 5, window: 'between', from: '08:00', to: '18:00', days: [1, 2, 3, 4, 5] }), h = T('audit.http', { url: 'https://example.com', max_ms: 5000 }, 'O site respondeu?');
+    const a = T('windows.alarm', { title: 'Site fora do ar', message: 'O site não respondeu como devia. {{input.reason}}', level: 'error', sound: 'Alarm01.wav', repeat: 'loop' }, 'Tocar o alarme'), o = T('util.output', {});
+    return { ...blank('Vigiar um site'), description: 'No horário comercial, confere o site a cada 5 minutos e toca um alarme se ele cair ou demorar mais de 5 segundos. Troque example.com pelo seu site e acenda o Ligado.', nodes: [t, h, a, o], edges: [E(t, 'out', h), E(h, 'false', a), E(h, 'true', o)] };
+  } },
+  { label: 'Ler dados de um painel web', hint: 'a tabela do site vira planilha', need: 'browser.run', make: () => chain('Ler dados de um painel web', 'Abre o painel, espera carregar, lê a maior tabela da tela e grava num arquivo que abre no Excel. Na primeira vez, entre na sua conta na janela que abrir: o navegador lembra do login.', [T('trigger.manual', {}), T('browser.run', { url: '', steps: [{ do: 'idle', on: '', value: '' }, { do: 'table', on: '', value: 'tabela' }], show: 'yes', profile: 'keep', speed: 'fast' }, 'Abrir e ler a tabela'), T('data.table', { list: '{{input.values.tabela}}', format: 'csv' }, 'Virar planilha'), T('file.write', { path: '', content: '{{input}}', mode: 'replace' }, 'Gravar a planilha'), T('windows.notify', { title: 'Tabela salva', message: 'A planilha foi gravada.' })]) },
+  { label: 'Dynatrace pelo navegador', hint: 'lê a tela e a IA resume', need: 'browser.run', make: () => chain('Dynatrace pelo navegador', 'Abre o Dynatrace com o seu login, lê o que está escrito na tela e pede à IA só o que interessa. Rode uma vez com Executar para entrar na conta (o código do celular você digita na própria janela); depois troque o gatilho por uma Agenda, se quiser.', [T('trigger.manual', {}), T('browser.run', { url: '', steps: [{ do: 'pause', on: '', value: 'Se o Dynatrace pedir login ou código, entre na sua conta e clique em Continuar.', opt: '' }, { do: 'idle', on: '', value: '' }, { do: 'page', on: '', value: 'pagina' }], show: 'yes', profile: 'keep', speed: 'fast', wait_s: 30 }, 'Abrir o Dynatrace e ler a tela'), T('agent.cli', { provider: 'claude', access: 'read', prompt: 'Diga em no máximo 5 linhas, em português: quais problemas estão abertos, o serviço afetado e os números principais (tempo de resposta, taxa de falha).\n\nTexto da tela do Dynatrace:\n{{input.values.pagina}}' }, 'Pedir o resumo à IA'), T('windows.notify', { title: 'Dynatrace', message: '{{input}}' })]) },
+  { label: 'Avisar quando o disco encher', hint: 'confere de hora em hora', make: () => {
+    const E = (x, port, y) => ({ id: uid('e'), from: x.id, from_port: port, to: y.id, to_port: 'in' });
+    const t = T('trigger.schedule', { mode: 'interval', every_minutes: 60 }), i = T('sys.info', {}, 'Ver os discos'), f = T('data.filter', { list: '{{input.disks}}', field: 'used_percent', op: 'gt', equals: '90' }, 'Mais de 90% ocupados'), e = T('logic.each', { list: '{{input}}' });
+    const a = T('windows.alarm', { title: 'Disco quase cheio', message: 'O disco {{input.drive}} está {{input.used_percent}}% ocupado: sobram {{input.free_gb}} GB.', level: 'warn', sound: 'Alarm01.wav', repeat: 'once' }, 'Avisar');
+    return { ...blank('Avisar quando o disco encher'), description: 'De hora em hora, confere os discos e avisa quando algum passa de 90% ocupado. Para mudar o limite, troque o 90 no passo "Mais de 90% ocupados". Acenda o Ligado.', nodes: [t, i, f, e, a], edges: [E(t, 'out', i), E(i, 'out', f), E(f, 'out', e), E(e, 'item', a)] };
   } },
   { label: 'Alarme num horário', hint: 'alerta com som no canto da tela', make: () => chain('Alarme', 'Todo dia, no horário marcado, abre um alerta com som no canto da tela. Ajuste o horário e a mensagem e ligue o fluxo.', [T('trigger.schedule', { mode: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }), T('windows.alarm', { title: 'Reunião diária', message: 'Começa em 5 minutos.', level: 'warn', sound: 'Alarm01.wav', repeat: 'loop', button2: 'Adiar' })]) },
   { label: 'Avisar quando chegar arquivo', hint: 'vigia uma pasta', make: () => chain('Arquivo novo na pasta', 'Avisa quando um arquivo é criado ou alterado na pasta. Informe a pasta no primeiro nó e ligue o fluxo.', [T('trigger.file', { path: '' }), T('windows.notify', { title: 'Arquivo novo', message: '{{input.name}}' })]) },
@@ -864,9 +872,10 @@ function openPicker(cx, cy, onPick, need) {
   const body = el('div.am-pick-list');
   let items = [], cur = 0;
   const paint = () => {
-    const q = input.value.trim().toLowerCase();
-    // com busca: quem tem o termo no nome vem antes de quem só o tem na descrição (e a lista deixa de ser por categoria)
-    const rank = (s) => s.name.toLowerCase().startsWith(q) ? 0 : s.name.toLowerCase().includes(q) ? 1 : s.category.toLowerCase().includes(q) ? 2 : (s.desc || '').toLowerCase().includes(q) ? 3 : 9;
+    const q = fold(input.value.trim()), words = q.split(/\s+/).filter(Boolean);
+    // com busca: quem tem o termo no nome vem antes de quem só o tem na descrição (e a lista deixa de ser por categoria);
+    // por último, quem casa pelas palavras que a pessoa usaria ("avisar", "site", "planilha"), sem acento
+    const rank = (s) => { const nm = fold(s.name); return nm.startsWith(q) ? 0 : nm.includes(q) ? 1 : fold(s.category).includes(q) ? 2 : fold(s.desc).includes(q) ? 3 : words.every(w => fold(`${s.name} ${s.desc} ${s.keywords || ''} ${s.category}`).includes(w)) ? 4 : 9; };
     items = q ? list.map(s => [rank(s), s]).filter(x => x[0] < 9).sort((a, b) => a[0] - b[0]).map(x => x[1]) : list;
     cur = clamp(cur, 0, Math.max(0, items.length - 1));
     body.replaceChildren();
@@ -931,7 +940,7 @@ function pathsOf(v, max = 40) {
   walk(asJson(v), '', 0); return out;
 }
 const peek = (v) => { const t = v == null ? 'vazio' : Array.isArray(v) ? `lista (${v.length})` : typeof v === 'object' ? 'objeto' : String(v).replace(/\s+/g, ' '); return t.length > 26 ? t.slice(0, 26) + '…' : t; };
-const pathItems = (list, pickPath) => list.map(p => ({ label: `${p.path}  ·  ${peek(p.value)}`, action: () => pickPath(p.path) }));
+const pathItems = (list, pickPath) => list.map(p => ({ label: `${p.path.split('.').map(k => /^\d+$/.test(k) ? `item ${+k + 1}` : k).join(' › ')}  ·  ${peek(p.value)}`, action: () => pickPath(p.path) }));
 /** O que o nó espera e o que entrega, no alto do painel. */
 function ioBlock(s) {
   if (!s || (!s.expects && !s.returns)) return null;
@@ -953,6 +962,29 @@ function treatRow(id, r) {
     el('div.am-treat-b', {}, types.filter(t => spec(t)).map(t => el('button.chip', { type: 'button', title: spec(t).desc,
       onclick: (e) => { const list = t === 'json.get' ? pathsOf(v) : []; list.length ? bs.showMenu(e, pathItems(list, (path) => add(t, { path })), 'Qual campo?') : add(t); } }, spec(t).name))));
 }
+const fold = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+/** As expressões de um campo ditas em português, com o valor que teriam pelo que já se conhece. */
+function exprLegend(n, text) {
+  const out = [], seen = new Set();
+  const way = (path) => path.split('.').filter(Boolean).map(k => /^\d+$/.test(k) ? `item ${+k + 1}` : k).join(' › ');
+  for (const m of String(text ?? '').matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
+    const k = m[1]; if (seen.has(k) || out.length >= 4) continue; seen.add(k);
+    let what = '', val;
+    if (k === 'input') { what = 'o que chegou do passo anterior'; val = resolveExpr(n, m[0]); }
+    else if (k.startsWith('input.')) { what = `o campo "${way(k.slice(6))}" do que chegou`; val = resolveExpr(n, m[0]); }
+    else if (k.startsWith('nodes.')) {
+      const [id, port = 'out', ...rest] = k.slice(6).split('.'), u = node(id);
+      what = u ? `${rest.length ? `o campo "${way(rest.join('.'))}" do` : 'o'} resultado de "${titleOf(u)}"${(spec(u.type)?.outputs || []).length > 1 ? ` (saída ${portName(u, port)})` : ''}` : 'um passo que não existe mais';
+      val = u ? resolveExpr(n, m[0]) : undefined;
+    }
+    else if (k.startsWith('vars.')) what = `o valor guardado em "${k.slice(5)}"`;
+    else if (k.startsWith('cred:')) what = k.endsWith('.user') ? `o usuário da credencial "${k.slice(5, -5)}"` : `a senha ou token "${k.slice(5)}" (o valor não aparece)`;
+    else if (k.startsWith('vault:')) what = `o segredo "${k.slice(6)}" do Cofre`;
+    else what = 'não é um dado que existe: use o link "+ dado"';
+    out.push(el('span.am-leg', el('code', m[0]), ' é ' + what, val !== undefined && val !== m[0] ? el('i', ` · na última vez: ${peek(val)}`) : null));
+  }
+  return out;
+}
 function insertAt(input, text) {
   const a = input.selectionStart ?? input.value.length, b = input.selectionEnd ?? a;
   input.setRangeText(text, a, b, 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); input.focus();
@@ -961,9 +993,10 @@ function field(n, f) {
   const s = spec(n.type), cur = n.params[f.name] ?? s.params[f.name];
   let started = false;
   // um passo no desfazer por campo editado (não um por tecla)
-  const set = (v) => { if (!started) { commit(); started = true; } n.params[f.name] = v; const e = nodeEls.get(n.id); if (e) { e.querySelector('.am-sum').textContent = summary(n); } changed(); };
+  let paintLegend = () => {};
+  const set = (v) => { if (!started) { commit(); started = true; } n.params[f.name] = v; const e = nodeEls.get(n.id); if (e) { e.querySelector('.am-sum').textContent = summary(n); e.classList.remove('need'); } paintLegend(); changed(); };
   const err = el('small.am-ferr', { hidden: true });
-  let input, extra = null, above = null;
+  let input, extra = null, above = null, wrap = null, into = () => input;
   if (f.kind === 'select') {
     input = el('select', {}, f.options.map(o => el('option', { value: String(o.value ?? o), selected: String(o.value ?? o) === String(cur) }, o.label ?? o)));
     input.onchange = () => { set(input.value); renderInspector(); };
@@ -981,13 +1014,36 @@ function field(n, f) {
     const on = new Set(Array.isArray(cur) ? cur : []);
     input = el('div.am-checks', {}, f.options.map(o => { const c = el('input', { type: 'checkbox', checked: on.has(o.value) }); c.onchange = () => { c.checked ? on.add(o.value) : on.delete(o.value); set(f.options.map(x => x.value).filter(v => on.has(v))); }; return el('label', c, el('span', o.label)); }));
   } else if (f.kind === 'number') {
-    input = el('input', { type: 'number', value: cur ?? '', min: f.min, max: f.max });
-    input.oninput = () => { const v = Number(input.value); const bad = input.value === '' || !Number.isFinite(v) || (f.min != null && v < f.min) || (f.max != null && v > f.max); err.hidden = !bad; err.textContent = bad ? `Use um número de ${f.min ?? 0} a ${f.max ?? '∞'}.` : ''; if (!bad) set(v); };
+    const k = f.unit === 'ms' ? 1000 : 1, lo = f.min != null ? f.min / k : undefined, hi = f.max != null ? f.max / k : undefined;
+    input = el('input', { type: 'number', value: cur == null || cur === '' ? '' : Number(cur) / k, min: lo, max: hi, step: k > 1 ? 'any' : undefined });
+    input.oninput = () => { const v = Number(input.value); const bad = input.value === '' || !Number.isFinite(v) || (lo != null && v < lo) || (hi != null && v > hi); err.hidden = !bad; err.textContent = bad ? `Use um número de ${lo ?? 0} a ${hi ?? '∞'}.` : ''; if (!bad) set(k > 1 ? Math.round(v * k) : v); };
   } else if (f.kind === 'time') {
     input = el('input', { type: 'time', value: cur || '09:00' }); input.oninput = () => { if (input.value) set(input.value); };
   } else if (f.kind === 'json') {
-    input = el('textarea.mono', { rows: 3, spellcheck: false, value: JSON.stringify(cur ?? {}, null, 2) });
-    input.oninput = () => { try { const v = JSON.parse(input.value || '{}'); if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('precisa ser um objeto: { "chave": "valor" }'); err.hidden = true; set(v); } catch (e) { err.hidden = false; err.textContent = 'JSON inválido: ' + e.message; } };
+    // campos com nome e valor, um por linha; só vira texto (JSON) quando um valor tem outros campos dentro, ou a pedido
+    const obj = cur && typeof cur === 'object' && !Array.isArray(cur) ? cur : {}, key = n.id + ':' + f.name;
+    const flat = Object.values(obj).every(v => v == null || typeof v !== 'object');
+    A.rawJson ||= new Set();
+    const swap = (raw) => el('button.am-link', { type: 'button', onclick: () => { raw ? A.rawJson.add(key) : A.rawJson.delete(key); renderInspector(); } }, raw ? 'editar como texto' : 'editar em campos');
+    if (flat && !A.rawJson.has(key)) {
+      const rows = Object.entries(obj).map(([k, v]) => [k, v == null ? '' : String(v)]);
+      // número e sim/não continuam do tipo que eram, se ainda parecerem um
+      const keep = (k, t) => typeof obj[k] === 'number' && t.trim() !== '' && Number.isFinite(Number(t)) ? Number(t) : typeof obj[k] === 'boolean' && /^(true|false)$/.test(t) ? t === 'true' : t;
+      const push = () => set(Object.fromEntries(rows.filter(r => r[0].trim()).map(([k, t]) => [k.trim(), keep(k.trim(), t)])));
+      let target = null;
+      const draw = () => input.replaceChildren(...rows.map((r, i) => {
+        const a = el('input', { type: 'text', value: r[0], placeholder: 'nome', spellcheck: false, 'aria-label': 'Nome do campo' }); a.oninput = () => { r[0] = a.value; push(); };
+        const b = el('input', { type: 'text', value: r[1], placeholder: 'valor', spellcheck: false, 'aria-label': 'Valor do campo' }); b.oninput = () => { r[1] = b.value; push(); }; b.onfocus = () => { target = b; };
+        return el('div.am-pair', a, b, el('button.icon-btn', { type: 'button', title: 'Remover', html: IC.x, onclick: () => { rows.splice(i, 1); target = null; push(); draw(); } }));
+      }), el('div.am-pair-foot', el('button.chip.am-step-add', { type: 'button', onclick: () => { rows.push(['', '']); draw(); input.querySelectorAll('.am-pair')[rows.length - 1]?.firstChild.focus(); } }, el('span', { html: IC.plus }), el('span', 'Campo')), swap(true)));
+      input = el('div.am-pairs'); draw();
+      // "+ dado" entra no valor em que a pessoa estava (ou num campo novo)
+      into = () => { if (target?.isConnected) return target; if (!rows.length) { rows.push(['', '']); draw(); } return input.querySelectorAll('.am-pair')[rows.length - 1].children[1]; };
+    } else {
+      input = el('textarea.mono', { rows: 3, spellcheck: false, value: JSON.stringify(cur ?? {}, null, 2) });
+      input.oninput = () => { try { const v = JSON.parse(input.value || '{}'); if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('precisa ser um conjunto de campos: { "nome": "valor" }'); err.hidden = true; set(v); } catch (e) { err.hidden = false; err.textContent = 'O texto não está no formato de campos: ' + e.message; } };
+      if (flat) above = el('div.am-rec-line', swap(false));
+    }
   } else if (f.kind === 'lines') {
     input = el('textarea.mono', { rows: Math.max(2, Math.min(6, (Array.isArray(cur) ? cur.length : 1))), spellcheck: false, value: (Array.isArray(cur) ? cur : []).join('\n') });
     input.oninput = () => set(input.value.split('\n').filter((l, i, a) => l !== '' || i < a.length - 1));
@@ -1054,8 +1110,15 @@ function field(n, f) {
     if (f.code) above = el('div.am-rec-line', el('button.chip.am-ai-btn', { type: 'button', onclick: () => nodeLocked(n.id) ? denied(flowLocked() ? '' : 'node') : scriptAi(n, f, input, set) }, el('span', { html: IC.spark }), el('span', String(cur ?? '').trim() ? 'Editar com IA' : 'Escrever com IA')));
   } else {
     input = el('input', { type: 'text', value: cur ?? '', placeholder: f.placeholder || '', spellcheck: false }); input.oninput = () => set(input.value);
+    if (Array.isArray(f.choices)) {
+      const known = f.choices.some(c => c.value === cur);
+      const sel = el('select', { 'aria-label': f.label }, f.choices.map(c => el('option', { value: c.value, selected: c.value === cur }, c.label)), el('option', { value: '\u0001', selected: !known }, 'Outro…'));
+      input.hidden = known;
+      sel.onchange = () => { if (sel.value === '\u0001') { input.hidden = false; input.focus(); } else { input.hidden = true; input.value = sel.value; set(sel.value); } };
+      wrap = el('div.am-choice', sel, input);
+    }
   }
-  let control = above ? el('div.am-rec-wrap', above, input) : input;
+  let control = wrap || (above ? el('div.am-rec-wrap', above, input) : input);
   // biblioteca de sons: o botão toca o escolhido
   if (f.preview === 'sound') {
     const b = el('button.icon-btn.am-browse', { type: 'button', title: 'Ouvir', html: IC.play });
@@ -1076,12 +1139,12 @@ function field(n, f) {
   if (['area', 'text', 'json', 'lines'].includes(f.kind) && s.inputs.length) {
     extra = el('button.am-link', { type: 'button', title: 'Usar o que veio de outro nó' }, '+ dado');
     extra.onclick = (e) => { const inside = pathsOf(incoming(n), 14); bs.showMenu(e, [
-      { label: 'O que chegou neste nó', k: '{{input}}', action: () => insertAt(input, '{{input}}') },
-      ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Saída de ${titleOf(u)}${spec(u.type).outputs.length > 1 ? ' (' + (portName(u, p)) + ')' : ''}`, action: () => insertAt(input, `{{nodes.${u.id}.${p}}}`) }))),
+      { label: 'O que chegou do passo anterior', action: () => insertAt(into(), '{{input}}') },
+      ...upstream(n.id).flatMap(u => (spec(u.type)?.outputs || []).map(p => ({ label: `Resultado de "${titleOf(u)}"${spec(u.type).outputs.length > 1 ? ' (' + (portName(u, p)) + ')' : ''}`, action: () => insertAt(into(), `{{nodes.${u.id}.${p}}}`) }))),
       // os campos do JSON que chega aqui (da última execução, ou do exemplo do nó anterior)
-      ...(inside.length ? ['-', ...pathItems(inside, (path) => insertAt(input, `{{input.${path}}}`))] : []),
+      ...(inside.length ? ['-', ...pathItems(inside, (path) => insertAt(into(), `{{input.${path}}}`))] : []),
       // senhas e tokens guardados no Automator: entra só o nome, o valor fica cifrado
-      '-', ...A.creds.flatMap(c => [{ label: 'Credencial: ' + c.name, k: c.label || 'senha ou token', action: () => insertAt(input, `{{cred:${c.name}}}`) }, ...(c.user ? [{ label: 'Usuário de ' + c.name, k: c.user, action: () => insertAt(input, `{{cred:${c.name}.user}}`) }] : [])]),
+      '-', ...A.creds.flatMap(c => [{ label: 'Credencial: ' + c.name, k: c.label || 'senha ou token', action: () => insertAt(into(), `{{cred:${c.name}}}`) }, ...(c.user ? [{ label: 'Usuário de ' + c.name, k: c.user, action: () => insertAt(into(), `{{cred:${c.name}.user}}`) }] : [])]),
       { label: A.creds.length ? 'Credenciais…' : 'Guardar uma senha ou token…', icon: IC.key, action: () => credsDialog() },
     ]); };
   }
@@ -1101,9 +1164,15 @@ function field(n, f) {
   // referência a uma credencial que ainda não foi guardada: o fluxo pararia neste nó
   const lacking = [...new Set([...JSON.stringify(cur ?? '').matchAll(/\{\{\s*cred:\s*([\w-]+)/g)].map(m => m[1]))].filter(c => !A.creds.some(x => x.name === c));
   if (lacking.length) { err.hidden = false; err.replaceChildren(...lacking.map(c => el('span.am-need', `A credencial "${c}" ainda não existe. `, el('button.am-link', { type: 'button', onclick: guard(async () => { await credEnter(c); renderInspector(); }) }, 'Guardar agora')))); }
-  const group = f.kind === 'checks' || f.kind === 'rows';
+  const group = input.tagName === 'DIV';
   if (!group) input.id = id;
-  return el('div.am-field', el('div.am-flabel', el('label', group ? {} : { htmlFor: id }, f.label), extra), control, f.help && el('small.am-hint', f.help), err);
+  const legend = el('small.am-legend', { hidden: true });
+  if (['area', 'text', 'json', 'lines', 'rows'].includes(f.kind)) {
+    paintLegend = () => { const v = n.params[f.name] ?? s.params[f.name], list = exprLegend(n, typeof v === 'string' ? v : JSON.stringify(v ?? '')); legend.hidden = !list.length; legend.replaceChildren(...list); };
+    paintLegend();
+  }
+  const missing = f.required && (cur == null || (typeof cur === 'string' ? !cur.trim() : Array.isArray(cur) && !cur.length));
+  return el('div.am-field' + (missing ? '.am-missing' : ''), { dataset: { field: f.name } }, el('div.am-flabel', el('label', group ? {} : { htmlFor: id }, f.label, f.required ? el('i.am-req', { title: 'Sem isso o nó não roda' }, ' *') : null), extra), control, legend, f.help && el('small.am-hint', f.help), err);
 }
 // ---------- resultado de teste (Testar site, Testar API): passou ou falhou, passo a passo ----------
 const isQa = (o) => !!o && typeof o === 'object' && typeof o.passed === 'number' && typeof o.failed === 'number' && (Array.isArray(o.steps) || Array.isArray(o.checks));
@@ -1123,11 +1192,53 @@ function qaView(o) {
     (o.js_errors?.length > 0 || o.bad_requests?.length > 0) && el('p.am-qa-warn', [o.js_errors?.length ? `${o.js_errors.length} ${o.js_errors.length === 1 ? 'erro' : 'erros'} de JavaScript na página` : '', o.bad_requests?.length ? `${o.bad_requests.length} ${o.bad_requests.length === 1 ? 'pedido falhou' : 'pedidos falharam'}` : ''].filter(Boolean).join(' · ')),
     o.report && el('button.chip.am-wide', { type: 'button', onclick: () => openFile(o.report) }, 'Abrir o relatório'));
 }
+/** O erro de um nó: o que aconteceu e o que fazer, o detalhe técnico recolhido e o atalho para a IA consertar. */
+const DETAIL = '\nDetalhe técnico: ';
+function errView(text, id) {
+  const [tip, ...rest] = String(text).split(DETAIL), detail = rest.join(DETAIL), n = id && node(id);
+  return [el('pre.am-out.err', tip), detail && el('details.am-io-ex', el('summary', 'Ver o detalhe técnico'), el('pre.am-out', detail)),
+    n && !flowLocked() && el('button.chip.am-wide.am-fix', { type: 'button', title: 'A IA recebe o erro e o que cada passo entregou, e propõe o conserto', onclick: () => adjustAi({ request: `O passo "${titleOf(n)}" falhou. Conserte o fluxo para isso não acontecer de novo.`, problem: `Nó ${n.id} "${titleOf(n)}" (${n.type}): ${text}` }) }, el('span', { html: IC.spark }), el('span', 'Corrigir com IA'))];
+}
+/** O que cada nó entregou na última execução, resumido, para a IA acertar os campos. */
+function seenOutputs() {
+  const out = {};
+  for (const x of currentRun()?.nodes || []) {
+    const n = node(x.id); if (!n || x.status !== 'completed' || !x.output) continue;
+    for (const [port, v] of Object.entries(x.output)) { const t = typeof v === 'string' ? v : JSON.stringify(v); out[`${n.id}.${port} ("${titleOf(n)}")`] = t.length > 600 ? t.slice(0, 600) + '…' : t; }
+  }
+  return out;
+}
+/** Antes de executar: o que falta preencher e o que não vai funcionar, dito por nó. true: pode rodar. */
+async function preflight() {
+  let issues = [];
+  try { issues = (await post('automator/check', { flow: A.flow })).issues || []; } catch { return true; }
+  nodeEls.forEach(e => e.classList.remove('need'));
+  if (!issues.length) return true;
+  const sig = JSON.stringify(issues);
+  for (const i of issues) nodeEls.get(i.node)?.classList.add('need');
+  if (A.okIssues === sig) return true;
+  const goTo = (i) => { const n = node(i.node); if (!n) return; select([n.id]); reveal(n); renderInspector(); const f = i.field && R.insp.querySelector(`[data-field="${i.field}"] :is(input, textarea, select)`); f?.focus(); };
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; box.hidden = true; resolve(v); };
+    const html = `<div class="dlg-hd"><div class="dlg-ic am-chk-ic">${IC.err}</div><div><h3>${issues.length === 1 ? 'Um ponto para conferir antes de rodar' : issues.length + ' pontos para conferir antes de rodar'}</h3><p>Clique num item para ir até o passo. Os passos com pendência ficam marcados no quadro.</p></div></div>
+      <ul class="am-chk">${issues.map((i, k) => { const n = node(i.node); return `<li><button type="button" data-k="${k}"><b>${esc(n ? titleOf(n) : 'O fluxo')}</b><span>${esc(i.text.charAt(0).toUpperCase() + i.text.slice(1))}</span></button></li>`; }).join('')}</ul>
+      <div class="actions"><button class="chip" data-v="run">Executar assim mesmo</button>${flowLocked() ? '' : `<button class="chip" data-v="ai">${IC.spark}<span>Corrigir com IA</span></button>`}<button class="chip primary" data-v="see">Arrumar agora</button></div>`;
+    const box = dialog('amChk', html, () => {});
+    box.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { finish(false); goTo(issues[+b.dataset.k]); });
+    box.querySelector('[data-v=run]').onclick = () => { A.okIssues = sig; finish(true); };
+    box.querySelector('[data-v=see]').onclick = () => { finish(false); goTo(issues.find(i => node(i.node)) || issues[0]); };
+    const ai = box.querySelector('[data-v=ai]'); if (ai) ai.onclick = () => { finish(false); adjustAi({ request: 'Resolva as pendências deste fluxo. O que só eu sei (endereços, pastas, senhas), deixe em branco e me diga o que preencher.', problem: 'Pendências que a conferência achou:\n' + issues.map(i => `- ${i.node ? i.node + ': ' : ''}${i.text}`).join('\n') }); };
+    box.querySelector('.chip.primary')?.focus();
+    const mo = new MutationObserver(() => { if (box.hidden) { mo.disconnect(); finish(false); } });
+    mo.observe(box, { attributes: true, attributeFilter: ['hidden'] });
+  });
+}
 function runBlock(id) {
   const r = currentRun()?.nodes?.find(x => x.id === id); if (!r || r.status === 'skipped') return null;
   const out = r.output && Object.keys(r.output).length === 1 ? Object.values(r.output)[0] : r.output;
   return el('section.am-sec', el('h4', 'Última execução', el('span.am-tag.' + r.status, STATUS[r.status] + (r.ms != null ? ' · ' + fmtMs(r.ms) : ''))),
-    r.error ? el('pre.am-out.err', r.error) : r.status === 'completed' ? (isQa(out) ? [qaView(out), el('details.am-io-ex', el('summary', 'Ver o JSON completo'), el('pre.am-out', show(out)))] : el('pre.am-out', show(out) || '(vazio)')) : null,
+    r.error ? errView(r.error, id) : r.status === 'completed' ? (isQa(out) ? [qaView(out), el('details.am-io-ex', el('summary', 'Ver o JSON completo'), el('pre.am-out', show(out)))] : el('pre.am-out', show(out) || '(vazio)')) : null,
     r.status === 'completed' && !nodeLocked(id) ? treatRow(id, r) : null);
 }
 /** Execuções do fluxo: ocultas até a pessoa pedir. Aberta, traz a lista, a retenção e o botão de limpar. */
@@ -1155,12 +1266,12 @@ function runsBlock() {
   for (const r of A.runs.slice(0, 12)) {
     const dur = r.finished_at ? fmtMs(r.finished_at - r.started_at) : '';
     const d = el('details.am-runrow.' + r.status, {}, el('summary', el('i.am-dot'), el('span.am-rwhen', fmtWhen(r.started_at)), el('span.am-rst', STATUS[r.status] || r.status), el('span.am-rdur', [r.scheduled ? 'automático' : '', dur].filter(Boolean).join(' · '))));
-    if (r.error && !(r.nodes || []).some(x => x.error)) d.append(el('pre.am-out.err', r.error));
+    if (r.error && !(r.nodes || []).some(x => x.error)) d.append(el('pre.am-out.err', String(r.error).split(DETAIL)[0]));
     for (const x of r.nodes || []) {
       if (x.status === 'skipped') continue;
       const n = node(x.id), out = x.output && Object.keys(x.output).length === 1 ? Object.values(x.output)[0] : x.output;
       d.append(el('div.am-rnode' + (x.round ? '.in' : ''), el('b', n ? titleOf(n) : 'nó removido', x.round ? el('i.am-round', ' · volta ' + x.round) : '', x.rounds ? el('i.am-round', ' · ' + x.rounds) : ''), el('span.am-tag.' + x.status, STATUS[x.status] + (x.ms != null ? ' · ' + fmtMs(x.ms) : ''))));
-      if (x.error) d.append(el('pre.am-out.err', x.error)); else if (x.status === 'completed' && show(out)) d.append(el('pre.am-out', show(out)));
+      if (x.error) d.append(el('pre.am-out.err', String(x.error).split(DETAIL)[0])); else if (x.status === 'completed' && show(out)) d.append(el('pre.am-out', show(out)));
     }
     box.append(d);
   }
@@ -1264,7 +1375,15 @@ async function pollRuns() {
   paintRuns(); paintBar();
   // o painel só é redesenhado se ninguém estiver digitando nele
   if (!R.insp.contains(document.activeElement) || !document.activeElement.matches('input, textarea, select')) renderInspector();
-  if (was && !isRunning()) { const r = runs[0]; if (r?.status === 'failed') bs.toast('Fluxo falhou: ' + (r.error || ''), 'err'); refreshFlows().catch(() => {}); }
+  if (was && !isRunning()) {
+    const r = runs[0];
+    if (r?.status === 'failed') {
+      const bad = (r.nodes || []).find(x => x.status === 'failed' && node(x.id));
+      if (bad) { select([bad.id]); reveal(node(bad.id)); renderInspector(); }
+      bs.toast(bad ? `Parou em "${titleOf(node(bad.id))}". O motivo e o que fazer estão no painel da direita.` : 'O fluxo falhou: ' + String(r.error || '').split(DETAIL)[0], 'err');
+    }
+    refreshFlows().catch(() => {});
+  }
 }
 const run = guard(async () => {
   if (!A.flow || busyRun) return;
@@ -1273,6 +1392,7 @@ const run = guard(async () => {
     if (isRunning()) { await post('automator/run', { action: 'stop', flow_id: A.flow.id }); }
     else {
       if (!A.flow.nodes.some(n => n.type.startsWith('trigger.') && !n.disabled)) throw new Error('o fluxo não tem gatilho. Adicione "Iniciar manualmente" ou "Agenda".');
+      if (!(await preflight())) return;
       if (isDirty() || !A.flow.id) { if (!(await save())) return; }
       await post('automator/run', { flow_id: A.flow.id });
     }
@@ -1785,7 +1905,7 @@ function generate() {
   };
 }
 /** Ajustar com IA: muda o fluxo que está aberto. Fica na barra do fluxo, separado de criar um novo. */
-function adjustAi() {
+function adjustAi(pre) {
   if (!A.flow) return;
   if (flowLocked()) return denied();
   const f = A.flow, trig = f.nodes.find(n => n.type.startsWith('trigger.'));
@@ -1794,6 +1914,7 @@ function adjustAi() {
     <div class="am-ai-flow"><span class="am-ai-flow-ic">${IC.app}</span><div><b>${esc(f.name || 'Fluxo sem nome')}</b><small>${f.nodes.length} ${f.nodes.length === 1 ? 'nó' : 'nós'}${trig ? ' · começa por ' + esc(titleOf(trig)) : ' · sem gatilho'}${isDirty() ? ' · com alterações não salvas' : ''}</small></div></div>
     <label class="fld">O que mudar<textarea id="amAdjReq" rows="4" placeholder="Depois de baixar, mandar também uma mensagem no Slack. E trocar o horário para 8h."></textarea></label>
     <div class="am-quick" id="amAdjQuick">${QUICK.map(t => `<button type="button">${esc(t)}</button>`).join('')}</div>
+    ${Object.keys(seenOutputs()).length || pre?.problem ? `<label class="am-check"><input type="checkbox" id="amAdjSeen" checked><span>Mandar junto ${pre?.problem ? 'o erro e ' : ''}o que cada passo entregou na última execução (a IA acerta mais; os dados vão para o agente escolhido)</span></label>` : ''}
     ${whoHtml('amAdj')}
     ${AI_NOTE}
     <p class="am-gen-st" id="amAdjSt" aria-live="polite"></p>
@@ -1802,6 +1923,7 @@ function adjustAi() {
   box.querySelector('.dlg-box').classList.add('am-ai-box');
   const $ = (q) => box.querySelector(q), go = $('#amAdjGo'), st = $('#amAdjSt'), req = $('#amAdjReq'), who = whoBind(box, 'amAdj');
   box.querySelectorAll('#amAdjQuick button').forEach(b => b.onclick = () => { const t = req.value.trim(); req.value = (t ? t.replace(/[.;]?$/, '. ') : '') + b.textContent + '.'; req.focus(); });
+  if (pre?.request) req.value = pre.request;
   req.focus();
   go.onclick = async () => {
     const request = req.value.trim();
@@ -1809,6 +1931,7 @@ function adjustAi() {
     if (!request) { st.textContent = 'Diga o que mudar no fluxo.'; return req.focus(); }
     let body;
     try { body = { request, ...who(), flow: { name: f.name, description: f.description || '', nodes: f.nodes, edges: f.edges } }; } catch (e) { st.textContent = 'Falta ' + e.message; return; }
+    if ($('#amAdjSeen')?.checked) { body.seen = seenOutputs(); if (pre?.problem) body.problem = pre.problem; }
     st.textContent = '';
     try {
       const res = await aiRun(box, 'automator/generate', body, ['A IA altera o fluxo', ...AI_STEPS.slice(1)]);
