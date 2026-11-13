@@ -1,8 +1,8 @@
 {
   "id": "runtimes",
   "name": "Runtimes e execução",
-  "description": "Descobre o que cada linguagem precisa instalado (JDK, Node.js, Python, Go, .NET, Rust, compilador C/C++, Ruby, PHP...) e a versão que o projeto pede; oferece baixar pela IDE, escolher outra versão ou apontar uma pasta. Mostra ▶ na margem dos mains (public static void main, fun main, if __name__ == \"__main__\", func main...) para executar como no IntelliJ, pelo Maven, Gradle, Cargo, dotnet ou direto.",
-  "version": "0.2.0",
+  "description": "Descobre o que cada linguagem precisa instalado (JDK, Node.js, Python, Go, .NET, Rust, compilador C/C++, Ruby, PHP...) e a versão que o projeto pede; oferece baixar pela IDE, escolher outra versão ou apontar uma pasta. Mostra ▶ na margem de tudo o que dá para executar: os mains (public static void main, fun main, if __name__ == \"__main__\", func main...), os scripts que rodam inteiros (Python, JavaScript, Shell, PowerShell, .bat, PHP, Lua, Perl, R, Ruby...) e cada script do package.json. Executa como no IntelliJ, pelo Maven, Gradle, Cargo, dotnet, npm ou direto.",
+  "version": "0.3.0",
   "author": "BlueScreen",
   "icon": "icon.svg",
   "order": 20

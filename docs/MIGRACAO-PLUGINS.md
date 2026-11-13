@@ -16,7 +16,7 @@ Referência da API: [PLUGINS.md](PLUGINS.md).
 | Precisa na máquina do usuário | nada (`ui.js`), ou Node.js / Python (servidor em script) | nada |
 | Desempenho | sobra para interface, HTTP, chamar programas, ler e gravar arquivos | melhor em CPU pesada, paralelismo e volume grande de dados |
 
-Exemplos no repositório: `qautils`, `sheets` e `runtimes` são só `ui.js` (o `sheets` lê e grava `.xlsx` em JavaScript; o `runtimes` foi migrado do Rust, veja a seção Arquitetura do README dele). O `unilint` tem servidor em Rust.
+Exemplos no repositório: `sheets` e `runtimes` são só `ui.js` (o `sheets` lê e grava `.xlsx` em JavaScript; o `runtimes` foi migrado do Rust, veja a seção Arquitetura do README dele). O `unilint` tem servidor em Rust.
 
 ## Etapa 1: inventário
 
@@ -195,7 +195,7 @@ Ao terminar, a IA entrega:
 
 | Plugin | Arquitetura | Leitura inicial |
 |---|---|---|
-| `qautils` | só `ui.js` | já está na arquitetura nova |
+| `qautils` | só `ui.js` | já está na arquitetura nova; desde 2026-11 mora na [loja de plugins](https://github.com/martindevbr/BlueScreen-Plugins), como o `iamaker` |
 | `sheets` | só `ui.js` | já está na arquitetura nova |
 | `unilint` | Rust (`server.exe`) | **Manter nativo** (reconfirmado em 2026-10-22): gancho `lint` num caminho quente (N1), 15 gramáticas Tree-sitter compiladas (N3), `rayon` (N2) e `mimalloc` |
 | `runtimes` | só `ui.js` (desde a 0.2.0) | **Migrado** em 2026-10-22: nenhum motivo de 2.1 confirmado; a varredura dos mains leva até 15 ms em JS (limite 50 ms) e as respostas são iguais às do Rust. Detalhes na seção Arquitetura do README |

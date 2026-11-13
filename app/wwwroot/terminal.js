@@ -3,6 +3,7 @@
    o shell padrão; a setinha ao lado escolhe outro (PowerShell 7, Windows PowerShell, cmd, Git Bash, WSL, MSYS2,
    Cygwin, Nushell, prompts do Visual Studio e perfis do Windows Terminal). O shell padrão fica lembrado.
    Ctrl+C copia quando há seleção (senão interrompe), Ctrl+V cola, botão direito abre o menu.
+   Ctrl + roda do mouse sobre o terminal, Ctrl++ e Ctrl+- mudam o tamanho da letra só dele (Ctrl+0 volta).
    Expõe bs.terminal: open(cwd, shellId), run(texto) e shells(). */
 (function (bs) {
 
@@ -17,6 +18,7 @@ const KIND_ICO = {
   wt: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 13l2 2-2 2"/></svg>',
 };
 const PLUS = '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>';
+const MINUS = '<svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>';
 const CARET = '<svg class="i" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
 
 bs.ui.panel(`<div id="termCon" hidden>
@@ -37,7 +39,16 @@ function tmTheme() {
   const light = document.documentElement.dataset.theme === 'light';
   return { background: v('bg'), foreground: v('fg-2'), cursor: v('fg'), cursorAccent: v('bg'), selectionBackground: v('sel'), selectionForeground: v('fg'), scrollbarSliderBackground: v('line-2') + '99', ...(light ? ANSI_LIGHT : ANSI_DARK) };
 }
-const tmFont = () => Math.max(10, (S.fontSize || 13));
+// tamanho da letra do terminal: o do código, mais o zoom próprio (Ctrl + roda do mouse e Ctrl + / Ctrl - com o terminal em foco)
+TM.zoom = store.get('termZoom', 0);
+const tmFont = () => Math.max(8, Math.min(40, (S.fontSize || 13) + TM.zoom));
+function tmRefont() { TM.list.forEach(t => { t.term.options.fontSize = tmFont(); try { t.fit.fit(); } catch {} }); }
+function tmZoom(step) {
+  const before = tmFont(); TM.zoom = step === 0 ? 0 : TM.zoom + step; let now = tmFont();
+  if (step && now === before) { TM.zoom -= step; return; } // já está no limite
+  store.set('termZoom', TM.zoom); tmRefont(); toast(`Fonte do terminal: ${now}px`, null, 'font');
+}
+bs.zoom = Object.assign(bs.zoom || {}, { terminal: tmZoom });
 new MutationObserver(() => { const th = tmTheme(); TM.list.forEach(t => { t.term.options.theme = th; }); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
 
 async function tmShells(fresh) {
@@ -64,7 +75,7 @@ async function tmOpen(cwd, shellId) {
   const dir = cwd || (S.project && S.project.path) || '';
   const n = TM.list.filter(t => t.shell.id === sh.id).length;
   const t = { id: ++TM.seq, shell: sh, cwd: dir, title: sh.name + (n ? ` (${n + 1})` : ''), alive: false, started: Date.now() };
-  t.el = document.createElement('div'); t.el.className = 'tm-pane'; $('#tmBody').appendChild(t.el);
+  t.el = document.createElement('div'); t.el.className = 'tm-pane'; t.el.dataset.zoom = 'terminal'; $('#tmBody').appendChild(t.el);
   t.term = new Terminal({ fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace", fontSize: tmFont(), lineHeight: 1.2, cursorBlink: true, cursorStyle: 'bar', scrollback: 10000, allowProposedApi: true, theme: tmTheme(), windowsPty: { backend: 'conpty' }, rightClickSelectsWord: false, macOptionIsMeta: true });
   t.fit = new FitAddon.FitAddon(); t.term.loadAddon(t.fit);
   try { t.term.loadAddon(new Unicode11Addon.Unicode11Addon()); t.term.unicode.activeVersion = '11'; } catch {}
@@ -139,6 +150,7 @@ function tmRename(t, el) {
   inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
   inp.onblur = () => done(true);
 }
+const TM_ZOOM = { 'Ctrl+=': 1, 'Ctrl++': 1, 'Ctrl+Shift+=': 1, 'Ctrl+Shift++': 1, 'Ctrl+Add': 1, 'Ctrl+-': -1, 'Ctrl+Subtract': -1, 'Ctrl+Shift+-': -1, 'Ctrl+Shift+_': -1, 'Ctrl+0': 0 };
 function tmKey(t, e) {
   if (e.type !== 'keydown') return true;
   const k = keyCombo(e);
@@ -147,6 +159,8 @@ function tmKey(t, e) {
   // Ctrl+V: o navegador faz a colagem (evento paste), o xterm só não manda ^V para o shell
   if (k === 'Ctrl+V' || k === 'Ctrl+Shift+V' || k === 'Shift+Insert') return false;
   if (k === 'Ctrl+Shift+T') return false;
+  // zoom do terminal: não vai para o shell
+  const z = TM_ZOOM[k]; if (z !== undefined) { tmZoom(z); e.preventDefault(); return false; }
   return true;
 }
 function tmRestart(t) { t.term.write('\r\n'); t.started = Date.now(); tmConnect(t); }
@@ -156,6 +170,10 @@ function tmMenu(e, t) {
     { label: 'Copiar', icon: I.copy, k: 'Ctrl+C', action: () => { if (t.term.hasSelection()) copyText(t.term.getSelection()); } },
     { label: 'Colar', icon: I.copy, k: 'Ctrl+V', action: () => tmPaste(t) },
     { label: 'Selecionar tudo', icon: I.edit, action: () => t.term.selectAll() },
+    '-',
+    { label: 'Aumentar a letra', icon: PLUS, k: 'Ctrl++', action: () => tmZoom(1) },
+    { label: 'Diminuir a letra', icon: MINUS, k: 'Ctrl+-', action: () => tmZoom(-1) },
+    ...(TM.zoom ? [{ label: 'Letra do tamanho do código', icon: I.refresh, k: 'Ctrl+0', action: () => tmZoom(0) }] : []),
     '-',
     { label: 'Limpar', icon: I.refresh, action: () => t.term.clear() },
     { label: 'Novo terminal', icon: PLUS, k: 'Ctrl+Shift+T', action: () => tmOpen(t.cwd) },
@@ -222,7 +240,8 @@ bs.hooks.filter('menu:file', (items, ctx) => {
   const rel = ctx.isDir ? ctx.rel : ctx.rel.split('/').slice(0, -1).join('/');
   return [...items, '-', { label: 'Abrir no terminal', icon: TERM_ICO, action: () => tmOpen(rel ? absPath(rel) : S.project.path) }];
 });
-bs.hooks.on('codefont', () => TM.list.forEach(t => { t.term.options.fontSize = tmFont(); try { t.fit.fit(); } catch {} }));
+bs.hooks.on('codefont', tmRefont);
 window.addEventListener('beforeunload', () => TM.list.forEach(t => { try { t.ws.close(); } catch {} }));
-bs.terminal = { open: (cwd, shell) => tmOpen(cwd, shell), run: async (text, cwd) => { const t = (cwd ? null : TM.active) || await tmOpen(cwd); if (!t) return; if (t.alive) tmSend(t, { i: text + '\r' }); else t.pending = text + '\r'; }, shells: () => tmShells() };
+bs.terminal = { prefs: { shell: () => (tmDefault() || {}).id || TM.def, setShell(id) { TM.def = id; store.set('termShell', id); }, font: () => tmFont(), zoom: (step) => tmZoom(step) },
+  open: (cwd, shell) => tmOpen(cwd, shell), run: async (text, cwd) => { const t = (cwd ? null : TM.active) || await tmOpen(cwd); if (!t) return; if (t.alive) tmSend(t, { i: text + '\r' }); else t.pending = text + '\r'; }, shells: () => tmShells() };
 })(window.BS);

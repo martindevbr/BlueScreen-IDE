@@ -3,6 +3,8 @@
 //! abre, os seguintes continuam na mesma página (dá para entrar num site num nó, repetir uma ação por item em
 //! outro, dentro de um laço, e ler o resultado num terceiro) e, quando a execução termina, a janela fecha.
 //! O gravador de passos (`record`) usa a mesma conexão: a pessoa usa o site e cada ação vira uma linha do roteiro.
+//! O nó Testar site (`browser.test`) roda o mesmo roteiro como um teste: em vez de parar no primeiro erro, entrega o
+//! placar (cada passo, passou ou falhou), a tela na hora da falha e um relatório em HTML.
 use super::{number_of, stringify, text_of};
 use crate::util::*;
 use base64::Engine;
@@ -22,8 +24,18 @@ pub(super) fn catalog() -> Value {
         ("read", "Ler campo (devolver)", "read"), ("list", "Ler todos (lista)", "read"), ("table", "Ler tabela", "read"), ("page", "Ler o texto da página", "read"), ("shot", "Capturar tela", "read"),
         ("wait", "Esperar aparecer", "wait"), ("gone", "Esperar sumir", "wait"), ("idle", "Esperar a página carregar", "wait"), ("sleep", "Esperar (segundos)", "wait"),
         ("ask", "Pedir para você digitar", "wait"), ("pause", "Esperar você continuar", "wait"),
-        ("text", "Conferir texto", "check"), ("see", "Conferir que aparece", "check"), ("url", "Conferir endereço", "check"), ("title", "Conferir título", "check"), ("count", "Conferir quantidade", "check")]
+        ("text", "Conferir texto", "check"), ("see", "Conferir que aparece", "check"), ("url", "Conferir endereço", "check"), ("title", "Conferir título", "check"), ("count", "Conferir quantidade", "check"),
+        ("look", "Comparar com a referência (visual)", "check"), ("a11y", "Checar acessibilidade (básico)", "check")]
         .iter().map(|(v, l, t)| json!({"value": v, "label": l, "tone": t})).collect();
+    // os dois nós têm os mesmos passos
+    let columns = json!([
+        {"name":"do","kind":"select","options":actions},
+        {"name":"on","placeholder":"Onde: texto=Entrar","hide":{"do":["key","goto","sleep","shot","url","title","back","tab","idle","pause","look","a11y"]}},
+        {"name":"value","placeholder":"Valor","hide":{"do":["click","wait","see","gone","hover","back","tab","idle","a11y"]}},
+        {"name":"opt","kind":"select","options":[{"value":"","label":"Tem que achar"},{"value":"skip","label":"Se não achar, pula"}],"hide":{"do":["goto","sleep","key","back","idle","pause","shot","tab","js","look","a11y"]}}
+    ]);
+    let screens = json!([{"value":"desktop","label":"Computador (1280 × 900)"},{"value":"wide","label":"Monitor grande (1920 × 1080)"},{"value":"tablet","label":"Tablet (820 × 1180)"},{"value":"phone","label":"Celular (390 × 844)"}]);
+    let sessions = json!([{"value":"keep","label":"Lembrar dos logins entre as execuções"},{"value":"clean","label":"Começar sempre do zero (sem cookies)"}]);
     json!([
         {"type":"browser.run","name":"Navegador","category":"Navegador","desc":"Abre um site e faz por você: clica, digita, lê, confere. Os nós Navegador de um fluxo continuam na mesma página, do começo ao fim.","inputs":["in"],"outputs":["out"],
          "params":{"url":"","steps":[],"show":"yes","profile":"keep","device":"desktop","speed":"normal","after":"close","wait_s":15},
@@ -31,26 +43,71 @@ pub(super) fn catalog() -> Value {
             {"name":"url","label":"Endereço","kind":"text","placeholder":"https://… (vazio: continua na página em que o nó anterior parou)"},
             {"name":"steps","label":"Passos","kind":"rows","add":"Passo","recorder":true,
              "help":"Gravar abre o site: use ele normalmente e cada ação vira um passo. Onde: texto=Entrar acha pelo texto da tela; rotulo=Tempo de resposta acha o valor ao lado desse texto. Nos passos de leitura, o valor é o nome do campo na saída. Senhas: {{cred:nome}}. Se não achar, pula: para o que nem sempre aparece (o login, um aviso de cookies). Pedir para você digitar: o fluxo para e mostra a pergunta do valor (o código do celular, por exemplo).",
-             "columns":[
-                {"name":"do","kind":"select","options":actions},
-                {"name":"on","placeholder":"Onde: texto=Entrar","hide":{"do":["key","goto","sleep","shot","url","title","back","tab","idle","pause"]}},
-                {"name":"value","placeholder":"Valor","hide":{"do":["click","wait","see","gone","hover","back","tab","idle"]}},
-                {"name":"opt","kind":"select","options":[{"value":"","label":"Tem que achar"},{"value":"skip","label":"Se não achar, pula"}],"hide":{"do":["goto","sleep","key","back","idle","pause","shot","tab","js"]}}
-             ]},
+             "columns":columns},
             {"name":"show","label":"Janela do navegador","kind":"select","options":[{"value":"yes","label":"Mostrar"},{"value":"no","label":"Não mostrar"}]},
-            {"name":"profile","label":"Sessão","kind":"select","options":[{"value":"keep","label":"Lembrar dos logins entre as execuções"},{"value":"clean","label":"Começar sempre do zero (sem cookies)"}],"help":"Vale o que o primeiro nó Navegador do fluxo pedir."},
-            {"name":"device","label":"Tela","kind":"select","options":[{"value":"desktop","label":"Computador (1280 × 900)"},{"value":"wide","label":"Monitor grande (1920 × 1080)"},{"value":"tablet","label":"Tablet (820 × 1180)"},{"value":"phone","label":"Celular (390 × 844)"}]},
+            {"name":"profile","label":"Sessão","kind":"select","options":sessions,"help":"Vale o que o primeiro nó Navegador do fluxo pedir."},
+            {"name":"device","label":"Tela","kind":"select","options":screens},
             {"name":"speed","label":"Velocidade","kind":"select","options":[{"value":"normal","label":"Normal"},{"value":"fast","label":"Rápida (não baixa imagens, vídeos nem fontes)"}],"help":"A rápida serve para ler dados de painéis pesados. Se o site mostrar imagem para confirmar que você é uma pessoa, use a normal. Vale o que o primeiro nó Navegador do fluxo pedir."},
             {"name":"after","label":"Quando o fluxo terminar","kind":"select","show":{"show":["yes"]},"options":[{"value":"close","label":"Fechar o navegador"},{"value":"keep","label":"Deixar aberto"}]},
+            {"name":"wait_s","label":"Esperar cada elemento por até (segundos)","kind":"number","min":1,"max":300}
+         ],
+         "record":{"core":true}},
+        {"type":"browser.test","name":"Testar site","category":"QA","desc":"Roda um roteiro no site e confere o resultado: passou ou falhou, com evidência e relatório.","inputs":["in"],"outputs":["true","false"],
+         "params":{"name":"","url":"","steps":[],"device":"desktop","on_fail":"stop","js_errors":"report","tolerance":0.5,"show":"yes","profile":"keep","after":"close","wait_s":15},
+         "fields":[
+            {"name":"name","label":"Nome do teste","kind":"text","placeholder":"Login com senha certa"},
+            {"name":"url","label":"Endereço","kind":"text","placeholder":"https://… (vazio: continua na página em que o nó anterior parou)"},
+            {"name":"steps","label":"Roteiro","kind":"rows","add":"Passo","recorder":true,
+             "help":"Gravar abre o site: use ele normalmente e cada ação vira um passo. Na barra do topo, Ler campo devolve um texto da tela e Conferir garante que ele continua lá. Onde: um seletor CSS (#senha), texto=Entrar ou rotulo=Nome do campo. Senhas: {{cred:nome}}, guardadas em Credenciais. Comparar com a referência: o valor é o arquivo da imagem (vazio: o Automator escolhe).",
+             "columns":columns},
+            {"name":"device","label":"Tela","kind":"select","options":screens},
+            {"name":"on_fail","label":"Quando um passo falha","kind":"select","options":[{"value":"stop","label":"Parar o teste"},{"value":"continue","label":"Seguir e anotar todas as falhas"}]},
+            {"name":"js_errors","label":"Erro de JavaScript na página","kind":"select","options":[{"value":"report","label":"Só anotar no relatório"},{"value":"fail","label":"Reprova o teste"}]},
+            {"name":"tolerance","label":"Diferença visual aceita (%)","kind":"number","min":0,"max":100,"help":"Para o passo Comparar com a referência. A primeira execução grava a imagem de referência."},
+            {"name":"show","label":"Janela do navegador","kind":"select","options":[{"value":"yes","label":"Mostrar"},{"value":"no","label":"Não mostrar"}]},
+            {"name":"profile","label":"Sessão","kind":"select","options":sessions,"help":"Vale o que o primeiro nó de navegador do fluxo pedir."},
+            {"name":"after","label":"Quando o fluxo terminar","kind":"select","show":{"show":["yes"]},"options":[{"value":"close","label":"Fechar se passou (aberto se falhou)"},{"value":"close_always","label":"Fechar sempre"},{"value":"keep","label":"Deixar aberto"}]},
             {"name":"wait_s","label":"Esperar cada elemento por até (segundos)","kind":"number","min":1,"max":300}
          ],
          "record":{"core":true}}
     ])
 }
 pub(super) fn io_doc(kind: &str) -> Option<(&'static str, &'static str, Value)> {
-    (kind == "browser.run").then(|| ("Qualquer dado, para usar no endereço e nos passos com {{input}}.",
-        "Objeto com o endereço final, o título da página e o que os passos de leitura guardaram (em values): Ler campo dá um texto, Ler todos uma lista de textos, Ler tabela uma lista de objetos (um por linha, com os títulos das colunas como campos) e Ler o texto da página o texto inteiro.",
-        json!({"url": "https://exemplo.com/conta", "title": "Minha conta", "values": {"saldo": "R$ 120,00", "tabela": [{"Serviço": "checkout", "Tempo de resposta": "120 ms"}]}, "skipped": []})))
+    match kind {
+        "browser.run" => Some(("Qualquer dado, para usar no endereço e nos passos com {{input}}.",
+            "Objeto com o endereço final, o título da página e o que os passos de leitura guardaram (em values): Ler campo dá um texto, Ler todos uma lista de textos, Ler tabela uma lista de objetos (um por linha, com os títulos das colunas como campos) e Ler o texto da página o texto inteiro.",
+            json!({"url": "https://exemplo.com/conta", "title": "Minha conta", "values": {"saldo": "R$ 120,00", "tabela": [{"Serviço": "checkout", "Tempo de resposta": "120 ms"}]}, "skipped": []}))),
+        "browser.test" => Some(("Qualquer dado, para usar no endereço e nos passos com {{input}}.",
+            "O resultado do teste, pela saída sim (passou) ou não (falhou): cada passo, os campos lidos da tela, a evidência da falha e o caminho do relatório.",
+            json!({"ok": false, "name": "Login", "passed": 4, "failed": 1, "skipped": 0, "total": 5, "ms": 6200, "url": "https://exemplo.com/conta", "title": "Minha conta", "values": {"saldo": "R$ 120,00"},
+                "steps": [{"n": 1, "do": "click", "name": "Clicar", "on": "texto=Entrar", "ok": true, "ms": 410}, {"n": 2, "do": "text", "name": "Conferir texto", "on": "h1", "value": "Olá", "ok": false, "ms": 15000, "error": "esperava \"Olá\", mas está \"Erro\"", "shot": "C:\\…\\passo-2.png"}],
+                "js_errors": [], "bad_requests": [{"status": 500, "url": "https://exemplo.com/api/conta"}], "report": "C:\\…\\relatorios\\teste-20261112.html"}))),
+        _ => None,
+    }
+}
+pub(super) fn io_kind(kind: &str) -> Option<(&'static str, &'static str)> { matches!(kind, "browser.run" | "browser.test").then_some(("any", "object")) }
+/// Fluxo gravado quando o Navegador era um plugin (`plugin.navegador.site` e `plugin.navegador.test`): o tipo que o nó
+/// tem agora, com os parâmetros no formato dos nós do núcleo. O segredo do Cofre que o plugin pedia (`{{vault:site}}`)
+/// vira a credencial do Automator de mesmo nome.
+pub(super) fn migrate(kind: &str, p: &mut Value) -> Option<&'static str> {
+    static VAULT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\{\{\s*vault:\s*([\w-]+)\s*\}\}").unwrap());
+    fn creds(v: &mut Value) {
+        match v {
+            Value::String(s) if s.contains("vault:") => *s = VAULT.replace_all(s, "{{cred:$1}}").into_owned(),
+            Value::Array(a) => a.iter_mut().for_each(creds),
+            Value::Object(o) => o.values_mut().for_each(creds),
+            _ => {}
+        }
+    }
+    let now = match kind { "plugin.navegador.site" => "browser.run", "plugin.navegador.test" => "browser.test", _ => return None };
+    if !p.is_object() { *p = json!({}); }
+    creds(p);
+    // o plugin guardava os logins no perfil dele, e o Automatizar site só conhecia a tela de computador
+    for (k, v) in [("profile", "keep"), ("device", "desktop")] { if p[k].as_str().is_none_or(str::is_empty) { p[k] = json!(v); } }
+    if now == "browser.run" && p["speed"].is_null() { p["speed"] = json!("normal"); }
+    let steps: Vec<Value> = p["steps"].as_array().map(|a| a.iter().filter(|s| s.is_object()).cloned().map(|mut s| { if s["opt"].is_null() { s["opt"] = json!(""); } s }).collect()).unwrap_or_default();
+    p["steps"] = json!(steps);
+    Some(now)
 }
 
 // Procura o elemento na página. "texto=Entrar" acha pelo texto visível (botões e links primeiro); o resto é seletor CSS.
@@ -142,6 +199,36 @@ const ASK: &str = r#"(text, field) => {
   if (field) setTimeout(() => input.focus(), 50);
   return st;
 }"#;
+// Checagem básica de acessibilidade: o que falta na página, em frases.
+const A11Y: &str = r#"(() => {
+  const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }, out = [], name = (e) => (e.innerText || e.getAttribute('aria-label') || e.getAttribute('title') || e.value || (e.querySelector('img[alt]') || {}).alt || '').trim();
+  const add = (list, msg) => { const n = list.filter(seen).length; if (n) out.push(n + ' ' + msg); };
+  if (!document.documentElement.lang) out.push('a página não diz o idioma (atributo lang)');
+  if (!document.title.trim()) out.push('a página não tem título');
+  add([...document.querySelectorAll('img:not([alt])')], 'imagem(ns) sem texto alternativo (alt)');
+  add([...document.querySelectorAll('button, a[href], [role=button]')].filter(e => !name(e)), 'botão(ões) ou link(s) sem nome');
+  add([...document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea')].filter(e => !(e.labels && e.labels.length) && !e.getAttribute('aria-label') && !e.getAttribute('aria-labelledby') && !e.getAttribute('title')), 'campo(s) de formulário sem rótulo');
+  if (!document.querySelector('h1')) out.push('a página não tem um título principal (h1)');
+  return out;
+})()"#;
+// Compara duas telas (PNG em base64): quantos % dos pontos mudaram e a imagem com as diferenças em vermelho.
+const DIFF: &str = r#"async (a, b) => {
+  const load = (s) => createImageBitmap(new Blob([Uint8Array.from(atob(s), c => c.charCodeAt(0))], { type: 'image/png' }), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  const x = await load(a), y = await load(b);
+  if (x.width !== y.width || x.height !== y.height) return { percent: 100, why: `o tamanho mudou: a referência tem ${x.width}x${x.height} e a tela agora tem ${y.width}x${y.height}` };
+  const px = (im) => { const g = new OffscreenCanvas(im.width, im.height).getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0); return g.getImageData(0, 0, im.width, im.height).data; };
+  const p = px(x), q = px(y), c = new OffscreenCanvas(x.width, x.height), g = c.getContext('2d'), out = g.createImageData(x.width, x.height), o = out.data;
+  let diff = 0;
+  for (let i = 0; i < p.length; i += 4) {
+    if (Math.max(Math.abs(p[i] - q[i]), Math.abs(p[i + 1] - q[i + 1]), Math.abs(p[i + 2] - q[i + 2])) > 32) { diff++; o[i] = 235; o[i + 1] = 40; o[i + 2] = 60; }
+    else o[i] = o[i + 1] = o[i + 2] = Math.min(255, 168 + (((q[i] + q[i + 1] + q[i + 2]) / 3) >> 2));
+    o[i + 3] = 255;
+  }
+  g.putImageData(out, 0, 0);
+  const bytes = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
+  let s = ''; for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+  return { percent: Math.round(diff / (x.width * x.height) * 10000) / 100, image: btoa(s) };
+}"#;
 const TEXT_OF: &str = "String(/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el.value : el.innerText || el.textContent || '').trim()";
 const RECORDER: &str = include_str!("recorder.js");
 /// tecla -> (key, código, texto que ela digita)
@@ -156,14 +243,15 @@ fn key_of(name: &str) -> Option<(&'static str, u32, &'static str)> {
 fn action_name(k: &str) -> &'static str {
     match k { "goto" => "Ir para", "click" => "Clicar", "type" => "Digitar", "wait" => "Esperar aparecer", "read" => "Ler campo", "list" => "Ler todos", "key" => "Apertar tecla", "sleep" => "Esperar", "shot" => "Capturar tela",
         "table" => "Ler tabela", "page" => "Ler o texto da página", "idle" => "Esperar a página carregar", "ask" => "Pedir para você digitar", "pause" => "Esperar você continuar", "select" => "Escolher opção", "check" => "Marcar ou desmarcar", "hover" => "Passar o mouse", "upload" => "Enviar arquivo", "scroll" => "Rolar a página", "back" => "Voltar", "tab" => "Ir para a aba que abriu", "js" => "Rodar JavaScript",
-        "see" => "Conferir que aparece", "gone" => "Esperar sumir", "text" => "Conferir texto", "url" => "Conferir endereço", "title" => "Conferir título", "count" => "Conferir quantidade", _ => "Passo" }
+        "see" => "Conferir que aparece", "gone" => "Esperar sumir", "text" => "Conferir texto", "url" => "Conferir endereço", "title" => "Conferir título", "count" => "Conferir quantidade", "look" => "Comparar com a referência", "a11y" => "Checar acessibilidade", _ => "Passo" }
 }
 fn device(name: &str) -> (u32, u32, bool) { match name { "wide" => (1920, 1080, false), "tablet" => (820, 1180, true), "phone" => (390, 844, true), _ => (1280, 900, false) } }
 fn find_browser() -> Option<PathBuf> {
     let roots: Vec<PathBuf> = ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"].iter().filter_map(|k| std::env::var_os(k).map(PathBuf::from)).collect();
     ["Microsoft\\Edge\\Application\\msedge.exe", "Google\\Chrome\\Application\\chrome.exe"].iter().flat_map(|n| roots.iter().map(move |r| r.join(n))).find(|p| p.is_file())
 }
-/// Onde ficam o perfil do navegador (cookies, logins) e as telas capturadas nas falhas.
+/// Onde ficam o perfil do navegador (cookies, logins), as telas capturadas nas falhas, as imagens de referência e os
+/// relatórios de teste.
 fn data_dir() -> PathBuf { super::file().parent().map(PathBuf::from).unwrap_or_default().join("automator-navegador") }
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| reqwest::Client::builder().timeout(Duration::from_secs(5)).no_proxy().build().unwrap_or_default());
 fn closed() -> ApiError { fail("o navegador foi fechado no meio do caminho", 409) }
@@ -174,7 +262,10 @@ type Waiting = Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<Value,
 type Frame = (Option<String>, i64, String);
 /// `frames`: os quadros que a página tem, de qualquer endereço. O JavaScript da página não entra num quadro de outra
 /// origem, então o motor pergunta a cada um deles quando a página não tem o que procura. `main`: o quadro da própria página.
-struct Cdp { tx: tokio::sync::mpsc::UnboundedSender<String>, waiting: Waiting, events: tokio::sync::broadcast::Sender<Value>, seq: Arc<AtomicU64>, open: Arc<AtomicBool>, frames: Arc<Mutex<Vec<Frame>>>, main: Mutex<String> }
+/// `errors` e `bad`: os erros de JavaScript da página e os pedidos que voltaram com erro (estes, só com a rede ligada,
+/// que é o que o Testar site faz), para o relatório do teste.
+struct Cdp { tx: tokio::sync::mpsc::UnboundedSender<String>, waiting: Waiting, events: tokio::sync::broadcast::Sender<Value>, seq: Arc<AtomicU64>, open: Arc<AtomicBool>, frames: Arc<Mutex<Vec<Frame>>>, main: Mutex<String>,
+    errors: Arc<Mutex<Vec<String>>>, bad: Arc<Mutex<Vec<Value>>> }
 impl Cdp {
     async fn connect(url: &str) -> ApiResult<Arc<Cdp>> {
         let (ws, _) = tokio_tungstenite::connect_async(url).await.map_err(|e| fail(format!("não deu para falar com o navegador: {e}"), 502))?;
@@ -188,6 +279,8 @@ impl Cdp {
         let frames: Arc<Mutex<Vec<Frame>>> = Default::default();
         let (w, ev, alive) = (waiting.clone(), events.clone(), open.clone());
         let (tx2, sq, fr) = (tx.clone(), seq.clone(), frames.clone());
+        let (errors, bad): (Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<Value>>>) = Default::default();
+        let (er, bd) = (errors.clone(), bad.clone());
         tokio::spawn(async move {
             while let Some(Ok(m)) = stream.next().await {
                 let Ok(text) = m.to_text() else { continue };
@@ -213,6 +306,15 @@ impl Cdp {
                         }
                         "Runtime.executionContextDestroyed" => { let id = v["params"]["executionContextId"].as_i64(); fr.lock().retain(|f| !(f.0 == sid && Some(f.1) == id)); }
                         "Runtime.executionContextsCleared" => fr.lock().retain(|f| f.0 != sid),
+                        "Runtime.exceptionThrown" if sid.is_none() => {
+                            let d = &v["params"]["exceptionDetails"];
+                            let mut g = er.lock();
+                            if g.len() < 50 { g.push(d["exception"]["description"].as_str().or(d["text"].as_str()).unwrap_or("erro").lines().next().unwrap_or("").chars().take(300).collect()); }
+                        }
+                        "Network.responseReceived" if sid.is_none() => {
+                            let r = &v["params"]["response"];
+                            if let Some(status) = r["status"].as_u64().filter(|s| *s >= 400) { let mut g = bd.lock(); if g.len() < 30 { g.push(json!({"status": status, "url": r["url"].as_str().unwrap_or("").chars().take(300).collect::<String>()})); } }
+                        }
                         _ => {}
                     }
                     // eventos de rede (modo rápido) e os de dentro dos quadros não entopem a fila em que o goto espera a página
@@ -222,7 +324,7 @@ impl Cdp {
             alive.store(false, Ordering::Relaxed);
             w.lock().clear();
         });
-        Ok(Arc::new(Cdp { tx, waiting, events, seq, open, frames, main: Default::default() }))
+        Ok(Arc::new(Cdp { tx, waiting, events, seq, open, frames, main: Default::default(), errors, bad }))
     }
     async fn send(&self, method: &str, params: Value) -> ApiResult<Value> { self.send_to(None, method, params).await }
     /// `frame`: a sessão de um quadro de outro site; sem ela, a página.
@@ -344,6 +446,20 @@ async fn new_tab(port: u16) -> ApiResult<(Arc<Cdp>, String)> {
     let ws = t["webSocketDebuggerUrl"].as_str().ok_or_else(|| fail("o navegador não abriu uma aba nova", 500))?;
     Ok((attach(ws).await?, t["id"].as_str().unwrap_or("").to_string()))
 }
+/// Quantos % dos pontos mudaram entre a referência e a tela de agora, e a imagem das diferenças. Quem compara é o
+/// próprio navegador, numa aba em branco aberta só para isso (longe das regras da página em teste).
+async fn diff(port: u16, cdp: &Cdp, base: &[u8], now: &[u8]) -> ApiResult<Value> {
+    let b64 = |b: &[u8]| json!(base64::engine::general_purpose::STANDARD.encode(b));
+    let made = cdp.send("Target.createTarget", json!({"url": "about:blank", "background": true})).await.ok().and_then(|r| r["targetId"].as_str().map(String::from));
+    let (tab, id) = match made {
+        Some(id) => (attach(&format!("ws://127.0.0.1:{port}/devtools/page/{id}")).await?, id),
+        None => new_tab(port).await?,
+    };
+    let r = tab.eval(&format!("({DIFF})({}, {})", b64(base), b64(now))).await;
+    let _ = HTTP.get(format!("http://127.0.0.1:{port}/json/close/{id}")).send().await;
+    let _ = cdp.send("Page.bringToFront", json!({})).await;
+    r
+}
 
 /// O navegador de uma execução do fluxo.
 struct Session { port: u16, hidden: bool, clean: Option<PathBuf>, cdp: Mutex<Arc<Cdp>>, target: Mutex<String>, keep: AtomicBool }
@@ -392,8 +508,16 @@ pub(super) async fn finish(rid: &str) {
 }
 
 // ---------- os passos ----------
-struct Steps { cdp: Arc<Cdp>, wait: Duration, values: serde_json::Map<String, Value> }
+/// `tolerance`, `refs` e `evidence`: do passo Comparar com a referência (a diferença aceita em %, o nome que leva a
+/// referência sem arquivo escolhido e a pasta onde fica a imagem das diferenças). `note` e `shot`: o que o último passo
+/// deixou a mais, um recado ("referência criada") ou a imagem que mostra a falha.
+struct Steps { cdp: Arc<Cdp>, wait: Duration, values: serde_json::Map<String, Value>, tolerance: f64, refs: String, evidence: PathBuf, note: Option<String>, shot: Option<String> }
 impl Steps {
+    fn new(session: &Session, p: &Value, stamp: &str) -> Steps {
+        let name = crate::creds::slug(&text_of(p, "name"));
+        Steps { cdp: session.cdp(), wait: Duration::from_secs(number_of(&p["wait_s"]).unwrap_or(15.0).clamp(1.0, 300.0) as u64), values: Default::default(), tolerance: number_of(&p["tolerance"]).unwrap_or(0.5).max(0.0),
+            refs: if name.is_empty() { "tela".into() } else { name }, evidence: data_dir().join("evidencias").join(stamp), note: None, shot: None }
+    }
     async fn appear(&self, sel: &str) -> ApiResult<()> {
         if sel.is_empty() { return Err(fail("diga onde (um seletor, ou texto=...)", 400)); }
         let end = Instant::now() + self.wait;
@@ -524,6 +648,38 @@ impl Steps {
                 if !v.is_null() { self.values.insert(if on.is_empty() { format!("js{n}") } else { on }, v); }
                 self.cdp.settle().await;
             }
+            "look" => {
+                // comparação visual: a primeira execução grava a referência; as seguintes comparam com ela
+                let file = if either.is_empty() { data_dir().join("referencias").join(format!("{}-passo-{n}.png", self.refs)) } else { std::path::absolute(either.trim_matches('"')).unwrap_or_else(|_| PathBuf::from(&either)) };
+                self.cdp.settle().await;
+                let now = self.cdp.shot().await?;
+                if !file.is_file() {
+                    if let Some(d) = file.parent() { std::fs::create_dir_all(d)?; }
+                    std::fs::write(&file, now)?;
+                    self.values.insert(format!("referencia{n}"), json!(file.to_string_lossy()));
+                    self.note = Some("referência criada".into());
+                } else {
+                    let d = diff(session.port, &self.cdp, &std::fs::read(&file)?, &now).await?;
+                    let percent = d["percent"].as_f64().unwrap_or(100.0);
+                    self.values.insert(format!("diferenca{n}"), json!(percent));
+                    if percent > self.tolerance {
+                        std::fs::create_dir_all(&self.evidence)?;
+                        let out = self.evidence.join(format!("passo-{n}-diferenca.png"));
+                        let image = d["image"].as_str().and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok());
+                        std::fs::write(&out, image.as_deref().unwrap_or(&now))?;
+                        std::fs::write(self.evidence.join(format!("passo-{n}-agora.png")), &now)?;
+                        self.shot = Some(out.to_string_lossy().into());
+                        let br = |x: f64| x.to_string().replace('.', ",");
+                        return Err(fail(d["why"].as_str().map(String::from).unwrap_or_else(|| format!("a tela mudou {}% em relação à referência (o limite é {}%)", br(percent), br(self.tolerance))), 417));
+                    }
+                }
+            }
+            "a11y" => {
+                let issues = self.cdp.eval(A11Y).await?;
+                let list: Vec<String> = issues.as_array().map(|a| a.iter().map(stringify).collect()).unwrap_or_default();
+                self.values.insert(format!("acessibilidade{n}"), issues);
+                if !list.is_empty() { return Err(fail(list.join("; "), 417)); }
+            }
             "scroll" if on.is_empty() => { self.cdp.eval(if value.trim().to_lowercase().starts_with("topo") { "window.scrollTo(0, 0)" } else { "window.scrollTo(0, document.documentElement.scrollHeight)" }).await?; tokio::time::sleep(Duration::from_millis(300)).await; }
             "tab" => {
                 // a aba mais nova que não é a atual (um link que abre em outra aba, a janela de login de outro site)
@@ -594,23 +750,26 @@ impl Steps {
         Ok(())
     }
 }
-pub(super) async fn node(_kind: &str, p: &Value) -> ApiResult<Value> {
-    let steps: Vec<Value> = p["steps"].as_array().map(|a| a.iter().filter(|s| s["do"].as_str().is_some_and(|d| !d.is_empty())).cloned().collect()).unwrap_or_default();
-    let url = text_of(p, "url").trim().to_string();
+fn steps_of(p: &Value) -> Vec<Value> { p["steps"].as_array().map(|a| a.iter().filter(|s| s["do"].as_str().is_some_and(|d| !d.is_empty())).cloned().collect()).unwrap_or_default() }
+fn stamp() -> String { chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string() }
+/// O navegador da execução: o que um nó anterior abriu ou, sem ele, um novo. `nothing`: o nó não tem endereço nem passo.
+async fn session_of(p: &Value, nothing: bool) -> ApiResult<Arc<Session>> {
     let rid = super::RUN_ID.try_with(|r| r.clone()).unwrap_or_else(|_| "avulso".into());
     let existing = SESSIONS.lock().get(&rid).cloned();
     // a janela pode ter sido fechada à mão no meio do fluxo: abre outra
-    let session = match existing.filter(|s| s.cdp().open.load(Ordering::Relaxed)) {
-        Some(s) => s,
-        None => {
-            if url.is_empty() && steps.is_empty() { return Err(fail("informe o endereço do site ou pelo menos um passo", 400)); }
-            let s = Arc::new(Session::open(p).await?);
-            SESSIONS.lock().insert(rid.clone(), s.clone());
-            s
-        }
-    };
+    if let Some(s) = existing.filter(|s| s.cdp().open.load(Ordering::Relaxed)) { return Ok(s); }
+    if nothing { return Err(fail("informe o endereço do site ou pelo menos um passo", 400)); }
+    let s = Arc::new(Session::open(p).await?);
+    SESSIONS.lock().insert(rid, s.clone());
+    Ok(s)
+}
+pub(super) async fn node(kind: &str, p: &Value) -> ApiResult<Value> {
+    if kind == "browser.test" { return test(p).await; }
+    let steps = steps_of(p);
+    let url = text_of(p, "url").trim().to_string();
+    let session = session_of(p, url.is_empty() && steps.is_empty()).await?;
     session.keep.store(p["after"] == "keep", Ordering::Relaxed);
-    let mut run = Steps { cdp: session.cdp(), wait: Duration::from_secs(number_of(&p["wait_s"]).unwrap_or(15.0).clamp(1.0, 300.0) as u64), values: Default::default() };
+    let mut run = Steps::new(&session, p, &stamp());
     if !url.is_empty() { run.cdp.goto(&url).await?; }
     let full = run.wait;
     let (mut skipping, mut skipped) = (false, Vec::<usize>::new());
@@ -630,7 +789,8 @@ pub(super) async fn node(_kind: &str, p: &Value) -> ApiResult<Value> {
             let on = text_of(s, "on");
             // a evidência: como a tela estava na hora da falha
             let mut shot = String::new();
-            if let Ok(png) = run.cdp.shot().await {
+            if let Some(file) = run.shot.take() { shot = format!(". A imagem das diferenças: {file}"); }
+            else if let Ok(png) = run.cdp.shot().await {
                 let dir = data_dir().join("evidencias");
                 let file = dir.join(format!("{}-passo-{n}.png", chrono::Local::now().format("%Y%m%d-%H%M%S")));
                 if std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&file, png).is_ok() { shot = format!(". A tela na hora da falha: {}", file.display()); }
@@ -641,6 +801,138 @@ pub(super) async fn node(_kind: &str, p: &Value) -> ApiResult<Value> {
     run.cdp.settle().await;
     let info = run.cdp.eval("({ url: location.href, title: document.title })").await.unwrap_or(Value::Null);
     Ok(json!({"out": {"url": info["url"].as_str().unwrap_or(""), "title": info["title"].as_str().unwrap_or(""), "values": run.values, "skipped": skipped}}))
+}
+
+// ---------- o nó Testar site ----------
+/// O roteiro como teste: cada passo vira uma linha do placar (passou, falhou, não rodou), a falha guarda a tela daquela
+/// hora, e no fim sai um relatório em HTML. Devolve pela porta `true` (passou) ou `false` (falhou).
+async fn test(p: &Value) -> ApiResult<Value> {
+    // as senhas ({{cred:nome}}) entram só na hora de usar: no placar e no relatório fica a referência, não o valor
+    let found = crate::creds::resolve_all(&p.to_string())?;
+    let secrets: Vec<String> = found.iter().map(|f| f.1.clone()).filter(|v| !v.is_empty()).collect();
+    let hide = |t: &str| crate::plugins::vault::scrub(t, &secrets);
+    let filled = crate::creds::fill(p, &found);
+    let (shown, steps) = (steps_of(p), steps_of(&filled));
+    let (shown_url, url) = (text_of(p, "url").trim().to_string(), text_of(&filled, "url").trim().to_string());
+    let session = session_of(&filled, url.is_empty() && steps.is_empty()).await?;
+    let first = session.cdp();
+    // erros de JavaScript e pedidos que falharam, para o relatório
+    let _ = first.send("Network.enable", json!({})).await;
+    first.errors.lock().clear();
+    first.bad.lock().clear();
+    // o navegador pode ter sido aberto por um nó anterior, com outra tela
+    let dev = device(p["device"].as_str().unwrap_or("desktop"));
+    if p["device"].as_str().is_some_and(|d| d != "desktop") { let _ = first.send("Emulation.setDeviceMetricsOverride", json!({"width": dev.0, "height": dev.1, "deviceScaleFactor": if dev.2 { 2 } else { 1 }, "mobile": dev.2})).await; }
+    let stamp = stamp();
+    let mut run = Steps::new(&session, p, &stamp);
+    let ms = |t: Instant| t.elapsed().as_millis() as u64;
+    let began = Instant::now();
+    let mut rows: Vec<Value> = vec![];
+    let mut stopped = false;
+    if !url.is_empty() {
+        let t = Instant::now();
+        let r = run.cdp.goto(&url).await;
+        let mut row = json!({"n": 0, "do": "goto", "name": "Abrir o site", "on": shown_url, "ok": r.is_ok(), "ms": ms(t)});
+        if let Err(e) = r { row["error"] = json!(hide(&e.msg)); stopped = true; }
+        rows.push(row);
+    }
+    let full = run.wait;
+    let mut skipping = false;
+    for (i, (s, raw)) in steps.iter().zip(&shown).enumerate() {
+        let n = i + 1;
+        let kind = s["do"].as_str().unwrap_or("");
+        let mut row = json!({"n": n, "do": kind, "name": action_name(kind), "on": text_of(raw, "on").trim(), "value": text_of(raw, "value")});
+        // "se não achar, pula", como no nó Navegador: o passo espera pouco e os seguintes do mesmo tipo nem esperam
+        let optional = s["opt"] == "skip";
+        if !optional { skipping = false; }
+        if stopped || (optional && skipping) { row["skipped"] = json!(true); if !stopped { row["note"] = json!("não achou: pulou"); } rows.push(row); continue; }
+        run.wait = if optional { full.min(Duration::from_secs(4)) } else { full };
+        (run.note, run.shot) = (None, None);
+        let t = Instant::now();
+        let r = run.step(s, n, &session).await;
+        run.wait = full;
+        let alive = run.cdp.open.load(Ordering::Relaxed);
+        match r {
+            Ok(()) => { row["ok"] = json!(true); row["ms"] = json!(ms(t)); if let Some(note) = run.note.take() { row["note"] = json!(note); } }
+            Err(e) if optional && matches!(e.status, 408 | 422) && alive => { skipping = true; row["skipped"] = json!(true); row["note"] = json!("não achou: pulou"); }
+            Err(e) => {
+                row["ok"] = json!(false); row["ms"] = json!(ms(t)); row["error"] = json!(hide(&e.msg));
+                // a evidência: como a tela estava na hora da falha (ou a imagem das diferenças, na comparação visual)
+                let shot = match run.shot.take() {
+                    Some(file) => file,
+                    None => match run.cdp.shot().await {
+                        Ok(png) => { let file = run.evidence.join(format!("passo-{n}.png")); if std::fs::create_dir_all(&run.evidence).is_ok() && std::fs::write(&file, png).is_ok() { file.to_string_lossy().into() } else { String::new() } }
+                        Err(_) => String::new(),
+                    },
+                };
+                row["shot"] = json!(shot);
+                if p["on_fail"] != "continue" || !alive { stopped = true; }
+            }
+        }
+        rows.push(row);
+    }
+    run.cdp.settle().await;
+    let info = run.cdp.eval("({ url: location.href, title: document.title })").await.unwrap_or(Value::Null);
+    // um passo pode ter trocado de aba: junta o que as duas viram
+    let (mut errors, mut bad) = (first.errors.lock().clone(), first.bad.lock().clone());
+    if !Arc::ptr_eq(&first, &run.cdp) { errors.extend(run.cdp.errors.lock().iter().cloned()); bad.extend(run.cdp.bad.lock().iter().cloned()); }
+    if p["js_errors"] == "fail" && !errors.is_empty() { rows.push(json!({"n": steps.len() + 1, "do": "js", "name": "Sem erros de JavaScript", "on": "", "ok": false, "ms": 0, "error": errors.iter().take(3).cloned().collect::<Vec<_>>().join(" | ")})); }
+    let (passed, failed, skipped) = (rows.iter().filter(|r| r["ok"] == true).count(), rows.iter().filter(|r| r["ok"] == false).count(), rows.iter().filter(|r| r["skipped"] == true).count());
+    let title = info["title"].as_str().unwrap_or("");
+    let name = [text_of(p, "name").trim(), title, shown_url.as_str()].into_iter().find(|t| !t.is_empty()).unwrap_or("Teste").to_string();
+    errors.truncate(20);
+    bad.truncate(30);
+    let out = json!({"ok": failed == 0, "name": name, "passed": passed, "failed": failed, "skipped": skipped, "total": rows.len(), "ms": ms(began), "url": info["url"].as_str().unwrap_or(""), "title": title,
+        "values": run.values, "steps": rows, "js_errors": errors, "bad_requests": bad, "report": ""});
+    // o que a página mostrou pode trazer a senha de volta: sai antes de ir para o relatório
+    let strong: Vec<String> = secrets.iter().filter(|v| v.chars().count() >= 8).cloned().collect();
+    let mut out = if strong.is_empty() { out } else { crate::creds::scrub_value(&out, &strong) };
+    // sem relatório, o resultado ainda vale
+    if let Ok(file) = write_report(&stamp, &out) { out["report"] = json!(file); }
+    // falhou com a janela à vista: ela fica aberta, para dar para ver onde parou
+    session.keep.store(if failed > 0 { p["after"] != "close_always" } else { p["after"] == "keep" }, Ordering::Relaxed);
+    Ok(if failed == 0 { json!({"true": out}) } else { json!({"false": out}) })
+}
+const REPORT_CSS: &str = r#":root{color-scheme:light dark;--bg:#f6f7fb;--card:#fff;--fg:#1c1f26;--mu:#6b7385;--ln:#e3e7ef;--ok:#1f9d61;--bad:#d6453d}@media(prefers-color-scheme:dark){:root{--bg:#14161c;--card:#1e2129;--fg:#e6e8ee;--mu:#8a92a3;--ln:#2c313d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}main{max-width:920px;margin:0 auto;padding:28px 16px 48px}
+h1{margin:0 0 4px;font-size:22px;overflow-wrap:anywhere}.sub{color:var(--mu);font-size:13px;overflow-wrap:anywhere}.kp{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}
+.k{flex:1 1 120px;background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:12px 14px}.k b{display:block;font-size:22px;font-variant-numeric:tabular-nums}.k span{color:var(--mu);font-size:12px}
+.k.res.ok b{color:var(--ok)}.k.res.bad b{color:var(--bad)}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--ln);border-radius:12px;overflow:hidden}
+td{padding:9px 10px;border-top:1px solid var(--ln);vertical-align:top;overflow-wrap:anywhere}tr:first-child td{border-top:0}.st{width:28px;font-weight:700;text-align:center}.ok .st{color:var(--ok)}.bad .st{color:var(--bad)}
+.n,.ms{color:var(--mu);white-space:nowrap;font-variant-numeric:tabular-nums}.ms{text-align:right}.skip{opacity:.55}code{font:12px Consolas,monospace;background:var(--bg);padding:1px 5px;border-radius:5px}
+.v{color:var(--mu)}.err{margin-top:4px;color:var(--bad)}.note{color:var(--mu);font-size:12.5px}img{display:block;max-width:100%;margin-top:8px;border:1px solid var(--ln);border-radius:8px}h2{font-size:14px;margin:24px 0 8px}ul{margin:0;padding-left:20px}"#;
+/// Relatório do teste numa página só (as evidências vão embutidas), para anexar num chamado. Devolve o caminho.
+fn write_report(stamp: &str, r: &Value) -> ApiResult<String> {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let secs = |ms: &Value| ms.as_u64().map(|m| format!("{:.1} s", m as f64 / 1000.0).replace('.', ",")).unwrap_or_default();
+    let img = |file: &str| if file.is_empty() { String::new() } else { std::fs::read(file).map(|b| format!("<img src=\"data:image/png;base64,{}\" alt=\"Tela na hora da falha\">", base64::engine::general_purpose::STANDARD.encode(b))).unwrap_or_default() };
+    let list = |k: &str| r[k].as_array().cloned().unwrap_or_default();
+    let mut rows = String::new();
+    for s in list("steps") {
+        let (skip, ok) = (s["skipped"] == true, s["ok"] == true);
+        let (on, value, note, error) = (text_of(&s, "on"), text_of(&s, "value"), text_of(&s, "note"), text_of(&s, "error"));
+        rows.push_str(&format!("<tr class=\"{}\"><td class=\"st\">{}</td><td class=\"n\">{}</td><td><b>{}</b>{}{}{}{}</td><td class=\"ms\">{}</td></tr>",
+            if skip { "skip" } else if ok { "ok" } else { "bad" }, if skip { "–" } else if ok { "✓" } else { "✕" }, s["n"].as_u64().filter(|n| *n > 0).map(|n| n.to_string()).unwrap_or_default(), esc(&text_of(&s, "name")),
+            if on.is_empty() { String::new() } else { format!(" <code>{}</code>", esc(&on)) },
+            if value.is_empty() || value.contains("vault:") { String::new() } else { format!(" <span class=\"v\">{}</span>", esc(&value)) },
+            if note.is_empty() { String::new() } else { format!("<div class=\"note\">{}</div>", esc(&note)) },
+            if skip || ok { String::new() } else { format!("<div class=\"err\">{}</div>{}", esc(&error), img(&text_of(&s, "shot"))) },
+            if skip { "não rodou".to_string() } else { secs(&s["ms"]) }));
+    }
+    let mut more = String::new();
+    if let Some(vals) = r["values"].as_object().filter(|o| !o.is_empty()) {
+        more.push_str(&format!("<h2>Campos lidos da tela</h2><table>{}</table>", vals.iter().map(|(k, v)| format!("<tr><td class=\"n\">{}</td><td>{}</td></tr>", esc(k), esc(&stringify(v)))).collect::<String>()));
+    }
+    if !list("js_errors").is_empty() { more.push_str(&format!("<h2>Erros de JavaScript na página</h2><ul>{}</ul>", list("js_errors").iter().map(|e| format!("<li>{}</li>", esc(&stringify(e)))).collect::<String>())); }
+    if !list("bad_requests").is_empty() { more.push_str(&format!("<h2>Pedidos que falharam</h2><ul>{}</ul>", list("bad_requests").iter().map(|b| format!("<li><b>{}</b> {}</li>", b["status"], esc(&text_of(b, "url")))).collect::<String>())); }
+    let ok = r["ok"] == true;
+    let html = format!("<!doctype html><html lang=\"pt-BR\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{name} · relatório de teste</title><style>{REPORT_CSS}</style><main><h1>{name}</h1><div class=\"sub\">{when} · {url}</div>\n<div class=\"kp\"><div class=\"k res {class}\"><b>{res}</b><span>resultado</span></div><div class=\"k\"><b>{}</b><span>passaram</span></div><div class=\"k\"><b>{}</b><span>falharam</span></div><div class=\"k\"><b>{}</b><span>duração</span></div></div>\n<table>{rows}</table>\n{more}</main></html>",
+        r["passed"], r["failed"], secs(&r["ms"]), name = esc(&text_of(r, "name")), when = chrono::Local::now().format("%d/%m/%Y %H:%M:%S"), url = esc(&text_of(r, "url")), class = if ok { "ok" } else { "bad" }, res = if ok { "Passou" } else { "Falhou" });
+    let dir = data_dir().join("relatorios");
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join(format!("teste-{stamp}.html"));
+    std::fs::write(&file, html)?;
+    Ok(file.to_string_lossy().into())
 }
 
 // ---------- gravador ----------

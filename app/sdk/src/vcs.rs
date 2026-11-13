@@ -670,9 +670,234 @@ pub async fn scan(dir: &Path, since: i64, until: Option<i64>, terms: &[String], 
     }
 }
 
+// ---------- gravar: commit (Git e SVN), branches e sincronização com o remoto (Git) ----------
+/// caminho de arquivo vindo da interface: relativo à pasta do projeto, sem subir e sem parecer uma opção
+fn safe_path(p: &str) -> bool {
+    // nem absoluto, nem a partir da raiz (começando com barra), nem com letra de unidade na frente
+    !p.is_empty() && !p.starts_with(['-', '/', '\\']) && !p.contains('\0') && p.as_bytes().get(1) != Some(&b':') && !Path::new(p).is_absolute() && !p.replace('\\', "/").split('/').any(|s| s == "..")
+}
+pub fn safe_branch(b: &str) -> bool {
+    !b.is_empty() && b.len() <= 200 && !b.starts_with('-') && !b.starts_with('/') && !b.ends_with('/') && !b.ends_with('.') && !b.ends_with(".lock") && !b.contains("..") && !b.contains("//") && !b.contains("@{")
+        && b.chars().all(|c| c.is_alphanumeric() || "-_./+#@".contains(c))
+}
+/// o que o programa disse, enxuto (as últimas linhas com conteúdo), para mostrar na tela
+fn proc_err(r: &ProcResult, prog: &str) -> String {
+    if r.not_found { return format!("o {prog} não está instalado (ou não está no PATH)"); }
+    let text = if r.err.trim().is_empty() { r.out.trim() } else { r.err.trim() };
+    if text.contains("Please tell me who you are") || text.contains("user.email") && text.contains("user.name") {
+        return "o Git ainda não sabe quem você é. No terminal: git config --global user.name \"Seu Nome\" e git config --global user.email \"voce@empresa.com\"".into();
+    }
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("hint:")).collect();
+    let tail = lines[lines.len().saturating_sub(6)..].join("\n");
+    if tail.is_empty() { format!("o {prog} terminou com erro (código {})", r.code) } else { tail }
+}
+async fn git_w(cwd: &Path, a: &[&str], timeout_ms: u64) -> ProcResult {
+    // --literal-pathspecs: nome de arquivo com * ou [ ] é só um nome; sem terminal, o Git não fica esperando senha
+    let mut v = vec!["-c", "core.quotepath=off", "--literal-pathspecs"];
+    v.extend_from_slice(a);
+    run_env("git", &v, cwd, timeout_ms, &[("GIT_TERMINAL_PROMPT", "0")]).await
+}
+/// linha de comando do Windows tem limite: os caminhos vão em lotes
+fn batches(files: &[String]) -> Vec<Vec<&str>> {
+    let (mut out, mut cur, mut len) = (vec![], vec![], 0usize);
+    for f in files { if len + f.len() + 3 > 24000 && !cur.is_empty() { out.push(std::mem::take(&mut cur)); len = 0; } len += f.len() + 3; cur.push(f.as_str()); }
+    if !cur.is_empty() { out.push(cur); }
+    out
+}
+
+/// Commit dos arquivos escolhidos: `files` = [(caminho relativo à pasta do projeto, código do status)].
+/// Git: só esses arquivos entram (o que já estava preparado fora da lista fica para depois); `amend` refaz o último
+/// commit. SVN: arquivos novos (?) são adicionados e os que sumiram (!) são removidos antes de enviar.
+pub async fn commit(dir: &Path, files: &[(String, String)], message: &str, amend: bool, all: bool) -> Result<serde_json::Value, String> {
+    let message = message.trim();
+    if message.is_empty() && !amend { return Err("escreva a mensagem do commit".into()); }
+    if files.is_empty() && !amend { return Err("escolha pelo menos um arquivo".into()); }
+    if let Some((p, _)) = files.iter().find(|f| !safe_path(&f.0)) { return Err(format!("caminho inválido: {p}")); }
+    let paths: Vec<String> = files.iter().map(|f| f.0.clone()).collect();
+    match detect(dir) {
+        Some("git") => {
+            for b in batches(&paths) {
+                let mut a = vec!["add", "-A", "--"]; a.extend(b);
+                let r = git_w(dir, &a, 60000).await;
+                if !r.ok { return Err(proc_err(&r, "Git")); }
+            }
+            let mut a = vec!["commit"];
+            if amend { a.push("--amend"); }
+            if message.is_empty() { a.push("--no-edit"); } else { a.push("-m"); a.push(message); }
+            // tudo o que mudou na pasta: sem lista de caminhos (cabe em qualquer linha de comando)
+            let one = batches(&paths);
+            if all { a.extend(["--", "."]); }
+            else if one.len() > 1 { return Err("são arquivos demais para um commit parcial: marque todos, ou faça em partes".into()); }
+            else if !paths.is_empty() { a.push("--"); a.extend(one.into_iter().flatten()); }
+            let r = git_w(dir, &a, 120000).await;
+            if !r.ok {
+                let msg = proc_err(&r, "Git");
+                return Err(if msg.contains("nothing to commit") || msg.contains("no changes added") { "não há nada para commitar nesses arquivos".into() } else { msg });
+            }
+            let (h, s) = tokio::join!(git(dir, &["rev-parse", "--short", "HEAD"]), git(dir, &["log", "-1", "--format=%s"]));
+            Ok(serde_json::json!({ "vcs": "git", "hash": h.out.trim(), "subject": s.out.trim(), "files": paths.len() }))
+        }
+        Some("svn") => {
+            let pick = |code: &str| -> Vec<String> { files.iter().filter(|f| f.1 == code).map(|f| f.0.clone()).collect() };
+            for b in batches(&pick("?")) { let mut a = vec!["add", "--force", "--parents", "--depth", "empty", "--"]; a.extend(b); let r = svn_t(dir, &a, 60000).await; if !r.ok { return Err(proc_err(&r, "SVN")); } }
+            for b in batches(&pick("!")) { let mut a = vec!["delete", "--force", "--"]; a.extend(b); let r = svn_t(dir, &a, 60000).await; if !r.ok { return Err(proc_err(&r, "SVN")); } }
+            // pasta nova (adicionada agora ou antes) acima de um arquivo escolhido tem de ir no mesmo commit
+            let st = svn(dir, &["status", "--depth", "infinity"]).await;
+            let mut targets = paths.clone();
+            for l in st.out.lines() {
+                if !l.starts_with('A') || l.len() < 9 { continue; }
+                let p = l[8..].trim().replace('\\', "/");
+                if dir.join(&p).is_dir() && paths.iter().any(|f| f.replace('\\', "/").starts_with(&format!("{p}/"))) && !targets.contains(&p) { targets.push(p); }
+            }
+            let lots = batches(&targets);
+            if lots.len() > 1 && !all { return Err("são arquivos demais para um commit parcial: marque todos, ou faça em partes".into()); }
+            let mut a = vec!["commit", "-m", message];
+            if all { a.push("."); } else { a.extend(["--depth", "empty", "--"]); a.extend(lots.into_iter().flatten()); }
+            let r = svn_t(dir, &a, 300000).await;
+            if !r.ok { return Err(proc_err(&r, "SVN")); }
+            let rev = Regex::new(r"(?i)revis\w+\s+(\d+)").ok().and_then(|re| re.captures_iter(&r.out).last().map(|c| c[1].to_string())).unwrap_or_default();
+            Ok(serde_json::json!({ "vcs": "svn", "hash": if rev.is_empty() { String::new() } else { format!("r{rev}") }, "subject": message.lines().next().unwrap_or(""), "files": paths.len() }))
+        }
+        _ => Err("esta pasta não é um repositório Git nem SVN".into()),
+    }
+}
+
+/// Branches do Git: a atual, as locais (com o remoto que acompanham e quantos commits à frente e atrás) e as remotas.
+pub async fn branches(dir: &Path) -> Result<serde_json::Value, String> {
+    if detect(dir) != Some("git") { return Err("branches só existem em repositórios Git".into()); }
+    let (cur, refs, remotes) = tokio::join!(
+        git(dir, &["symbolic-ref", "--short", "-q", "HEAD"]),
+        git(dir, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:unix)%09%(subject)", "refs/heads", "refs/remotes"]),
+        git(dir, &["remote"]));
+    if !refs.ok { return Err(proc_err(&refs, "Git")); }
+    let current = cur.out.trim().to_string();
+    let num = |t: &str, k: &str| -> u64 { Regex::new(&format!(r"{k} (\d+)")).ok().and_then(|re| re.captures(t).and_then(|c| c[1].parse().ok())).unwrap_or(0) };
+    let (mut local, mut remote) = (vec![], vec![]);
+    for l in refs.out.lines() {
+        let c: Vec<&str> = l.splitn(5, '\t').collect();
+        if c.len() < 5 { continue; }
+        let ts: i64 = c[3].parse().unwrap_or(0);
+        if let Some(name) = c[0].strip_prefix("refs/heads/") {
+            local.push(serde_json::json!({ "name": name, "current": name == current, "upstream": c[1], "ahead": num(c[2], "ahead"), "behind": num(c[2], "behind"), "gone": c[2].contains("gone"), "ts": ts, "subject": c[4] }));
+        } else if let Some(name) = c[0].strip_prefix("refs/remotes/") {
+            if name.ends_with("/HEAD") { continue; }
+            remote.push(serde_json::json!({ "name": name, "ts": ts, "subject": c[4] }));
+        }
+    }
+    let head = if current.is_empty() { git(dir, &["rev-parse", "--short", "HEAD"]).await.out.trim().to_string() } else { String::new() };
+    Ok(serde_json::json!({ "current": current, "detached": head, "local": local, "remote": remote, "remotes": remotes.out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>() }))
+}
+
+/// Troca de branch. `create`: cria a partir de onde você está (as alterações locais vão junto). Um nome "origin/x"
+/// de branch remota vira a local "x" acompanhando a remota.
+pub async fn checkout(dir: &Path, name: &str, create: bool) -> Result<serde_json::Value, String> {
+    if detect(dir) != Some("git") { return Err("branches só existem em repositórios Git".into()); }
+    let name = name.trim();
+    if !safe_branch(name) { return Err(format!("nome de branch inválido: {name}")); }
+    let r = if create { git_w(dir, &["switch", "-c", name], 60000).await } else {
+        let is_local = git(dir, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{name}")]).await.ok;
+        let is_remote = !is_local && git(dir, &["show-ref", "--verify", "--quiet", &format!("refs/remotes/{name}")]).await.ok;
+        if is_remote {
+            let short = name.split_once('/').map(|x| x.1).unwrap_or(name);
+            // já existe a local com esse nome: vai para ela
+            if git(dir, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{short}")]).await.ok { git_w(dir, &["switch", short], 60000).await } else { git_w(dir, &["switch", "--track", name], 60000).await }
+        } else { git_w(dir, &["switch", name], 60000).await }
+    };
+    if !r.ok {
+        let msg = proc_err(&r, "Git");
+        return Err(if msg.contains("would be overwritten") { "há alterações locais que essa troca apagaria. Faça o commit delas (ou descarte) antes de trocar de branch.".into() } else if msg.contains("already exists") { format!("já existe uma branch chamada {name}") } else { msg });
+    }
+    let cur = git(dir, &["symbolic-ref", "--short", "-q", "HEAD"]).await;
+    Ok(serde_json::json!({ "branch": cur.out.trim() }))
+}
+
+/// push | pull | fetch. O push de uma branch que ainda não existe no remoto cria ela lá (e passa a acompanhar).
+/// O pull só avança (--ff-only): se o remoto e você mudaram a mesma branch, avisa em vez de criar um merge sozinho.
+pub async fn sync(dir: &Path, action: &str) -> Result<serde_json::Value, String> {
+    if detect(dir) != Some("git") { return Err("só para repositórios Git (no SVN, o commit já envia)".into()); }
+    let r = match action {
+        "fetch" => git_w(dir, &["fetch", "--prune"], 120000).await,
+        "pull" => git_w(dir, &["pull", "--ff-only"], 180000).await,
+        "push" => {
+            let up = git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).await;
+            if up.ok { git_w(dir, &["push"], 180000).await } else {
+                let cur = git(dir, &["symbolic-ref", "--short", "-q", "HEAD"]).await.out.trim().to_string();
+                if cur.is_empty() { return Err("você não está numa branch (HEAD solto): crie uma branch antes de enviar".into()); }
+                let remotes = git(dir, &["remote"]).await.out;
+                let remote = remotes.lines().map(str::trim).find(|l| *l == "origin").or_else(|| remotes.lines().map(str::trim).find(|l| !l.is_empty())).map(String::from).ok_or("este repositório não tem um remoto configurado (git remote add origin <endereço>)")?;
+                git_w(dir, &["push", "-u", &remote, &cur], 180000).await
+            }
+        }
+        _ => return Err(format!("ação desconhecida: {action}")),
+    };
+    if !r.ok {
+        let msg = proc_err(&r, "Git");
+        return Err(if msg.contains("Not possible to fast-forward") || msg.contains("divergent") { "a sua branch e a do remoto mudaram em paralelo: resolva pelo terminal (git pull --rebase ou git merge)".into() }
+            else if msg.contains("rejected") && msg.contains("fetch first") || msg.contains("non-fast-forward") { "o remoto tem commits que você ainda não tem: traga primeiro (Trazer) e envie de novo".into() }
+            else if msg.contains("could not read Username") || msg.contains("Authentication failed") || msg.contains("terminal prompts disabled") { "o remoto pediu login: faça um git push pelo terminal uma vez para guardar a credencial".into() }
+            else { msg });
+    }
+    let text = if r.err.trim().is_empty() { r.out.trim() } else { r.err.trim() };
+    Ok(serde_json::json!({ "ok": true, "upToDate": text.contains("up-to-date") || text.contains("up to date"), "text": text.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n") }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nomes_de_branch_e_caminhos_do_commit() {
+        for ok in ["main", "feature/login", "fix-123", "release/2.1.0", "joao/ajuste_no_pom", "v1.0+hotfix"] { assert!(safe_branch(ok), "{ok}"); }
+        for bad in ["", "-f", "--force", "a..b", "a b", "x/", "/x", "x.lock", "a//b", "main@{1}", "a;rm", "x.", "a~1", "a^", "a:b"] { assert!(!safe_branch(bad), "{bad}"); }
+        for ok in ["a.txt", "src/main/App.java", "com espaço/arquivo [1].md"] { assert!(safe_path(ok), "{ok}"); }
+        for bad in ["", "-rf", "../fora.txt", "a/../../b", "C:\\Windows\\x", "/etc/passwd"] { assert!(!safe_path(bad), "{bad}"); }
+        // muitos arquivos: lotes que cabem na linha de comando
+        let many: Vec<String> = (0..3000).map(|i| format!("pasta/bem/comprida/arquivo-{i:05}.txt")).collect();
+        let lots = batches(&many);
+        assert!(lots.len() > 1 && lots.iter().map(Vec::len).sum::<usize>() == 3000);
+        assert!(lots.iter().all(|b| b.iter().map(|f| f.len() + 3).sum::<usize>() <= 24100));
+        assert!(batches(&[]).is_empty());
+    }
+
+    /// commit parcial, branch nova, troca de branch e emenda, num repositório de verdade (pula sem o git instalado)
+    #[tokio::test]
+    async fn commit_e_branches_num_repositorio() {
+        let dir = std::env::temp_dir().join(format!("bs-vcs-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if !git(&dir, &["init", "-q", "-b", "main"]).await.ok { let _ = std::fs::remove_dir_all(&dir); return; }
+        for (k, v) in [("user.name", "Teste"), ("user.email", "teste@exemplo.com"), ("commit.gpgsign", "false")] { git(&dir, &["config", k, v]).await; }
+        DETECT.set(absolute(&dir), Some("git"));
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        std::fs::write(dir.join("b [1].txt"), "dois\n").unwrap();
+        let f = |p: &str, c: &str| (p.to_string(), c.to_string());
+        // só o a.txt entra; o b fica para depois
+        let r = commit(&dir, &[f("a.txt", "?")], "primeiro", false, false).await.unwrap();
+        assert_eq!(r["subject"], "primeiro");
+        let left = changes(&dir, "working", None, None).await.files;
+        assert_eq!(left.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), vec!["b [1].txt"]);
+        assert!(commit(&dir, &[], "x", false, false).await.is_err());
+        assert!(commit(&dir, &[f("../fora", "M")], "x", false, false).await.is_err());
+        assert!(commit(&dir, &[f("b [1].txt", "?")], "  ", false, false).await.is_err());
+        // branch nova a partir da atual, commit nela (todos os arquivos) e volta
+        assert_eq!(checkout(&dir, "feature/teste", true).await.unwrap()["branch"], "feature/teste");
+        assert!(checkout(&dir, "feature/teste", true).await.is_err()); // já existe
+        commit(&dir, &[f("b [1].txt", "?")], "segundo", false, true).await.unwrap();
+        // emenda: junta outro arquivo ao último commit e troca a mensagem
+        std::fs::write(dir.join("c.txt"), "tres\n").unwrap();
+        let r = commit(&dir, &[f("c.txt", "?")], "segundo, com o c", true, false).await.unwrap();
+        assert_eq!(r["subject"], "segundo, com o c");
+        assert_eq!(git(&dir, &["rev-list", "--count", "HEAD"]).await.out.trim(), "2");
+        let b = branches(&dir).await.unwrap();
+        assert_eq!(b["current"], "feature/teste");
+        assert_eq!(b["local"].as_array().unwrap().len(), 2);
+        assert_eq!(checkout(&dir, "main", false).await.unwrap()["branch"], "main");
+        assert!(!dir.join("c.txt").exists());
+        assert!(checkout(&dir, "--orphan", false).await.is_err());
+        // sem remoto: o envio explica o que falta
+        assert!(sync(&dir, "push").await.unwrap_err().contains("remoto"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn raw_e_numstat_de_um_processo_so() {

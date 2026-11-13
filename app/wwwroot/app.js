@@ -190,7 +190,26 @@ function registerGherkin() {
     },
   });
 }
-const editorOpts = () => ({ fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace", fontSize: S.fontSize || 13, fontLigatures: true, lineHeight: Math.round((S.fontSize || 13) * 1.7), minimap: { enabled: false }, scrollBeyondLastLine: false, renderLineHighlight: 'all', smoothScrolling: true, cursorBlinking: 'smooth', padding: { top: 8 }, wordWrap: S.wrap ? 'on' : 'off', automaticLayout: true, bracketPairColorization: { enabled: true }, guides: { bracketPairs: true, indentation: true }, scrollbar: { verticalScrollbarSize: 10 }, roundedSelection: false, stickyScroll: { enabled: true }, showFoldingControls: 'mouseover', cursorSmoothCaretAnimation: 'on', lineNumbersMinChars: 4, renderWhitespace: 'trailing', 'semanticHighlighting.enabled': true, inlayHints: { enabled: 'on', fontSize: Math.max(10, (S.fontSize || 13) - 2), padding: true }, theme: themeName() });
+const editorOpts = () => ({ fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace", fontSize: S.fontSize || 13, fontLigatures: true, lineHeight: Math.round((S.fontSize || 13) * 1.7), minimap: { enabled: false }, scrollBeyondLastLine: false, renderLineHighlight: 'all', padding: { top: 8 }, wordWrap: S.wrap ? 'on' : 'off', automaticLayout: true, scrollbar: { verticalScrollbarSize: 10 }, roundedSelection: false, showFoldingControls: 'mouseover', lineNumbersMinChars: 4, 'semanticHighlighting.enabled': true, ...prefOpts(), theme: themeName() });
+// Preferências do editor (Configurações › Editor): só o que foge do padrão fica guardado, em store 'editorPrefs'
+const EDITOR_PREFS = { minimap: false, lineNumbers: 'on', whitespace: 'trailing', sticky: true, guides: true, brackets: true, folding: true, inlay: true, cursor: 'line', smooth: true, tabSize: 4, insertSpaces: true, detectIndent: true, autoClose: true, formatOnPaste: false };
+const editorPrefs = () => ({ ...EDITOR_PREFS, ...(store.get('editorPrefs', null) || {}) });
+function prefOpts(p = editorPrefs()) {
+  const auto = p.autoClose ? 'languageDefined' : 'never';
+  return { minimap: { enabled: !!p.minimap }, lineNumbers: p.lineNumbers, renderWhitespace: p.whitespace, stickyScroll: { enabled: !!p.sticky }, guides: { bracketPairs: !!p.brackets, indentation: !!p.guides }, bracketPairColorization: { enabled: !!p.brackets },
+    folding: !!p.folding, inlayHints: { enabled: p.inlay ? 'on' : 'off', fontSize: Math.max(10, (S.fontSize || 13) - 2), padding: true }, cursorStyle: p.cursor, smoothScrolling: !!p.smooth, cursorBlinking: p.smooth ? 'smooth' : 'blink', cursorSmoothCaretAnimation: p.smooth ? 'on' : 'off',
+    tabSize: +p.tabSize || 4, insertSpaces: !!p.insertSpaces, detectIndentation: !!p.detectIndent, autoClosingBrackets: auto, autoClosingQuotes: auto, formatOnPaste: !!p.formatOnPaste };
+}
+function applyEditorPrefs() {
+  const o = prefOpts(); editor?.updateOptions(o); diffEditor?.updateOptions(o);
+  // largura e tipo da indentação são do modelo (arquivo aberto): os que não seguem o próprio arquivo mudam junto
+  if (monaco && !o.detectIndentation) for (const m of monaco.editor.getModels()) m.updateOptions({ tabSize: o.tabSize, insertSpaces: o.insertSpaces });
+}
+function setEditorPref(k, v) {
+  if (!(k in EDITOR_PREFS)) return;
+  const p = { ...(store.get('editorPrefs', null) || {}) }; if (v === EDITOR_PREFS[k]) delete p[k]; else p[k] = v;
+  store.set('editorPrefs', p); applyEditorPrefs(); BS.hooks.run('editor:prefs', editorPrefs());
+}
 const themeName = () => window.BS_MONACO_THEME || (document.documentElement.dataset.theme === 'light' ? 'bs-light' : 'bs-dark');
 // tema: Monaco + barra de título da janela nativa (cor do fundo azul)
 function applyTheme() {
@@ -881,8 +900,8 @@ $('#wel').addEventListener('keydown', (e) => {
 $('#welBare').onclick = (e) => enterBare(e.target.closest('[data-app]')?.dataset.app);
 $('#welNew').onclick = () => newProjectDialog();
 $('#welOpen').onclick = () => openProjectDialog();
-$('#welTheme').onclick = () => $('#btnTheme').click();
-$('#welLook').onclick = () => $('#btnAppearance').click();
+$('#welTheme').onclick = () => BS.appearance && BS.appearance.toggle();
+$('#welLook').onclick = () => BS.settings && BS.settings.open('aparencia');
 const welRoot = () => dialog('rootDlg', `<div class="dlg-hd"><span class="dlg-ic">${I.open}</span><div><h3>Pasta de projetos</h3><p>Cada pasta dentro dela aparece na lista de projetos.</p></div></div>
     <label class="fld">Pasta<span class="line"><input id="rdIn" spellcheck="false" autocomplete="off" value="${esc(S.root || '')}">${S.remote ? '' : '<button class="chip" id="rdPick" type="button">Procurar…</button>'}</span></label>
     <div class="actions"><button class="chip" data-close>Cancelar</button><button class="chip primary" id="rdOk">Usar esta pasta</button></div>`, (el) => {
@@ -955,7 +974,7 @@ function renderStrip() {
   // ocultos (stripHidden) somem da barra; no modo de arrumar aparecem apagados, com o olho para voltar
   const hid = new Set(stripHidden());
   const eye = (t) => STRIP.on ? `<span class="hide-t" role="button" title="${hid.has(t.id) ? 'Mostrar na barra' : 'Ocultar da barra'}">${hid.has(t.id) ? I.eyeOff : I.eye}</span>` : '';
-  const btn = (t) => item(`data-tool="${esc(t.id)}"${hid.has(t.id) ? ' data-hid="1"' : ''}`, t.icon, t.title, hid.has(t.id) ? '' : t.key, `<span class="badge" id="badge-${esc(t.id)}" hidden></span>${eye(t)}`);
+  const btn = (t) => item(`data-tool="${esc(t.id)}"${hid.has(t.id) ? ' data-hid="1"' : ''}`, t.icon, t.title, hid.has(t.id) || !t.key ? '' : BS.keys.label(t.key), `<span class="badge" id="badge-${esc(t.id)}" hidden></span>${eye(t)}`);
   const shown = tools.filter(t => STRIP.on || !hid.has(t.id));
   let top = shown.filter(t => !stripBottom(t)).map(btn).join('');
   if (STUDIO) top = item('id="sdStripHome"', SD_HOME, 'Início', 'Alt+Home') + top + studioItems().filter(a => !a.big).map(a => item(`data-app="${esc(a.id)}"`, a.icon || '', a.title)).join('');
@@ -1359,7 +1378,7 @@ function ensureEditors() {
     editor.onDidChangeCursorPosition(e => $('#stPos').textContent = `${e.position.lineNumber}:${e.position.column}`);
     editor.onDidChangeModelContent(() => markDirty(editor.getModel()));
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, save);
-    editor.addCommand(monaco.KeyCode.F1, () => showKeys()); // F1 é a tela de atalhos do BlueScreen, não a paleta do Monaco
+    editor.addCommand(monaco.KeyCode.F1, () => BS.settings && BS.settings.open('atalhos')); // F1 são os atalhos do BlueScreen, não a paleta do Monaco
     editor.addAction({ id: 'bs.diff', label: 'Ver diff', contextMenuGroupId: 'navigation', contextMenuOrder: 0, run: () => S.active && openFile(S.active.path, 'diff', undefined, undefined, S.active.project) });
     editor.addAction({ id: 'bs.lint', label: 'Lint', contextMenuGroupId: 'navigation', contextMenuOrder: 1, run: () => runLint() });
     editor.addAction({ id: 'bs.present', label: 'Apresentar', contextMenuGroupId: 'navigation', contextMenuOrder: 2, run: () => present(true) });
@@ -1373,7 +1392,7 @@ function ensureEditors() {
     // no diff editável o Monaco usaria Alt+↑/↓ para mover a linha: aqui eles andam entre as alterações, como no diff só leitura
     diffEditor.getModifiedEditor().addCommand(monaco.KeyMod.Alt | monaco.KeyCode.DownArrow, () => goDiff('next'));
     diffEditor.getModifiedEditor().addCommand(monaco.KeyMod.Alt | monaco.KeyCode.UpArrow, () => goDiff('previous'));
-    diffEditor.getModifiedEditor().addCommand(monaco.KeyCode.F1, () => showKeys());
+    diffEditor.getModifiedEditor().addCommand(monaco.KeyCode.F1, () => BS.settings && BS.settings.open('atalhos'));
     diffEditor.getModifiedEditor().addAction({ id: 'bs.edit', label: 'Abrir como editor', contextMenuGroupId: 'navigation', contextMenuOrder: 0, run: () => S.active && openFile(S.active.path, 'editor', undefined, undefined, S.active.project) });
     diffEditor.getModifiedEditor().addAction({ id: 'bs.inline', label: 'Lado a lado / em linha', contextMenuGroupId: 'navigation', contextMenuOrder: 1, run: () => $('#btnInline').click() });
     diffEditor.getModifiedEditor().addAction({ id: 'bs.present2', label: 'Apresentar', contextMenuGroupId: 'navigation', contextMenuOrder: 2, run: () => present(true) });
@@ -1709,30 +1728,32 @@ async function tsDiagnostics(tab) {
 async function lintAll() {
   if (!S.project || !S.changes.length) { toast('Nada para lintar'); return; }
   const files = S.changes.filter(c => c.code !== 'D').slice(0, 150);
-  $('#stLint').textContent = `lint 0/${files.length}…`; $('#problems').hidden = false; $('#probSub').textContent = 'alterações do projeto';
+  $('#stLint').hidden = false; $('#stLint').className = 's'; $('#stLint').textContent = `lint 0/${files.length}…`; $('#problems').hidden = false; $('#probSub').textContent = 'alterações do projeto';
   const all = []; let done = 0;
   const worker = async () => { while (files.length) { const c = files.shift(); try { const r = await api('lint', { project: S.project.path, file: c.path }); r.problems.forEach(p => all.push({ ...p, file: c.path })); } catch {} done++; $('#stLint').textContent = `lint ${done}…`; renderProblemList(all, true); } };
   await Promise.all([worker(), worker(), worker()]);
   renderProblemList(all, true);
-  $('#stLint').textContent = all.length ? `${all.length} problema(s) em ${new Set(all.map(p => p.file)).size} arquivo(s)` : 'alterações: ok';
-  $('#stLint').className = 's ' + (all.length ? '' : 'ok');
+  lintStatus(all.length, `${all.length} problema${all.length === 1 ? '' : 's'} em ${new Set(all.map(p => p.file)).size} arquivo(s)`);
   if (!all.length) toast('Lint ok nas alterações');
 }
 // quiet: quem chamou (o salvar) mostra o resultado no próprio aviso; devolve a resposta do lint
+// rodapé: só aparece quando há problema (clicar abre a lista); "markdown: ok" e parecidos não dizem nada a ninguém
+function lintStatus(n, text) {
+  const el = $('#stLint'); el.hidden = !n; el.className = 's' + (n ? ' warn' : '');
+  el.textContent = n ? (text || `${n} problema${n === 1 ? '' : 's'}`) : '';
+}
+$('#stLint').onclick = () => { $('#problems').hidden = false; };
 async function runLint(tab = S.active, quiet) {
   if (!tab) { lintAll(); return; }
-  $('#stLint').textContent = 'lint…';
   try {
     const r = await api('lint', { project: tab.project, file: tab.path });
     if (!S.tabs.includes(tab)) return; // a aba fechou (ou o arquivo foi movido) enquanto o lint rodava
     if (r.client === 'ts' && (tab.lang === 'typescript' || tab.lang === 'javascript')) { const d = await tsDiagnostics(tab); r.problems = r.problems.concat(d); if (d.length || !r.problems.length) r.tool = (r.tool || '') + (r.tool && r.tool.includes('typescript') ? '' : ' + typescript'); }
     tab.problems = r.problems; tab.lintTool = r.tool || r.note;
     lintMarkers(tab); renderProblems(tab);
-    $('#stLint').textContent = r.tool ? `${r.tool}: ${r.problems.length ? r.problems.length + ' problema(s)' : 'ok'}` : r.note;
-    $('#stLint').className = 's ' + (r.tool && !r.problems.length ? 'ok' : '');
     if (r.problems.length) { if (quiet !== 'auto') $('#problems').hidden = false; } else if (!quiet) toast(r.tool ? 'Lint ok' : r.note);
     return r;
-  } catch (e) { toast('Lint falhou: ' + e.message); $('#stLint').textContent = ''; }
+  } catch (e) { toast('Lint falhou: ' + e.message); }
 }
 // lint ao vivo: as regras de texto do núcleo (HTML, JSP, XML, JSON, TOML, YAML, Dockerfile, Makefile, LaTeX, shaders,
 // centenas de formatos: lint_formats.rs) sobre o texto do editor, ao abrir e enquanto digita, sem esperar o salvar.
@@ -1755,13 +1776,12 @@ async function liveLint(tab) {
   tab.problems = r.problems; tab.lintTool = r.tool || r.note;
   if (tab !== S.active) return; // ao ativar a aba, lintMarkers aplica o que ficou guardado
   lintMarkers(tab);
-  $('#stLint').textContent = r.tool ? `${r.tool}: ${r.problems.length ? r.problems.length + ' problema(s)' : 'ok'}` : r.note || '';
-  $('#stLint').className = 's ' + (r.tool && !r.problems.length ? 'ok' : '');
 }
 function lintMarkers(tab) {
   const p = tab.problems || [];
   if (tab.model) monaco.editor.setModelMarkers(tab.model, 'bs-lint', p.map(x => ({ startLineNumber: x.line, startColumn: x.col, endLineNumber: x.end_line || x.line, endColumn: x.end_line ? x.end_col : x.col + 1, message: x.msg + (x.rule ? ` (${x.rule})` : ''), severity: x.sev === 'error' ? monaco.MarkerSeverity.Error : x.sev === 'info' ? monaco.MarkerSeverity.Info : monaco.MarkerSeverity.Warning })));
   const b = $('#badge-problems'); if (b) { b.hidden = !p.length; b.textContent = p.length; }
+  if (tab === S.active) lintStatus(p.length);
   renderProblems(tab);
 }
 function renderProblems(tab) {
@@ -1822,7 +1842,9 @@ window.addEventListener('wheel', (e) => {
   clearTimeout(wheelT); wheelT = setTimeout(() => { wheelAcc = 0; }, 300);
   if (Math.abs(wheelAcc) < 50) return;
   const step = wheelAcc < 0 ? 1 : -1; wheelAcc = 0;
-  codeFont(S.fontSize + step);
+  // sobre uma área com zoom próprio (o terminal: data-zoom="terminal" + BS.zoom.terminal), muda só a letra dela
+  const own = e.target.closest && e.target.closest('[data-zoom]'), fn = own && BS.zoom && BS.zoom[own.dataset.zoom];
+  if (fn) fn(step); else codeFont(S.fontSize + step);
 }, { passive: false, capture: true });
 
 $('#projChip').onclick = () => projectSwitcher();
@@ -1837,13 +1859,13 @@ function present(on) {
 $('#present-exit').onclick = () => present(false);
 
 // ===== Rede =====
-$('#btnNet').onclick = () => { const p = $('#netPop'); p.hidden = !p.hidden; const r = $('#btnNet').getBoundingClientRect(); p.style.top = r.bottom + 6 + 'px'; p.style.right = Math.max(8, Math.min(innerWidth - r.right, innerWidth - 8 - p.offsetWidth)) + 'px'; BS.hooks.run('net:pop', !p.hidden); }; // tela estreita: o popover não sai pela esquerda
-$('#netClose').onclick = () => { $('#netPop').hidden = true; BS.hooks.run('net:pop', false); };
+// a tela da rede é uma seção das Configurações (settings.js); o item do rodapé leva até ela
+$('#stNet').onclick = () => BS.settings && BS.settings.open('rede');
 $('#netToggle').onclick = async () => { try { S.net = await api('network', {}, { method: 'POST', body: JSON.stringify({ enable: !S.net.enabled }) }); renderNet(); toast(S.net.enabled ? 'Rede ligada' : 'Rede desligada'); } catch (e) { toast(e.message); } };
 function renderNet() {
   const n = S.net || { enabled: false, urls: [] };
   $('#netToggle').classList.toggle('on', n.enabled); $('#netInfo').hidden = !n.enabled;
-  $('#btnNet').classList.toggle('on', n.enabled);
+  $('#btnSettings').classList.toggle('net-on', !!n.enabled); // ponto na engrenagem: este PC está aberto para a rede
   $('#stNet').textContent = n.enabled ? `rede · ${n.urls[0]?.url || ''}` : ''; $('#stNet').className = 's ' + (n.enabled ? 'net-on' : '');
   $('#netUrls').innerHTML = n.urls.map(u => `<div class="url"><span title="${esc(u.iface)}">${esc(u.url)}</span><button class="icon-btn" data-c="${esc(u.url)}" title="Copiar"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>`).join('');
   $('#netUrls').querySelectorAll('button').forEach(b => b.onclick = () => navigator.clipboard.writeText(b.dataset.c).then(() => toast('Copiado')).catch(() => {}));
@@ -1947,7 +1969,7 @@ function seActions() {
     A('Selecionar arquivo aberto na árvore', 'Alt+F1', () => treeLocate(), TI.locate), A('Recolher árvore', '', () => { if (!S.project) return; S.treeOpen = new Set(['']); saveTreeOpen(); openTool('project'); }, TI.collapse),
     A('Salvar', 'Ctrl+S', () => save(), I.edit), A('Salvar todos', 'Ctrl+Shift+S', () => saveAll(), I.edit), A('Salvamento automático (liga/desliga)', '', () => setAutoSave(!S.autoSave), I.edit), A('Lint do arquivo', 'Ctrl+Alt+L', () => runLint(), I.lint), A('Lint das alterações', '', () => lintAll(), I.lint),
     A('Ver diff / editor do arquivo atual', '', () => $('#btnView').click(), I.diff), A('Diff lado a lado / em linha', '', () => $('#btnInline').click(), I.diff), A('Quebra de linha', '', () => $('#btnWrap').click(), I.edit),
-    A('Apresentar (tela cheia)', 'F11', () => present(true), I.present), A('Tema claro / escuro', '', () => $('#btnTheme').click(), I.edit), A('Rede local', '', () => $('#btnNet').click(), I.ext),
+    A('Apresentar (tela cheia)', 'F11', () => present(true), I.present), A('Tema claro / escuro', '', () => BS.appearance && BS.appearance.toggle(), I.edit),
     A('Atualizar projeto', 'F5', () => refreshAll(), I.refresh), A('Mostrar projeto no Explorer', '', () => S.project && reveal(S.project.path), I.explorer),
     A('Fechar todas as abas', '', () => askClose(S.tabs.slice()), I.x), A('Compactar pacotes intermediários (liga/desliga)', '', () => { S.compact = !S.compact; store.set('compact', S.compact); S.tree = {}; renderTool(); }, I.pkg),
     ...BS.actions.list().map(a => A(a.label, a.k || '', a.run, a.icon)),
@@ -2224,9 +2246,13 @@ function own(kind, item, id) {
   (o[kind] = o[kind] || []).push(item);
   return item;
 }
+const KEYMAP = { to: {}, back: {} };
+function keymapLoad(m) { KEYMAP.to = m || {}; KEYMAP.back = Object.fromEntries(Object.entries(KEYMAP.to).map(([a, b]) => [b, a])); }
+keymapLoad(store.get('keymap', null));
 const BS = window.BS = {
   version: null, S, state: S, api, $, esc, toast, store, I, TI, treeIcon, fmtDate, ago, daysAgo, statHtml, copyText, reveal, absPath, showMenu, closeMenu,
   openFile, openTool, setTool, renderTool, renderStrip, renderTree, renderDashboard, refreshProject, refreshAll, selectProject, revealAt, openOutside, openVirtual, openSearch, present, save, saveAll, runLint, lintAll, quickProject,
+  editorPrefs: { get: () => editorPrefs(), set: (k, v) => setEditorPref(k, v), reset() { store.set('editorPrefs', {}); applyEditorPrefs(); }, defaults: EDITOR_PREFS },
   get editor() { return editor; }, get diffEditor() { return diffEditor; }, get monaco() { return monaco; }, get viewer() { return viewer; },
   // painéis da barra da esquerda: { id, title, icon, key: 'Alt+5', order, render(), bottom?, toggle?() }
   tools: {
@@ -2256,7 +2282,11 @@ const BS = window.BS = {
     },
   },
   // teclas: add('Ctrl+F9', fn); o fn devolve false para não tratar
-  keys: { map: new Map(), add(combo, fn) { const k = normCombo(combo); BS.keys.map.set(k, fn); own('keys', [k, fn]); }, remove(combo) { BS.keys.map.delete(normCombo(combo)); }, get: (combo) => BS.keys.map.get(combo) || null },
+  keys: { map: new Map(), add(combo, fn) { const k = normCombo(combo); BS.keys.map.set(k, fn); own('keys', [k, fn]); }, remove(combo) { BS.keys.map.delete(normCombo(combo)); }, get: (combo) => BS.keys.map.get(combo) || null,
+    // teclas trocadas pelo usuário (Configurações › Teclas de atalho): { padrão: nova }, em store 'keymap'
+    norm: (combo) => normCombo(combo), combo: (e) => keyCombo(e), custom: () => ({ ...KEYMAP.to }), label: (combo) => KEYMAP.to[normCombo(combo)] || combo,
+    rebind(base, to) { const m = { ...KEYMAP.to }; base = normCombo(base); if (to && normCombo(to) !== base) m[base] = normCombo(to); else delete m[base]; keymapLoad(m); store.set('keymap', m); renderStrip(); },
+    resetAll() { keymapLoad({}); store.set('keymap', {}); renderStrip(); } },
   // ganchos: on/run (avisos) e filter/apply (transformam um valor, ex.: marcas da árvore, itens de menu)
   hooks: {
     ons: {}, filters: {},
@@ -2298,6 +2328,7 @@ const BS = window.BS = {
       for (const el of o.els || []) el.remove();
       for (const b of o.bubbles || []) if (BS.bubble) BS.bubble.unregister(b);
       for (const pg of o.pages || []) if (BS.pages) BS.pages.unregister(pg);
+      if (BS.settings) BS.settings.dropPlugin(id);
       document.querySelectorAll(`style[data-plugin="${CSS.escape(id)}"]`).forEach(s => s.remove());
       BS.plugins.defs.delete(id);
       toolKeys(); renderStrip();
@@ -2740,25 +2771,6 @@ function renderDashboard() {
   BS.hooks.run('dashboard:render', dash);
 }
 
-// ===== Tela de atalhos (F1) =====
-function showKeys() {
-  const back = $('#keysBack'); if (!back.hidden) { back.hidden = true; return; }
-  const k = (c) => c.split(' ').map(x => x.split('+').map(y => `<kbd>${esc(y)}</kbd>`).join('+')).join(' ');
-  const groups = [
-    ['Navegar', [['Buscar em tudo', 'Shift Shift'], ['Classes', 'Ctrl+N'], ['Arquivos', 'Ctrl+P'], ['Texto em todos os arquivos', 'Ctrl+Shift+F'], ['Ações', 'Ctrl+Shift+A'], ['Trocar projeto', 'Alt+P'], ['Selecionar arquivo aberto na árvore', 'Alt+F1']]],
-    ['Janelas', BS.tools.list().filter(t => t.key).map(t => [t.title, t.key])],
-    ['Editor', [['Salvar', 'Ctrl+S'], ['Salvar todos', 'Ctrl+Shift+S'], ['Fechar aba', 'Ctrl+W'], ['Próxima alteração do diff', 'Alt+↓'], ['Alteração anterior do diff', 'Alt+↑'], ['Próximo / anterior arquivo alterado', 'Alt+→ / Alt+←'], ['Commit mais antigo / mais novo', 'Alt+PageDown / Alt+PageUp'], ['Lint do arquivo', 'Ctrl+Alt+L'], ['Apresentar em tela cheia', 'F11']]],
-    ['Geral', [['Atualizar projeto', 'F5'], ['Fechar menus e buscas', 'Esc'], ['Esta tela', 'F1']]],
-  ];
-  const known = new Set(groups.flatMap(g => g[1].map(x => x[1])));
-  const extra = BS.actions.list().filter(a => a.k && !known.has(a.k));
-  if (extra.length) groups.push(['Plugins', extra.map(a => [a.label, a.k])]);
-  $('#keys').innerHTML = `<h2>Atalhos<button class="icon-btn" id="keysX" title="Fechar (Esc)">${I.x}</button></h2><div class="kcols">${groups.map(([t, list]) => `<div class="kg"><h3>${esc(t)}</h3>${list.map(([l, c]) => `<div class="kr"><span>${esc(l)}</span><span>${k(c)}</span></div>`).join('')}</div>`).join('')}</div>`;
-  back.hidden = false; $('#keysX').onclick = () => { back.hidden = true; };
-}
-$('#keysBack').onclick = (e) => { if (e.target.id === 'keysBack') $('#keysBack').hidden = true; };
-$('#btnKeys').onclick = showKeys;
-
 // ===== Atalhos =====
 // Tabela única de teclas (BS.keys): o núcleo registra as suas e os plugins registram as deles (ou substituem).
 // Um handler que devolve false diz "não era comigo" e deixa o navegador seguir.
@@ -2773,10 +2785,9 @@ BS.keys.add('Ctrl+Alt+L', () => runLint());
 BS.keys.add('F11', () => present(!$('#app').classList.contains('present')));
 BS.keys.add('F5', () => refreshAll());
 BS.keys.add('Alt+F1', () => treeLocate());
-BS.keys.add('F1', () => showKeys());
 BS.keys.add('Ctrl+=', () => codeFont(S.fontSize + 1)); BS.keys.add('Ctrl++', () => codeFont(S.fontSize + 1)); BS.keys.add('Ctrl+Shift+=', () => codeFont(S.fontSize + 1));
 BS.keys.add('Ctrl+-', () => codeFont(S.fontSize - 1)); BS.keys.add('Ctrl+0', () => codeFont(FONT.def));
-BS.keys.add('Escape', () => { $('#keysBack').hidden = true; seClose(); if ($('#app').classList.contains('present')) present(false); $('#netPop').hidden = true; const pp = $('#ppal'); if (pp) pp.hidden = true; document.querySelectorAll('.dlg').forEach(d => { d.hidden = true; }); closeMenu(); BS.hooks.run('escape'); return false; });
+BS.keys.add('Escape', () => { seClose(); if ($('#app').classList.contains('present')) present(false); const pp = $('#ppal'); if (pp) pp.hidden = true; document.querySelectorAll('.dlg').forEach(d => { d.hidden = true; }); closeMenu(); BS.hooks.run('escape'); return false; });
 BS.keys.add('Alt+P', () => quickProject());
 BS.keys.add('Ctrl+W', () => { if (!S.active) return false; askClose(S.active); });
 BS.keys.add('Alt+ArrowDown', () => goDiff('next'));
@@ -2787,10 +2798,12 @@ BS.keys.add('Alt+PageDown', () => { goCommit(S.changeMode === 'last' ? commitIx(
 BS.keys.add('Alt+PageUp', () => { if (S.changeMode === 'last') goCommit(commitIx() - 1); });
 document.addEventListener('keydown', (e) => {
   const c = keyCombo(e);
-  if (document.body.classList.contains('welcome') && !/^(Escape|F1|Ctrl\+Alt\+S|Alt\+P)$/.test(c)) return; // sem projeto, a IDE está escondida
-  if (modalOpen() && c !== 'Escape') return; // login ou diálogo aberto: os atalhos da IDE esperam
+  const base = KEYMAP.back[c] || (KEYMAP.to[c] ? null : c); // tecla trocada nas Configurações: vale a nova, a antiga fica livre
+  if (!base) return;
+  if (document.body.classList.contains('welcome') && !/^(Escape|F1|Ctrl\+Alt\+S|Ctrl\+,|Alt\+P)$/.test(base)) return; // sem projeto, a IDE está escondida
+  if (modalOpen() && base !== 'Escape') return; // login ou diálogo aberto: os atalhos da IDE esperam
   // "+" sai com Shift em muitos teclados: Ctrl+Shift++ também vale como Ctrl++
-  const h = BS.keys.get(c) || (e.shiftKey && e.key.length === 1 && !/[\p{L}\p{N}]/u.test(e.key) ? BS.keys.get(c.replace('Shift+', '')) : null); if (!h) return;
+  const h = BS.keys.get(base) || (base === c && e.shiftKey && e.key.length === 1 && !/[\p{L}\p{N}]/u.test(e.key) ? BS.keys.get(c.replace('Shift+', '')) : null); if (!h) return;
   if (h(e) !== false) e.preventDefault();
 });
 window.addEventListener('beforeunload', (e) => { if (S.tabs.some(t => t.dirty)) { e.preventDefault(); e.returnValue = ''; } });

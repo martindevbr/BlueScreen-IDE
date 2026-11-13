@@ -34,6 +34,16 @@ A janela **Runtimes do projeto** (clique na status bar, `Shift` `Shift` › "Run
 
 Um ▶ verde aparece na margem de cada ponto de entrada. Clique nele para executar, executar com argumentos (ficam guardados), depurar (Python, Go, Rust, C, C++ e C#) ou copiar o comando. `Ctrl+Shift+F10` executa o main mais perto do cursor.
 
+O ▶ aparece também onde não há um `main`:
+
+| Onde | Em que linha |
+|---|---|
+| Python e Ruby sem `if __name__ == "__main__"` | na primeira instrução solta (um módulo só com `def` e `class` não ganha ▶) |
+| JavaScript e TypeScript | no `#!/usr/bin/env node`, ou na chamada solta de `main()` |
+| Shell, PowerShell, `.bat`/`.cmd`, Lua, Perl (`.pl`), R, OCaml, Julia | na primeira linha que não é comentário: o arquivo roda inteiro |
+| PHP | na linha do `<?php` |
+| `package.json` | em cada script de `"scripts"`: roda com pnpm, yarn ou bun quando o projeto tem o lockfile deles, senão com npm |
+
 | Linguagem | Ponto de entrada | Como roda |
 |---|---|---|
 | Java | `public static void main`, classe aninhada (`Externa$Interna`), `void main()` do Java 21+/25 | projeto Maven: `exec:java` (teste com o escopo test); Gradle: tarefa `bsRun` por um init script, sem mexer no build; solto: `javac -sourcepath` na raiz dos pacotes + `java -cp`, com os jars de `lib/`/`libs/` |

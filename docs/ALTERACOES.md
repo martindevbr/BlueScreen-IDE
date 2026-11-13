@@ -11,7 +11,7 @@ A aba fixa aparece quando o painel é escolhido e sai quando você escolhe outro
 
 | Modo | O que mostra |
 |---|---|
-| **Local** | O que ainda não foi commitado. O diff é editável. |
+| **Local** | O que ainda não foi commitado. O diff é editável, e o commit sai dali (veja [Commit e branches](#commit-e-branches)). |
 | **Histórico** (`Alt+3`) | Os commits por dia. O commit escolhido abre ali mesmo os arquivos dele. |
 | **Comparar** | Duas versões quaisquer (commit, branch, tag, revisão) ou uma versão com o disco. |
 
@@ -23,6 +23,19 @@ No **Histórico**:
 - Passe o mouse num commit: **⇄ local** compara com o que está no disco e **◎ base** marca o commit para comparar com outro. O botão direito tem as mesmas ações, mais copiar hash e mensagem.
 
 A lista de arquivos de um commit vem do cache quando ele já foi aberto, e o commit sob o mouse é carregado antes do clique.
+
+## Commit e branches
+
+No modo **Local**, embaixo da lista:
+
+- **Escolher os arquivos.** Cada arquivo tem uma caixa; só os marcados entram no commit. A caixa do título marca ou desmarca todos. Arquivos novos entram sozinhos (`git add` / `svn add`) e os apagados saem do repositório.
+- **Mensagem e Commit.** Escreva a mensagem e clique em **Commit** (`Ctrl+Enter`). O que está aberto e ainda não foi salvo é gravado antes. A mensagem fica guardada enquanto você olha os diffs.
+- **Git: enviar junto.** A seta ao lado do botão tem **Commit e enviar (push)** (`Ctrl+Shift+Enter`). **Emendar o último** junta os arquivos ao commit anterior (com a mensagem dele, se você não escrever outra); não use em commit que já foi enviado.
+- **Git: a branch.** O botão com o nome da branch abre a lista: clique numa para trocar, digite um nome que não existe para criar a partir da atual, e as do remoto aparecem embaixo (escolher uma cria a local que acompanha). As alterações locais vão junto na troca; se a troca apagaria alguma, o Git recusa e a IDE avisa. **Atualizar do remoto** busca as branches que os outros criaram.
+- **Git: trazer e enviar.** As setas ↓ e ↑ fazem pull e push. Ao lado da branch aparece quanto falta trazer (↓2) e enviar (↑1); "só aqui" é uma branch que ainda não existe no remoto (o primeiro envio cria ela lá). O pull só avança (`--ff-only`): se você e o remoto mudaram a mesma branch, a IDE avisa em vez de criar um merge sozinha.
+- **SVN.** O commit já envia para o servidor. Não há branches nem push: troca de branch no SVN continua pelo `svn switch`.
+
+Se o remoto pedir login, faça um `git push` pelo terminal uma vez: a credencial fica guardada pelo Git e os próximos saem pela IDE. Pela rede local (outro PC ou celular), o painel mostra as alterações, mas não commita.
 
 ## Pasta com vários repositórios
 
@@ -98,4 +111,4 @@ No SVN, a linha do tempo não traz as linhas somadas e removidas de cada arquivo
 | `bs.hooks.filter('menu:repo', (itens, repo) => ...)` | Itens no botão direito de um repositório. |
 | `bs.hooks.filter('menu:commit', (itens, commit) => ...)` | Itens no botão direito de um commit do painel. |
 
-Rotas do núcleo: `repos?project=&depth=`, `timeline?project=&since=&until=&n=` (tempos em segundos unix) e `scan?project=&since=` (POST `{ terms: [...] }`).
+Rotas do núcleo: `repos?project=&depth=`, `timeline?project=&since=&until=&n=` (tempos em segundos unix) e `scan?project=&since=` (POST `{ terms: [...] }`). Para gravar (só do próprio PC): `POST vcs/commit { files: [{ path, code }], message, amend, all }`, `GET vcs/branches`, `POST vcs/checkout { name, create }` e `POST vcs/sync { action: push | pull | fetch }`.

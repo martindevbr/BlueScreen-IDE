@@ -4,6 +4,7 @@
 // pelas bordas, maximizada (duplo clique no topo), minimizada de volta para o balão e fechada. Várias ficam abertas
 // ao mesmo tempo; posição, tamanho e quais estavam abertas ficam lembrados. Sem ferramentas, o balão não aparece.
 //   bs.bubble.register({ id, title, icon, order, width, height, render(el), show(), hide() })   render roda no registro
+//   footer: true -> a janela é aberta por um item do rodapé (bs.footer.set): fica fora da lista do balão e abre no meio da tela
 //   bs.bubble.open(id) / minimize(id) / close(id) / toggle(id) / isOpen(id) / windowOf(id) / unregister(id)
 //   bs.bubble.badge(id, 'busy' | 'dot' | null)   bs.bubble.placeholder(texto) -> item "criando…" na lista (remove())
 (() => {
@@ -62,9 +63,9 @@
   const SIDE = { bottom: 'embaixo', top: 'em cima', left: 'à esquerda', right: 'à direita' };
   const stateText = (w) => w.state === 'docked' ? 'na tela, ' + (SIDE[w.side] || '') : w.state === 'dockedOff' ? 'encaixada ' + (SIDE[w.side] || '') + ', fechada' : STATE[w.state];
   function renderMenu() {
-    const all = sorted();
+    const all = sorted().filter(d => !d.footer); // as do rodapé (a Agenda) abrem por lá: não entram na lista do balão
     btn.hidden = !all.length;
-    const open = [...W.values()].filter(w => w.state === 'open' || w.state === 'min' || w.state === 'docked').length;
+    const open = [...W.values()].filter(w => !D.get(w.id)?.footer && (w.state === 'open' || w.state === 'min' || w.state === 'docked')).length;
     $('#bbCount').textContent = open ? `${open} aberta${open > 1 ? 's' : ''}` : '';
     listEl.innerHTML = all.map(d => {
       const w = W.get(d.id) || {}, st = w.state || 'closed', b = badges.get(d.id);
@@ -135,13 +136,13 @@
     el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', def.title);
     el.innerHTML = `<header class="bb-hd" title="Arraste para mover; duplo clique maximiza">
         <span class="bb-hic">${def.icon || TOOL}</span><span class="bb-ttl">${esc(def.title)}</span><span class="bb-sp"></span>
-        <button type="button" class="bb-hb" data-a="min" title="Minimizar no balão">${MIN}</button>
+        <button type="button" class="bb-hb" data-a="min" title="${def.footer ? 'Minimizar' : 'Minimizar no balão'}">${MIN}</button>
         <button type="button" class="bb-hb" data-a="max" title="Maximizar">${MAX}</button>
         <button type="button" class="bb-hb bb-hx" data-a="close" title="Fechar">${I.x}</button></header>
       <div class="bb-pane"></div>
       ${['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => `<i class="bb-rz bb-rz-${d}" data-d="${d}"></i>`).join('')}`;
     document.body.appendChild(el);
-    const w = { el, pane: el.querySelector('.bb-pane'), state: 'closed', max: null };
+    const w = { id: def.id, el, pane: el.querySelector('.bb-pane'), state: 'closed', max: null };
     el.addEventListener('pointerdown', () => focus(def.id), true);
     el.querySelector('.bb-hd').addEventListener('click', (e) => {
       const a = e.target.closest('[data-a]'); if (!a) return;
@@ -198,7 +199,9 @@
   // onde abrir: onde ficou da última vez; na primeira vez, junto do balão (para o lado em que há espaço), em cascata
   function rectFor(id) {
     const d = D.get(id), s = store.get('bbWin:' + id, null);
-    const w = clamp((s && s.w) || d.width || 440, MINW, vw() - 2 * EDGE), h = clamp((s && s.h) || d.height || 560, MINH, vh() - TOP - 8);
+    const w = clamp((s && s.w) || d.width || 440, MINW, vw() - 2 * EDGE), h = clamp((s && s.h) || d.height || 560, MINH, vh() - TOP - BOTTOM);
+    // janela do rodapé: sempre no meio da tela (o tamanho que você deixou fica)
+    if (d.footer) return { x: Math.round((vw() - w) / 2), y: Math.max(TOP, Math.round((vh() - BOTTOM + TOP - h) / 2)), w, h };
     if (s) return { x: clamp(s.x, EDGE - w + 120, vw() - 120), y: clamp(s.y, TOP - 8, vh() - 60), w, h };
     const c = center(), n = [...W.values()].filter(x => x.state === 'open').length, off = n * 28;
     const left = c.x > vw() / 2, up = c.y > vh() / 2;
@@ -216,8 +219,13 @@
     W.forEach(x => x.el.classList.toggle('front', x === w));
   }
   // as animações saem do balão e voltam para ele
+  // de onde a janela nasce e para onde volta: o balão, ou o item dela no rodapé
+  function source(w) {
+    const f = D.get(w.id)?.footer && document.querySelector(`#status [data-foot="${CSS.escape(w.id)}"]`), r = f && f.getBoundingClientRect();
+    return r && r.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : center();
+  }
   function aim(w) {
-    const r = box(w), c = center();
+    const r = box(w), c = source(w);
     w.el.style.setProperty('--ox', (c.x - r.left) + 'px'); w.el.style.setProperty('--oy', (c.y - r.top) + 'px');
     w.el.style.setProperty('--tx', (c.x - (r.left + r.width / 2)) + 'px'); w.el.style.setProperty('--ty', (c.y - (r.top + r.height / 2)) + 'px');
   }
@@ -245,7 +253,7 @@
     if (!w || w.state !== 'open') return;
     w.state = 'min'; call(id, 'hide'); aim(w);
     anim(w, 'minimizing', () => { if (w.state === 'min') w.el.hidden = true; });
-    btn.classList.remove('gulp'); void btn.offsetWidth; btn.classList.add('gulp');
+    if (!D.get(id)?.footer) { btn.classList.remove('gulp'); void btn.offsetWidth; btn.classList.add('gulp'); }
     saveStates(); renderMenu();
   }
   function close(id) {

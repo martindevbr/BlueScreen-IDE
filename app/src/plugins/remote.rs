@@ -198,14 +198,89 @@ impl Pkg {
     }
 }
 
+// ---------- quem fez cada plugin: o autor do primeiro commit da pasta e o da última edição ----------
+// Vem da API do GitHub (commits?path=plugins/<id>), dois pedidos por plugin, e fica guardado em store-cache/authors.json
+// junto com o ETag do zip: enquanto o repositório não muda, nada é pedido de novo. Sem rede (ou no limite de pedidos
+// da API), vale o guardado; sem nada guardado, o cartão mostra o autor do plugin.json.
+const STORE_API: &str = "https://api.github.com/repos/martindevbr/BlueScreen-Plugins/commits";
+fn authors_file() -> std::path::PathBuf { user_dir().join("store-cache").join("authors.json") }
+fn who(c: &Value) -> Value {
+    json!({ "name": c["commit"]["author"]["name"], "login": c["author"]["login"], "avatar": c["author"]["avatar_url"], "date": c["commit"]["author"]["date"], "sha": c["sha"].as_str().map(|s| s.chars().take(7).collect::<String>()) })
+}
+/// último commit da pasta e o número da última página (com um commit por página, é o total de commits)
+async fn commits_page(client: &reqwest::Client, id: &str, page: u64) -> Result<(Value, u64), String> {
+    let r = client.get(format!("{STORE_API}?path=plugins/{}&per_page=1&page={page}", urlencoding::encode(id)))
+        .header("Accept", "application/vnd.github+json").send().await.map_err(|e| net_error("o GitHub", e))?;
+    if !r.status().is_success() { return Err(format!("o GitHub respondeu {}", r.status())); }
+    let last = r.headers().get("link").and_then(|v| v.to_str().ok()).and_then(|l| l.split(',').find(|p| p.contains("rel=\"last\"")).and_then(|p| p.split("page=").last().and_then(|n| n.split(['>', '&']).next().and_then(|n| n.parse().ok())))).unwrap_or(page);
+    let v: Value = r.json().await.map_err(|e| e.to_string())?;
+    Ok((v.as_array().and_then(|a| a.first().cloned()).unwrap_or(Value::Null), last))
+}
+async fn author_of(client: reqwest::Client, id: String) -> Option<(String, Value)> {
+    let (last, pages) = commits_page(&client, &id, 1).await.ok()?;
+    if last.is_null() { return None; }
+    let first = if pages > 1 { commits_page(&client, &id, pages).await.ok()?.0 } else { last.clone() };
+    Some((id, json!({ "first": who(&first), "last": who(&last), "commits": pages })))
+}
+/// numa pasta local (BLUESCREEN_PLUGIN_REPO), o mesmo pelo git dela
+fn authors_local(root: &Path, ids: &[String]) -> HashMap<String, Value> {
+    let log = |args: &[&str]| -> Vec<String> {
+        let mut c = std::process::Command::new("git"); c.arg("-C").arg(root).arg("log").args(args);
+        #[cfg(windows)] { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+        c.output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect()).unwrap_or_default()
+    };
+    let one = |l: &str| { let p: Vec<&str> = l.splitn(3, '\t').collect(); json!({ "name": p.first(), "date": p.get(1), "sha": p.get(2) }) };
+    ids.iter().filter_map(|id| {
+        let lines = log(&["--format=%an%x09%aI%x09%h", "--", &format!("plugins/{id}")]);
+        let (last, first) = (lines.first()?, lines.last()?);
+        Some((id.clone(), json!({ "first": one(first), "last": one(last), "commits": lines.len() })))
+    }).collect()
+}
+async fn authors(pkgs: &[Pkg]) -> HashMap<String, Value> {
+    let ids: Vec<String> = pkgs.iter().map(|p| p.id.clone()).collect();
+    if let Some(dir) = std::env::var_os("BLUESCREEN_PLUGIN_REPO").filter(|p| !p.is_empty()).map(std::path::PathBuf::from) {
+        return tokio::task::spawn_blocking(move || authors_local(&dir, &ids)).await.unwrap_or_default();
+    }
+    let etag = std::fs::read_to_string(user_dir().join("store-cache").join("etag")).unwrap_or_default().trim().to_string();
+    let saved: Value = read_json(&authors_file());
+    let mut have: HashMap<String, Value> = saved["plugins"].as_object().map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+    // o repositório não mudou desde a última consulta: só falta buscar os plugins que ainda não têm autor guardado
+    let same = !etag.is_empty() && saved["etag"].as_str() == Some(etag.as_str());
+    let want: Vec<String> = ids.iter().filter(|id| !same || !have.contains_key(*id)).cloned().collect();
+    if want.is_empty() { return have; }
+    let Ok(client) = http(10) else { return have };
+    let got = tokio::time::timeout(Duration::from_secs(12), futures_util::future::join_all(want.iter().map(|id| author_of(client.clone(), id.clone())))).await.unwrap_or_default();
+    let all = got.len() == want.len() && got.iter().all(Option::is_some);
+    for (id, v) in got.into_iter().flatten() { have.insert(id, v); }
+    have.retain(|id, _| ids.contains(id));
+    // só marca o ETag como consultado quando todos responderam: o que faltou é pedido de novo na próxima vez
+    let _ = std::fs::create_dir_all(user_dir().join("store-cache"));
+    let _ = std::fs::write(authors_file(), serde_json::to_string(&json!({ "etag": if all { etag } else { String::new() }, "plugins": have })).unwrap_or_default());
+    have
+}
+
+/// espaço que uma pasta ocupa no disco: cada arquivo arredondado para o bloco de 4 KB do NTFS
+pub fn disk_size(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let Ok(t) = e.file_type() else { continue };
+            if t.is_dir() { stack.push(e.path()); } else if let Ok(m) = e.metadata() { total += m.len().div_ceil(4096) * 4096; }
+        }
+    }
+    total
+}
+
 /// A loja e os servidores de equipe, comparados com os instalados. O mesmo id em dois lugares: vale a maior versão.
 async fn check(fresh: bool) -> Value {
     let list = servers();
     let (snap, results) = tokio::join!(snapshot(fresh), futures_util::future::join_all(list.iter().map(|s| index(s.url.clone()))));
-    let installed: HashMap<String, (String, Value, bool)> = host().get().list.iter().map(|p| (p.id.clone(), (p.version.clone(), p.origin.clone(), p.user))).collect();
+    let installed: HashMap<String, (String, Value, bool, String)> = host().get().list.iter().map(|p| (p.id.clone(), (p.version.clone(), p.origin.clone(), p.user, p.path.clone()))).collect();
+    let made = match &snap { Ok(s) => authors(&s.pkgs).await, Err(_) => HashMap::new() };
     let mut best: HashMap<String, Value> = HashMap::new();
     let store = match &snap {
-        Ok(s) => { for p in &s.pkgs { best.insert(p.id.clone(), p.entry()); } json!({ "ok": true, "url": STORE_WEB, "count": s.pkgs.len(), "stale": s.stale, "local": std::env::var_os("BLUESCREEN_PLUGIN_REPO").is_some() }) }
+        Ok(s) => { for p in &s.pkgs { let mut e = p.entry(); if let Some(a) = made.get(&p.id) { e["made"] = a.clone(); } best.insert(p.id.clone(), e); } json!({ "ok": true, "url": STORE_WEB, "count": s.pkgs.len(), "stale": s.stale, "local": std::env::var_os("BLUESCREEN_PLUGIN_REPO").is_some() }) }
         Err(e) => json!({ "ok": false, "url": STORE_WEB, "error": e }),
     };
     let mut out_servers = vec![];
@@ -227,7 +302,9 @@ async fn check(fresh: bool) -> Value {
     let mut plugins: Vec<Value> = best.into_iter().map(|(id, mut p)| {
         let remote = p["version"].as_str().unwrap_or("").to_string();
         match installed.get(&id) {
-            Some((v, origin, user)) => {
+            Some((v, origin, user, path)) => {
+                // o espaço que o plugin instalado ocupa: medido na instalação (.origin.json) ou agora, na pasta
+                p["disk"] = json!(origin["disk"].as_u64().unwrap_or_else(|| disk_size(Path::new(path))));
                 p["installed"] = json!(v);
                 p["update"] = json!(version_cmp(&remote, v) == Ordering::Greater);
                 p["origin"] = origin.clone();
@@ -254,7 +331,7 @@ async fn install_store(id: &str) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || place(&id2, &files, &origin)).await.map_err(|e| e.to_string())??;
     *LAST.lock() = None;
     log(format!("plugin {id} {version} instalado da loja"));
-    Ok(json!({ "id": id, "version": version }))
+    Ok(json!({ "id": id, "version": version, "disk": disk_size(&user_dir().join("plugins").join(id)) }))
 }
 
 fn stamp() -> String { format!("{}-{}", now_ms() as u64, std::process::id()) }
@@ -285,6 +362,9 @@ fn place(id: &str, files: &[(String, Vec<u8>)], origin: &Value) -> Result<(), St
     }
     let _ = std::fs::remove_dir_all(&old);
     let _ = std::fs::remove_dir(&staging); // só sai se ficou vazia
+    // instalado: mede o espaço que ficou ocupado no disco e anota na origem (a loja mostra no cartão)
+    let mut o = origin.clone(); o["disk"] = json!(disk_size(&dest));
+    let _ = std::fs::write(dest.join(".origin.json"), serde_json::to_string_pretty(&o).unwrap_or_default());
     host().load(); host().print();
     Ok(())
 }
@@ -326,7 +406,7 @@ async fn install(server: &str, id: &str, version: Option<&str>) -> Result<Value,
     tokio::task::spawn_blocking(move || place(&id2, &files, &origin)).await.map_err(|e| e.to_string())??;
     *LAST.lock() = None;
     log(format!("plugin {id} {version} instalado de {server}"));
-    Ok(json!({ "id": id, "version": version }))
+    Ok(json!({ "id": id, "version": version, "disk": disk_size(&user_dir().join("plugins").join(id)) }))
 }
 
 /// Remove da pasta do usuário um plugin instalado (o do app, se houver, volta a valer).

@@ -167,16 +167,16 @@ const refResolve = (v) => { v = (v || '').trim(); const c = v && S.log.find(l =>
 const avatar = (name) => `<span class="av" style="background:${welColor(name || '?')}" title="${esc(name || '')}">${esc(welInitials(name || '?'))}</span>`;
 // proporção de linhas somadas e removidas em cinco blocos
 const statBar = (x) => { const a = (x && x.add) || 0, d = (x && x.del) || 0, t = a + d; if (!t) return ''; const g = !d ? 5 : !a ? 0 : Math.max(1, Math.min(4, Math.round(a * 5 / t))); return `<span class="sbar" aria-hidden="true">${'<i class="a"></i>'.repeat(g)}${'<i class="d"></i>'.repeat(5 - g)}</span>`; };
-const chgRow = (x, o = {}) => `<div class="row chg ${o.sel ? 'sel' : ''} ${o.unsaved ? 'unsaved' : ''} ${o.seen ? 'seen' : ''}" data-p="${esc(x.path)}" title="${esc(x.path)}"><span class="st ${esc(x.code)}">${esc(x.code)}</span><span class="name c-${esc(x.code.replace('?', '\\?'))}">${esc(x.path.split('/').pop())}</span>${o.dir ? `<span class="dir">${esc(x.path.includes('/') ? x.path.slice(0, x.path.lastIndexOf('/')) : '')}</span>` : ''}<span class="meta">${statHtml(x)}${statBar(x)}${o.check ? `<span class="ck" title="${o.seen ? 'Visto (clique para desmarcar)' : 'Marcar como visto'}">${I.lint}</span>` : ''}</span></div>`;
+const chgRow = (x, o = {}) => `<div class="row chg ${o.sel ? 'sel' : ''} ${o.unsaved ? 'unsaved' : ''} ${o.seen ? 'seen' : ''} ${o.pick === false ? 'out' : ''}" data-p="${esc(x.path)}" title="${esc(x.path)}">${o.pick === undefined ? '' : `<input type="checkbox" class="pick" ${o.pick ? 'checked' : ''} title="Entra no commit" aria-label="${esc(x.path)} entra no commit">`}<span class="st ${esc(x.code)}">${esc(x.code)}</span><span class="name c-${esc(x.code.replace('?', '\\?'))}">${esc(x.path.split('/').pop())}</span>${o.dir ? `<span class="dir">${esc(x.path.includes('/') ? x.path.slice(0, x.path.lastIndexOf('/')) : '')}</span>` : ''}<span class="meta">${statHtml(x)}${statBar(x)}${o.check ? `<span class="ck" title="${o.seen ? 'Visto (clique para desmarcar)' : 'Marcar como visto'}">${I.lint}</span>` : ''}</span></div>`;
 // a lista de arquivos do modo atual (S.changes): ferramentas (filtro, vistos, anterior/próximo, pastas) e as linhas
 function chgListHtml() {
   const isLast = S.changeMode === 'last';
   const groups = chgGroups(), shown = groups.reduce((n, [, l]) => n + l.length, 0);
   const seen = isLast ? seenOf() : new Set(), nSeen = isLast ? S.changes.filter(x => seen.has(x.path)).length : 0;
-  const fold = S.chgFold || (S.chgFold = new Set()), dirty = unsavedPaths(), inList = tabInList();
+  const fold = S.chgFold || (S.chgFold = new Set()), dirty = unsavedPaths(), inList = tabInList(), pick = canCommit();
   const rows = groups.map(([d, list]) => {
     const closed = fold.has(d) && !S.chgFilter;
-    return `${d ? `<div class="section dir ${closed ? 'closed' : ''}" data-d="${esc(d)}" title="${esc(d)}">${chev(closed ? 'M9 6l6 6-6 6' : 'M6 9l6 6 6-6')}<span class="dn">${esc(d)}</span><span class="meta">${list.length}</span></div>` : ''}${closed ? '' : list.map(x => chgRow(x, { sel: inList && S.active.path === x.path, unsaved: dirty.has(x.path), seen: seen.has(x.path), check: isLast })).join('')}`;
+    return `${d ? `<div class="section dir ${closed ? 'closed' : ''}" data-d="${esc(d)}" title="${esc(d)}">${chev(closed ? 'M9 6l6 6-6 6' : 'M6 9l6 6 6-6')}<span class="dn">${esc(d)}</span><span class="meta">${list.length}</span></div>` : ''}${closed ? '' : list.map(x => chgRow(x, { sel: inList && S.active.path === x.path, unsaved: dirty.has(x.path), seen: seen.has(x.path), check: isLast, pick: pick ? !VC.commit.off.has(x.path) : undefined })).join('')}`;
   }).join('');
   const many = S.changes.length > 12;
   const tools = S.changes.length ? `<div class="ctools">
@@ -231,15 +231,126 @@ function renderChanges() {
       <label title="${esc(refLong(S.rev))}"><span>para</span><input id="cmpTarget" list="cmpRefs" value="${esc(refShort(S.rev))}" placeholder="Local (disco)" spellcheck="false"></label>
       <datalist id="cmpRefs">${S.log.slice(0, 300).map(l => `<option value="${esc(l.hash)}">${esc(l.subject)} · ${esc(l.author)}, ${esc(l.when)}</option>`).join('')}<option value="HEAD">último commit</option></datalist>
     </div><div class="cmpsub">${esc(refLong(S.base))} <b>→</b> ${esc(refLong(S.rev))}</div>`;
-  const L = chgListHtml();
-  body.innerHTML = head + `<div class="section">${isCmp ? 'Diferenças' : 'Não commitado'} <span class="meta">${statHtml(L.tot)} ${S.chgFilter ? L.shown + ' de ' : ''}${S.changes.length}</span></div>` + L.tools
-    + (L.rows || `<div class="empty">${S.chgFilter ? 'Nenhum arquivo com esse nome.' : isCmp ? 'As duas versões são iguais (ou a versão não existe).' : 'Nada por aqui. Tudo limpo.'}</div>`);
+  const L = chgListHtml(), pick = canCommit();
+  if (pick && S.project.vcs === 'git' && !(VC.commit.br && VC.commit.brFor === S.project.path && Date.now() - VC.commit.brAt < 15000)) loadBranches().then((b) => { if (b && canCommit() && S.tool === 'changes') renderChanges(); });
+  if (pick) { const live = new Set(S.changes.map(c => c.path)); for (const p of [...VC.commit.off]) if (!live.has(p)) VC.commit.off.delete(p); }
+  // a mensagem em digitação não perde o foco nem o cursor quando a lista é redesenhada
+  const ta = $('#cbMsg'), keep = ta && document.activeElement === ta ? [ta.selectionStart, ta.selectionEnd, ta.scrollTop] : null;
+  body.innerHTML = head + `<div class="section">${pick && S.changes.length ? '<input type="checkbox" class="pick" id="cbAll" title="Marcar ou desmarcar todos" aria-label="Marcar ou desmarcar todos">' : ''}${isCmp ? 'Diferenças' : 'Não commitado'} <span class="meta">${statHtml(L.tot)} ${S.chgFilter ? L.shown + ' de ' : ''}${S.changes.length}</span></div>` + L.tools
+    + (L.rows || `<div class="empty">${S.chgFilter ? 'Nenhum arquivo com esse nome.' : isCmp ? 'As duas versões são iguais (ou a versão não existe).' : 'Nada por aqui. Tudo limpo.'}</div>`) + (pick ? commitBoxHtml() : '');
+  if (pick) { commitBind(body); if (keep && $('#cbMsg')) { const n = $('#cbMsg'); n.focus(); n.setSelectionRange(keep[0], keep[1]); n.scrollTop = keep[2]; } }
   if (isCmp) {
     const apply = () => compare(refResolve($('#cmpBase').value) || 'HEAD', refResolve($('#cmpTarget').value) || null);
     for (const id of ['#cmpBase', '#cmpTarget']) { const el = $(id); el.onchange = apply; el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } }; el.onfocus = () => el.select(); }
     $('#cmpSwap').onclick = () => S.rev && compare(S.rev, S.base);
   }
   chgBind(body, L);
+}
+
+// ----- commit (Git e SVN) e branches (Git), no modo Local do painel -----
+// Cada arquivo tem uma caixa: só os marcados entram no commit. A mensagem fica guardada enquanto você navega; Ctrl+Enter
+// commita. No Git, a linha de cima mostra a branch (clique: trocar ou criar), o que falta trazer e enviar, e os botões
+// de pull e push; o botão ao lado do Commit faz "commit e enviar". No SVN, o commit já vai para o servidor.
+VC.commit = { msg: '', off: new Set(), amend: false, busy: '', br: null, brFor: '', brAt: 0 };
+const BR_ICO = '<svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 4-6 3-6 7"/></svg>';
+const PULL_ICO = '<svg class="i" viewBox="0 0 24 24"><path d="M12 4v13M6 12l6 6 6-6"/></svg>', PUSH_ICO = '<svg class="i" viewBox="0 0 24 24"><path d="M12 20V7M6 12l6-6 6 6"/></svg>';
+const canCommit = () => !!(S.project && S.project.vcs) && !S.remote && S.changeMode === 'working';
+const vcPost = (route, body) => api(route, { project: S.project.path }, { method: 'POST', body: JSON.stringify(body || {}) });
+const commitFiles = () => S.changes.filter(c => !VC.commit.off.has(c.path));
+async function loadBranches(force) {
+  if (!S.project || S.project.vcs !== 'git') return null;
+  const C = VC.commit, proj = S.project.path;
+  if (!force && C.br && C.brFor === proj && Date.now() - C.brAt < 15000) return C.br;
+  try { const b = await api('vcs/branches', { project: proj }, { quiet: true }); if (S.project && S.project.path === proj) { C.br = b; C.brFor = proj; C.brAt = Date.now(); } } catch { /* fica com o que tinha */ }
+  return C.br;
+}
+function commitBoxHtml() {
+  if (!canCommit()) return '';
+  const C = VC.commit, git = S.project.vcs === 'git', n = commitFiles().length, cur = git && C.br && C.brFor === S.project.path ? C.br : null;
+  const me = cur && cur.local.find(b => b.current), name = cur ? (cur.current || cur.detached) : (S.project.branch || '');
+  const sync = me && me.upstream ? `${me.behind ? `<span class="dn" title="${me.behind} commit(s) do remoto que você ainda não tem">↓${me.behind}</span>` : ''}${me.ahead ? `<span class="up" title="${me.ahead} commit(s) seus que ainda não foram enviados">↑${me.ahead}</span>` : ''}` : me ? '<span class="new" title="Esta branch ainda não existe no remoto: Enviar cria ela lá">só aqui</span>' : '';
+  const busy = C.busy;
+  return `<div class="cbox${busy ? ' busy' : ''}" id="cbox">
+    ${git ? `<div class="cb-br"><button type="button" class="chip cb-branch" id="cbBranch" title="Trocar de branch ou criar uma">${BR_ICO}<b>${esc(name || 'sem branch')}</b>${chev('M6 9l6 6 6-6')}</button><span class="cb-sync">${sync}</span><span class="spacer"></span>
+      <button type="button" class="icon-btn" id="cbPull" title="Trazer do remoto (pull)" ${busy ? 'disabled' : ''}>${busy === 'pull' ? '<span class="spin"></span>' : PULL_ICO}</button><button type="button" class="icon-btn" id="cbPush" title="Enviar para o remoto (push)" ${busy ? 'disabled' : ''}>${busy === 'push' ? '<span class="spin"></span>' : PUSH_ICO}</button></div>` : ''}
+    <textarea id="cbMsg" rows="3" spellcheck="true" placeholder="${C.amend ? 'Mensagem nova (vazia: mantém a do último commit)' : 'Mensagem do commit'}" aria-label="Mensagem do commit">${esc(C.msg)}</textarea>
+    <div class="cb-act">${git ? `<label class="cb-amend" title="Junta estes arquivos ao último commit em vez de criar outro. Não use em commit que já foi enviado."><input type="checkbox" id="cbAmend" ${C.amend ? 'checked' : ''}>Emendar o último</label>` : `<span class="cb-note" title="No SVN, o commit já envia para o servidor">envia para o servidor</span>`}<span class="spacer"></span>
+      <div class="split cb-go"><button type="button" class="chip primary" id="cbGo" ${busy ? 'disabled' : ''} title="Commit dos arquivos marcados (Ctrl+Enter)">${busy === 'commit' ? '<span class="spin"></span>' : ''}Commit${n && n !== S.changes.length ? ` (${n})` : ''}</button>${git ? `<button type="button" class="chip primary caret" id="cbMore" ${busy ? 'disabled' : ''} title="Commit e enviar" aria-haspopup="menu">${chev('M6 9l6 6 6-6')}</button>` : ''}</div></div>
+  </div>`;
+}
+function commitBind(body) {
+  const box = $('#cbox'); if (!box) return;
+  const C = VC.commit, ta = $('#cbMsg');
+  ta.oninput = () => { C.msg = ta.value; };
+  ta.onclick = (e) => e.stopPropagation();
+  ta.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doCommit(e.shiftKey); } };
+  box.onclick = (e) => e.stopPropagation();
+  $('#cbGo').onclick = () => doCommit(false);
+  if ($('#cbMore')) $('#cbMore').onclick = (e) => { const r = $('#cbMore').getBoundingClientRect(); showMenu({ clientX: r.left, clientY: r.top - 78, preventDefault() {}, stopPropagation() {} }, [{ label: 'Commit e enviar (push)', icon: PUSH_ICO, k: 'Ctrl+Shift+Enter', action: () => doCommit(true) }, { label: 'Só o commit', icon: I.commit, k: 'Ctrl+Enter', action: () => doCommit(false) }]); };
+  if ($('#cbAmend')) $('#cbAmend').onchange = () => { C.amend = $('#cbAmend').checked; if (C.amend && !C.msg && S.log[0]) C.msg = S.log[0].subject; renderChanges(); };
+  if ($('#cbBranch')) { $('#cbBranch').onclick = () => branchDialog(); $('#cbPull').onclick = () => vcSync('pull'); $('#cbPush').onclick = () => vcSync('push'); }
+  body.querySelectorAll('.row.chg .pick').forEach(c => { c.onclick = (e) => e.stopPropagation(); c.onchange = () => { const p = c.closest('.row').dataset.p; c.checked ? C.off.delete(p) : C.off.add(p); renderChanges(); }; });
+  const all = $('#cbAll'); if (all) { const n = commitFiles().length; all.checked = n === S.changes.length; all.indeterminate = n > 0 && n < S.changes.length; all.onclick = (e) => e.stopPropagation(); all.onchange = () => { if (all.checked) C.off.clear(); else S.changes.forEach(c => C.off.add(c.path)); renderChanges(); }; }
+}
+async function vcAfter() { VC.commit.brAt = 0; await Promise.all([refreshProject(), loadBranches(true)]); await loadChanges(); }
+async function doCommit(push) {
+  const C = VC.commit; if (C.busy || !canCommit()) return;
+  const files = commitFiles(), msg = C.msg.trim();
+  if (!files.length && !C.amend) return toast('Marque pelo menos um arquivo para o commit');
+  if (!msg && !C.amend) { toast('Escreva a mensagem do commit'); return $('#cbMsg')?.focus(); }
+  C.busy = 'commit'; renderChanges();
+  try {
+    // o que está aberto e ainda não foi gravado entra no commit como está na tela
+    const set = new Set(files.map(f => f.path));
+    for (const t of S.tabs.filter(t => t.dirty && t.project === S.project.path && set.has(t.path) && savable(t))) await saveTab(t, true);
+    const r = await vcPost('vcs/commit', { files: files.map(f => ({ path: f.path, code: f.code })), message: msg, amend: C.amend, all: !C.amend && files.length === S.changes.length });
+    C.msg = ''; C.amend = false; C.off.clear();
+    toast(`Commit ${r.hash || ''} feito: ${r.subject || msg}`.replace('  ', ' '), 'ok');
+    if (push && S.project.vcs === 'git') { C.busy = 'push'; renderChanges(); const p = await vcPost('vcs/sync', { action: 'push' }); toast(p.upToDate ? 'O remoto já estava em dia' : 'Enviado para o remoto', 'ok'); }
+  } catch (e) { toast(e.message, 'err'); }
+  C.busy = ''; await vcAfter();
+}
+async function vcSync(action) {
+  const C = VC.commit; if (C.busy) return;
+  C.busy = action; renderChanges();
+  try { const r = await vcPost('vcs/sync', { action }); toast(action === 'push' ? (r.upToDate ? 'Nada para enviar: o remoto já está em dia' : 'Enviado para o remoto') : (r.upToDate ? 'Nada novo no remoto' : 'Trazido do remoto'), 'ok'); }
+  catch (e) { toast(e.message, 'err'); }
+  C.busy = ''; await vcAfter();
+}
+// trocar de branch ou criar: uma lista com busca; digitar um nome que não existe oferece criar a partir da atual
+async function branchDialog() {
+  if (!S.project || S.project.vcs !== 'git') return toast('Branches só existem em projetos Git');
+  const info = await loadBranches(true); if (!info) return toast('Não deu para ler as branches', 'err');
+  const when = (ts) => ts ? ago(ts * 1000) : '';
+  dialog('brDlg', `<div class="dlg-hd"><span class="dlg-ic">${BR_ICO}</span><div><h3>Branches</h3><p>${info.current ? `Você está em <b>${esc(info.current)}</b>.` : `Você está fora de uma branch (em ${esc(info.detached)}).`} As alterações locais vão junto na troca.</p></div></div>
+    <input id="brQ" placeholder="Buscar, ou digitar o nome de uma branch nova" spellcheck="false" autocomplete="off" aria-label="Buscar ou criar branch">
+    <div class="br-list" id="brList" role="listbox"></div><p class="err" id="brErr"></p>
+    <div class="actions"><button class="chip" id="brFetch" title="Busca no remoto as branches que os outros criaram">${I.refresh}Atualizar do remoto</button><span class="spacer"></span><button class="chip" data-close>Fechar</button></div>`, (box) => {
+    const q = box.querySelector('#brQ'), list = box.querySelector('#brList'), err = box.querySelector('#brErr');
+    let data = info, busy = false;
+    const go = async (name, create) => {
+      if (busy) return; busy = true; err.textContent = ''; list.classList.add('busy');
+      try { const r = await vcPost('vcs/checkout', { name, create }); box.hidden = true; toast(create ? `Branch ${r.branch} criada` : `Agora em ${r.branch}`, 'ok'); await vcAfter(); }
+      catch (e) { err.textContent = e.message; }
+      busy = false; list.classList.remove('busy');
+    };
+    const paint = () => {
+      const raw = q.value.trim(), want = raw.replace(/\s+/g, '-'), w = raw.toLowerCase();
+      const hit = (b) => !w || b.name.toLowerCase().includes(w);
+      const locals = data.local.filter(hit), names = new Set(data.local.map(b => b.name));
+      const remotes = data.remote.filter(b => hit(b) && !names.has(b.name.slice(b.name.indexOf('/') + 1)));
+      const exists = data.local.some(b => b.name === want) || data.remote.some(b => b.name === want);
+      const row = (b, remote) => `<div class="br-row${b.current ? ' cur' : ''}" role="option" tabindex="0" data-n="${esc(b.name)}" title="${esc(b.subject || '')}">${remote ? '<span class="br-tag">remota</span>' : b.current ? `<span class="br-ok">${chev('M5 12.5l4.5 4.5L19 7.5')}</span>` : '<span class="br-ok"></span>'}<b>${esc(b.name)}</b>${!remote && (b.ahead || b.behind) ? `<span class="br-ab">${b.behind ? '↓' + b.behind : ''}${b.ahead ? ' ↑' + b.ahead : ''}</span>` : ''}${!remote && !b.upstream ? '<span class="br-tag dim">só aqui</span>' : ''}<small>${esc(when(b.ts))}</small></div>`;
+      list.innerHTML = (want && !exists ? `<div class="br-row new" role="option" tabindex="0" data-new="${esc(want)}">${chev('M12 5v14M5 12h14')}<b>Criar a branch ${esc(want)}</b><small>a partir de ${esc(data.current || data.detached)}</small></div>` : '')
+        + (locals.length ? `<h5>Locais</h5>${locals.map(b => row(b)).join('')}` : '') + (remotes.length ? `<h5>No remoto</h5>${remotes.slice(0, 200).map(b => row(b, true)).join('')}` : '')
+        || '<p class="br-none">Nenhuma branch com esse nome.</p>';
+      list.querySelectorAll('.br-row').forEach(r => { const act = () => r.dataset.new ? go(r.dataset.new, true) : r.classList.contains('cur') ? (box.hidden = true) : go(r.dataset.n, false); r.onclick = act; r.onkeydown = (e) => { if (e.key === 'Enter') act(); if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); (e.key === 'ArrowDown' ? r.nextElementSibling?.closest('.br-row') || [...list.querySelectorAll('.br-row')].find(x => x.compareDocumentPosition(r) & 2) : [...list.querySelectorAll('.br-row')].reverse().find(x => x.compareDocumentPosition(r) & 4) || q)?.focus(); } }; });
+    };
+    q.oninput = paint;
+    q.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); list.querySelector('.br-row')?.focus(); } if (e.key === 'Enter') { e.preventDefault(); const rows = list.querySelectorAll('.br-row'); if (rows.length === 1 || rows[0]?.dataset.new) rows[0].click(); } };
+    box.querySelector('#brFetch').onclick = async (ev) => { const b = ev.currentTarget; b.disabled = true; err.textContent = ''; try { await vcPost('vcs/sync', { action: 'fetch' }); data = await loadBranches(true) || data; paint(); toast('Branches do remoto atualizadas', 'ok'); } catch (e) { err.textContent = e.message; } b.disabled = false; };
+    paint(); q.focus();
+  });
 }
 
 // ----- Histórico (modo "last" do painel) -----
@@ -479,7 +590,8 @@ function blameInline() {
   VC.blame.t = setTimeout(async () => {
     let b; try { b = await blameAt(t, line); } catch { return clear(); }
     if (S.active !== t || !ed.getPosition() || ed.getPosition().lineNumber !== line || ed.getModel() !== t.model) return;
-    const c = b.commit, text = c ? `${c.author}, ${c.when} · ${c.subject}` : 'Ainda não commitado';
+    const c = b.commit; if (!c) return clear(); // linha nova, ainda fora do Git: sem texto no fim dela
+    const text = `${c.author}, ${c.when} · ${c.subject}`;
     const end = t.model.getLineMaxColumn(line);
     col.set([{ range: new monaco.Range(line, end, line, end), options: { showIfCollapsed: true, after: { content: '\u2003' + (text.length > 90 ? text.slice(0, 89) + '…' : text), inlineClassName: 'bs-blame' } } }]);
   }, 450);

@@ -19,13 +19,27 @@ const IC = {
   search: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
 };
 const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
-const size = (n) => n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+const size = (n) => n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1).replace('.', ',') + ' MB';
+// tamanho no cartão: instalado, o espaço que ele ocupa no disco (medido ao instalar); na loja, o tamanho do pacote
+const sizeOf = (p) => p.installed && p.disk ? `<span title="Espaço ocupado no disco, medido na instalação">${size(p.disk)} no disco</span>` : p.size ? `<span title="Tamanho do pacote">${size(p.size)}</span>` : '';
+// quem fez: o autor do primeiro commit da pasta do plugin (quem publicou) e, menor, quem editou por último
+const when = (iso) => { const t = Date.parse(iso || ''); if (!t) return ''; const d = Math.floor((Date.now() - t) / 864e5); return d < 1 ? 'hoje' : d === 1 ? 'ontem' : d < 30 ? `há ${d} dias` : d < 60 ? 'há 1 mês' : d < 365 ? `há ${Math.floor(d / 30)} meses` : new Date(t).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }); };
+const day = (iso) => { const t = Date.parse(iso || ''); return t ? new Date(t).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : ''; };
+const nameOf = (a) => (a && (a.login || a.name)) || '';
+const face = (a) => a && a.avatar ? `<img class="ps-av" src="${esc(a.avatar)}${String(a.avatar).includes('?') ? '&' : '?'}s=48" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="ps-av" aria-hidden="true">${esc((nameOf(a) || '?').slice(0, 1).toUpperCase())}</span>`;
+function byline(p, big) {
+  const m = p.made, f = m && m.first, l = m && m.last;
+  if (!f || !nameOf(f)) return p.author ? `<div class="ps-by">${face({ name: p.author })}<span class="ps-who"><b>${esc(p.author)}</b></span></div>` : '';
+  const edited = l && l.sha !== f.sha && nameOf(l);
+  return `<div class="ps-by${big ? ' big' : ''}">${face(f)}<span class="ps-who"><b title="Autor do primeiro commit do plugin${f.name && f.login ? ' (' + esc(f.name) + ')' : ''}, em ${esc(day(f.date))}">${esc(nameOf(f))}</b>`
+    + (edited ? `<small title="Último commit do plugin, em ${esc(day(l.date))}">última edição: ${esc(nameOf(l))}, ${esc(when(l.date))}</small>` : `<small title="${esc(day(f.date))}">publicou ${esc(when(f.date))}</small>`) + '</span></div>';
+}
 
 // selo no topo, ao lado do de atualização do BlueScreen
 const pill = document.createElement('button');
 pill.id = 'plugPill'; pill.className = 'chip'; pill.hidden = true;
 pill.innerHTML = `${IC.up}<span class="pp-txt">Plugins</span>`;
-($('#updPill') || $('#btnNet')).before(pill);
+($('#updPill') || $('#btnSettings')).before(pill);
 pill.onclick = () => { P.tab = 'upd'; bs.openTool('plugins'); paint(); };
 
 const catalog = () => (P.remote && P.remote.plugins) || [];
@@ -44,10 +58,30 @@ async function check(fresh, quiet = true) {
     const before = pill.hidden; mark();
     if (before && !pill.hidden) { pill.classList.remove('up-enter'); void pill.offsetWidth; pill.classList.add('up-enter'); }
     if (!quiet) toast(updates().length ? plural(updates().length, 'atualização de plugin', 'atualizações de plugins') : 'Plugins em dia', 'ok');
+    movedNotice();
   } catch (e) { P.error = e.message; if (!quiet) toast('Loja de plugins: ' + e.message); }
   P.loading = false;
   if (bs.S.tool === 'plugins') bs.renderTool();
   paint();
+}
+
+// QAutils e IAMaker deixaram de vir junto com o BlueScreen: agora são instalados pela loja. Quem já usava (tem dados
+// guardados do plugin) recebe o convite uma vez, e os dados continuam onde estavam.
+const MOVED = ['qautils', 'iamaker'];
+async function movedNotice() {
+  if (bs.doc || movedNotice.done || bs.store.get('movedAsk', false)) return; movedNotice.done = true;
+  const had = [];
+  for (const id of MOVED) {
+    const o = catalog().find(p => p.id === id); if (!o || o.installed || bs.plugins.list.some(p => p.id === id)) continue;
+    try { const i = await bs.api('plugin/info', { plugin: id }, { method: 'POST', body: '{}', quiet: true }); if (i && i.exists) had.push(o); } catch { /* sem dados: não usava */ }
+  }
+  if (!had.length) return;
+  const names = had.map(p => p.name).join(' e ');
+  window.dialog('movedDlg', `<div class="dlg-hd"><span class="dlg-ic">${IC.store}</span><div><h3>${esc(names)}: agora pela loja</h3><p>${had.length > 1 ? 'Eles deixaram' : 'Ele deixou'} de vir junto com o BlueScreen e ${had.length > 1 ? 'passaram' : 'passou'} para a loja de plugins. O que você tinha guardado (configurações e dados) continua no lugar.</p></div></div>
+    <div class="actions"><button class="chip" data-close>Agora não</button><button class="chip primary" id="movedGo">${IC.down}Instalar ${esc(names)}</button></div>`, (el) => {
+    bs.store.set('movedAsk', true);
+    el.querySelector('#movedGo').onclick = () => { el.hidden = true; install(had); };
+  });
 }
 
 // instala/atualiza (um ou vários) e liga o plugin na hora, sem recarregar a janela
@@ -57,13 +91,13 @@ async function install(list) {
   let done = 0;
   for (const p of list) {
     try {
-      await post('plugins/install', { server: p.server, id: p.id, version: p.version });
+      const got = await post('plugins/install', { server: p.server, id: p.id, version: p.version }); p.disk = got && got.disk;
       const r = await bs.plugins.reload(p.id); done++;
       if (r && r.error) toast(`${p.name}: ${r.error}`, 'err');
     } catch (e) { toast(`${p.name}: ${e.message}`, 'err'); }
     P.busy.delete(p.id);
   }
-  if (done) toast(done > 1 ? `${done} plugins instalados` : `${list[0].name} ${list[0].installed ? 'atualizado' : 'instalado'}`, 'ok');
+  if (done) toast(done > 1 ? `${done} plugins instalados` : `${list[0].name} ${list[0].installed ? 'atualizado' : 'instalado'}${list[0].disk ? ` · ocupa ${size(list[0].disk)} no disco` : ''}`, 'ok');
   await check(true);
 }
 
@@ -105,7 +139,7 @@ const matches = (p) => {
   if (P.tab === 'upd' && !p.update) return false;
   if (P.tab === 'nodes' && !p.nodes) return false;
   const q = P.q.trim().toLowerCase();
-  return !q || q.split(/\s+/).every(w => [p.name, p.description, p.author, p.id].join(' ').toLowerCase().includes(w));
+  return !q || q.split(/\s+/).every(w => [p.name, p.description, p.author, p.id, p.made && nameOf(p.made.first), p.made && p.made.first && p.made.first.name].join(' ').toLowerCase().includes(w));
 };
 const stateBtn = (p, big) => {
   const busy = P.busy.has(p.id);
@@ -117,8 +151,9 @@ const stateBtn = (p, big) => {
 const tags = (p) => `${p.nodes ? `<span class="ps-tag node" title="Acrescenta ${plural(p.nodes, 'nó', 'nós')} ao Automator">${IC.node}${plural(p.nodes, 'nó', 'nós')}</span>` : ''}${p.runtime ? `<span class="ps-tag" title="O servidor do plugin roda com ${esc(p.runtime)}">${esc(p.runtime)}</span>` : ''}`;
 function card(p) {
   return `<article class="ps-card${P.sel === p.id ? ' sel' : ''}${p.update ? ' upd' : ''}" data-id="${esc(p.id)}" tabindex="0">
-    <header>${bs.plugIcon(p)}<div class="ps-nm"><b>${esc(p.name)}</b><small>v${esc(p.installed && p.update ? p.installed : p.version)}${p.author ? ' · ' + esc(p.author) : ''}</small></div></header>
+    <header>${bs.plugIcon(p)}<div class="ps-nm"><b>${esc(p.name)}</b><small>v${esc(p.installed && p.update ? p.installed : p.version)}${sizeOf(p) ? ' · ' + sizeOf(p) : ''}</small></div></header>
     <p>${esc(p.description || 'Sem descrição.')}</p>
+    ${byline(p)}
     <footer><span class="ps-tags">${tags(p)}</span>${stateBtn(p)}</footer>
   </article>`;
 }
@@ -152,12 +187,13 @@ function paintDetail() {
   box.innerHTML = `<div class="ps-dhead">
       <button class="icon-btn ps-back" data-a="close" title="Voltar para a loja (Esc)">${IC.back}</button>
       ${bs.plugIcon(p, 'lg')}
-      <div class="ps-dnm"><h2>${esc(p.name)}</h2><small>v${esc(p.version)}${p.author ? ' · ' + esc(p.author) : ''}${p.installed && p.update ? ` · você tem a v${esc(p.installed)}` : ''}</small></div>
+      <div class="ps-dnm"><h2>${esc(p.name)}</h2><small>v${esc(p.version)}${p.installed && p.update ? ` · você tem a v${esc(p.installed)}` : ''}</small></div>
       <div class="ps-dact">${stateBtn(p, true)}${local && local.user ? `<button class="icon-btn" data-a="remove" title="Remover ${esc(p.name)}">${'<svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>'}</button>` : ''}</div>
     </div>
     <div class="ps-dbody">
       <p class="ps-desc">${esc(p.description || '')}</p>
-      <div class="ps-meta">${tags(p)}<span class="ps-tag">${plural(p.files || 0, 'arquivo', 'arquivos')} · ${size(p.size || 0)}</span>${p.requires && p.requires.length ? `<span class="ps-tag" title="Precisa destes plugins ligados">precisa de ${p.requires.map(esc).join(', ')}</span>` : ''}${a && a.web ? `<a class="ps-tag link" href="${esc(a.web)}" target="_blank" rel="noopener">${IC.link}Código no GitHub</a>` : ''}</div>
+      ${byline(p, true)}
+      <div class="ps-meta">${tags(p)}<span class="ps-tag" title="Tamanho do pacote na loja">${plural(p.files || 0, 'arquivo', 'arquivos')} · ${size(p.size || 0)}</span>${p.installed && p.disk ? `<span class="ps-tag" title="Medido na pasta do plugin, na instalação">ocupa ${size(p.disk)} no disco</span>` : ''}${p.made && p.made.commits > 1 ? `<span class="ps-tag" title="Commits que mexeram neste plugin">${p.made.commits} commits</span>` : ''}${p.requires && p.requires.length ? `<span class="ps-tag" title="Precisa destes plugins ligados">precisa de ${p.requires.map(esc).join(', ')}</span>` : ''}${a && a.web ? `<a class="ps-tag link" href="${esc(a.web)}" target="_blank" rel="noopener">${IC.link}Código no GitHub</a>` : ''}</div>
       ${a && a.nodes && a.nodes.length ? `<section class="ps-nodes"><h3>Nós no Automator</h3><div>${a.nodes.map(n => `<div class="ps-node" title="${esc(n.desc || '')}">${IC.node}<b>${esc(n.name || '')}</b><span>${esc(n.category || '')}</span></div>`).join('')}</div></section>` : ''}
       <article class="md ps-readme">${a ? '' : '<div class="empty"><span class="spin"></span></div>'}</article>
     </div>`;

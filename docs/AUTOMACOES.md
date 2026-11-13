@@ -3,7 +3,7 @@
 Plugins que vêm com o BlueScreen.
 
 - O **Automator** é uma tela inteira: tem um ícone na barra da esquerda e abre numa aba fixa, a primeira das abas. A lista de fluxos fica no painel da esquerda. A aba fica enquanto o painel Automator é o painel escolhido e sai quando você escolhe outro painel; o fluxo aberto continua como estava.
-- **Agenda** e **Agentes** abrem cada um numa janela do balão flutuante (o botão de menu no canto da tela), que dá para mover, maximizar ou arrastar pelo topo até uma região da IDE.
+- A **Agenda** abre pelo rodapé (o próximo compromisso fica na barra de baixo), no meio da tela. Os **Agentes** abrem numa janela do balão flutuante (o botão de menu no canto da tela). As duas janelas dá para mover, maximizar ou arrastar pelo topo até uma região da IDE.
 
 Todos também abrem pelo **Buscar em tudo** (`Shift` `Shift`): "Automator", "Agenda", "Agentes".
 
@@ -310,7 +310,7 @@ Quando a saída de um nó é JSON, o painel dele mostra atalhos em **Última exe
 
 Os nós de imagem, áudio e vídeo gravam um arquivo novo ao lado do original (ou onde você indicar em **Gravar em**) e entregam o caminho dele, então dá para encadear: capturar um quadro, redimensionar e converter.
 
-Com o plugin **Navegador** ligado, a paleta também tem **Automatizar site** (veja [Automatize um site](#automatize-um-site)). Outros plugins podem acrescentar nós: veja [Crie nós com um plugin](#crie-nós-com-um-plugin).
+A paleta também tem o **Navegador** (veja [Automatize um site inteiro](#automatize-um-site-inteiro)) e o **Testar site** (veja [Teste um site](#teste-um-site)). Os plugins podem acrescentar nós: veja [Crie nós com um plugin](#crie-nós-com-um-plugin).
 
 Um fluxo aceita até 200 nós e 1.000 ligações, sem ciclos. Quando um nó falha, os seguintes não rodam. Se várias ligações chegam à mesma entrada, o nó recebe uma lista com os valores.
 
@@ -506,15 +506,16 @@ Quando o fluxo termina, a janela fecha (ou fica aberta, se o nó pedir).
 | Capturar tela | Grava um PNG no arquivo do valor. |
 | Esperar aparecer, Esperar sumir, Esperar (segundos) | Para páginas que carregam aos poucos. Cada passo já espera o elemento por alguns segundos. |
 | Conferir texto, que aparece, endereço, título, quantidade | Se não bater, o nó falha dizendo o passo, o que esperava e o que viu. |
+| Comparar com a referência (visual), Checar acessibilidade (básico) | Os dois passos de teste, descritos em [Teste um site](#teste-um-site). |
 | Rodar JavaScript | Roda um trecho na página. Com `return`, o valor vai para a saída, no campo de **Onde**. |
 
 O nó entrega `url`, `title` e `values` (o que os passos de leitura guardaram). Quando um passo falha, a mensagem diz qual e traz o caminho de uma imagem da tela naquela hora.
 
-Outras opções: **Janela do navegador** (mostrar ou não), **Sessão** (lembrar dos logins entre as execuções, ou começar sempre do zero) e **Tela** (computador, tablet ou celular). Para relatório de teste em HTML, comparação visual e checagem de acessibilidade, use o **Testar site**, a seguir.
+Outras opções: **Janela do navegador** (mostrar ou não), **Sessão** (lembrar dos logins entre as execuções, ou começar sempre do zero) e **Tela** (computador, tablet ou celular). Para o placar de cada passo e o relatório de teste em HTML, use o **Testar site**, a seguir.
 
-### Teste e automatize um site
+### Teste um site
 
-O plugin **Navegador** traz dois nós que abrem o Edge (ou o Chrome) num perfil próprio e seguem um roteiro: **Testar site** (categoria QA) e **Automatizar site**. Precisam do Node.js 22 ou mais novo.
+O nó **Testar site** (categoria QA) roda um roteiro no site e diz se passou. Ele vem no Automator, como o Navegador: não precisa de plugin nem do Node.js, só do Edge ou do Chrome. O roteiro tem os mesmos passos do nó Navegador, com o mesmo campo **Onde** (`texto=Entrar`, `rotulo=Nome do campo` ou um seletor CSS) e a escolha **Se não achar, pula**.
 
 **Grave em vez de escrever.** No painel do nó, **Gravar no navegador** abre o site de verdade. Use ele normalmente: cada clique, texto digitado e opção escolhida vira um passo no roteiro, na hora. Uma barra no topo da página mostra que está gravando e tem:
 
@@ -525,21 +526,25 @@ O plugin **Navegador** traz dois nós que abrem o Edge (ou o Chrome) num perfil 
 
 O gravador escolhe o jeito mais firme de achar cada elemento (id, atributos de teste como `data-testid`, nome do campo, texto do botão) e nunca grava senha: no lugar dela fica `{{cred:senha}}`, e o painel do nó oferece **Guardar agora** para você digitar o valor em Credenciais. Sem endereço no nó, o primeiro site que você abrir vira o endereço. Os passos também podem ser escritos ou ajustados à mão; a cor da borda diz o tipo (azul: ação, verde: conferência, amarelo: leitura, cinza: espera).
 
+Os passos que mais aparecem num teste:
+
 | Passo | O que faz |
 |---|---|
-| Clicar, Digitar, Escolher opção, Apertar tecla, Passar o mouse, Ir para endereço | As ações. **Onde** é um seletor CSS (`#senha`) ou `texto=Entrar`. |
 | Conferir texto | O elemento tem que conter o texto. A falha diz o que estava lá. |
-| Conferir que aparece / que sumiu | O elemento tem que estar, ou deixar de estar, na tela. |
+| Conferir que aparece, Esperar sumir | O elemento tem que estar, ou deixar de estar, na tela. |
 | Conferir endereço / título | O endereço ou o título da página tem que conter o trecho. |
 | Conferir quantidade | Quantos elementos casam com o seletor (linhas de uma tabela, itens de uma lista). |
-| Comparar com a referência (visual) | Compara a tela com uma imagem guardada. A primeira execução grava a referência; as seguintes falham se mudar mais que a **Diferença visual aceita**, e gravam uma imagem com as diferenças em vermelho. |
+| Comparar com a referência (visual) | Compara a tela com uma imagem guardada. A primeira execução grava a referência; as seguintes falham se mudar mais que a **Diferença visual aceita**, e gravam uma imagem com as diferenças em vermelho. O valor é o arquivo da referência; em branco, o Automator escolhe um, pelo nome do teste e o número do passo. |
 | Checar acessibilidade (básico) | Idioma e título da página, imagens sem texto alternativo, botões e links sem nome, campos sem rótulo, falta de título principal. |
 | Ler campo (devolver) | Guarda o texto do elemento em `values`, com o nome que você der. |
-| Capturar tela, Esperar aparecer, Esperar (segundos) | Imagem num arquivo e esperas. |
 
-**Testar site** sai por **sim** (passou) ou **não** (falhou) e entrega cada passo com o tempo e o erro, os campos lidos, os erros de JavaScript e os pedidos que falharam na página, e o caminho de um relatório em HTML com a tela da hora da falha. No painel, o resultado aparece como placar, com **Ver a tela na hora da falha** e **Abrir o relatório**; no quadro, o nó mostra quantos passaram. Dá para escolher a tela (computador, tablet, celular), seguir depois de uma falha para anotar todas, e reprovar por erro de JavaScript. Quando falha com a janela à vista, ela fica aberta onde parou.
+**O resultado.** O nó sai por **sim** (passou) ou **não** (falhou) e entrega cada passo com o tempo e o erro, os campos lidos, os erros de JavaScript e os pedidos que falharam na página, e o caminho de um relatório em HTML com a tela da hora da falha. No painel, o resultado aparece como placar, com **Ver a tela na hora da falha** e **Abrir o relatório**; no quadro, o nó mostra quantos passaram. Dá para escolher a tela (computador, tablet, celular), seguir depois de uma falha para anotar todas, e reprovar por erro de JavaScript. Quando falha com a janela à vista, ela fica aberta onde parou. Um passo com **Se não achar, pula** que não achou o elemento entra no placar como pulado, não como falha.
 
-**Automatizar site** é o mesmo motor sem o placar: para na primeira falha e entrega `{ url, title, values }`. Serve para rotinas, como trocar a senha de um usuário.
+**Junto com o Navegador.** O Testar site usa a mesma janela dos nós Navegador do fluxo: com o Endereço em branco, ele testa a página em que o nó anterior parou (um Navegador que entra na conta, depois um teste por tela, por exemplo). Senhas vão como `{{cred:nome}}`: no placar e no relatório aparece a referência, nunca o valor.
+
+**Onde ficam os arquivos.** Na pasta `automator-navegador`, ao lado do arquivo dos fluxos: `evidencias` (a tela de cada falha e as imagens de diferença), `referencias` (as imagens de referência sem arquivo escolhido), `relatorios` (um HTML por teste) e `perfil` (os logins que o navegador lembra).
+
+**Fluxos antigos.** Estes nós já foram um plugin (**Navegador**, com **Testar site** e **Automatizar site**, que pedia o Node.js). Um fluxo gravado naquele tempo abre e roda sem mudar nada: o Automatizar site vira o nó **Navegador**, o Testar site vira o do núcleo, e `{{vault:site}}` nos passos vira `{{cred:site}}`. Guarde a senha em **Credenciais** com esse nome (o painel do nó oferece **Guardar agora**). As imagens de referência que ficavam na pasta de dados do plugin são gravadas de novo na primeira execução.
 
 ### Mais ferramentas de QA
 
@@ -585,7 +590,7 @@ let s = ''; process.stdin.on('data', d => s += d).on('end', () => {
 - **Saída:** o que o programa escreve na saída padrão, lido como JSON (ou como texto). Código de saída diferente de zero falha o nó com o que ele escreveu na saída de erro. Com mais de uma saída em `outputs`, responda `{ "port": "nome", "value": ... }`.
 - **Segredos:** `{{vault:nome}}` e `{{cred:nome}}` num parâmetro não vão no JSON. O valor chega numa variável de ambiente, e `secrets` diz qual (`{ "{{vault:nome}}": "BS_SECRET_0" }`). O Cofre só entrega se o segredo estiver liberado para o plugin e para o programa.
 - **Gravador:** `"record": { "args": ["arquivo.js", "--record"] }` no nó e `"recorder": true` num campo `rows` põem o botão **Gravar** no painel. O programa recebe `{ params, data }` na primeira linha da entrada e escreve um passo por linha (`{ "do", "on", "value" }`); quando a entrada fecha, ele encerra. Numa opção de `select`, `"tone": "act" | "check" | "read" | "wait"` dá a cor do passo.
-- O programa roda na pasta do plugin, com o Node.js, o Python ou o que estiver no PC. O plugin **Navegador** (`app/plugins/navegador`) é um exemplo completo.
+- O programa roda na pasta do plugin, com o Node.js, o Python ou o que estiver no PC.
 
 Dá para pedir um nó desses ao **IAMaker** sem sair do Automator: no fim da paleta, **Criar um nó novo com IA** (ou **Criar o nó "…" com IA**, quando a busca não acha nada) abre o IAMaker num plugin novo com o pedido já começado. O guia do IAMaker ensina a IA a escrever o `automator.json`, o programa e a parte de Recebe/Devolve. Quando o plugin fica pronto, o nó aparece na paleta na próxima vez que ela abrir.
 
@@ -627,7 +632,8 @@ Um nó de plugin ganha o mesmo botão com `"code": "linguagem"` num campo `area`
 - **Usar:** `{{cred:nome}}` em qualquer campo de um nó; `{{cred:nome.user}}` é o usuário. O menu **+ dado** dos campos lista as credenciais.
 - **O valor não aparece:** nenhuma tela ou rota o devolve. Na execução ele entra no nó e é trocado por `••••••` no que o nó devolve, na saída e no erro, antes de seguir para os próximos nós e para o histórico. Uma senha curta (menos de 8 caracteres, como `2026` ou `admin`) some do histórico e dos erros, mas não da saída que segue para os próximos nós: ela apareceria por acaso em datas e nomes e apagaria dados seus. Prefira senhas de 8 caracteres ou mais.
 - **Em scripts:** no Script PowerShell, escreva `{{cred:nome}}` fora de aspas simples; o valor chega por variável de ambiente e não fica escrito no arquivo do script. Em **Executar programa**, credencial em argumento é recusada, porque outros programas do PC leem os argumentos.
-- **Em nós de plugin** (Testar site, Automatizar site): o valor chega ao programa do nó por variável de ambiente, como os segredos do Cofre.
+- **Em nós de plugin:** o valor chega ao programa do nó por variável de ambiente, como os segredos do Cofre.
+- **No Testar site:** o placar e o relatório mostram a referência (`{{cred:nome}}`), não o valor.
 - Um campo que cita uma credencial que não existe mostra o aviso com **Guardar agora**.
 - **A tela** segue a do Cofre da IDE: um cartão por credencial, com quando foi trocada, quem usou por último (fluxo e nó) e os fluxos que a usam; o menu do cartão troca o valor, edita a descrição, copia a referência ou apaga. **Registro de uso** lista os usos e as recusas desde que o BlueScreen abriu.
 
@@ -655,13 +661,49 @@ O menu **⋯** da barra importa e exporta o fluxo em JSON, com os mesmos campos 
 
 ## Agenda
 
-1. Abra a **Agenda** e clique no dia.
-2. **Novo** (ou duplo clique no dia) abre o compromisso: título, dia, hora, repetição e notas.
-3. Com o Automator ligado, **Na hora, rodar também** escolhe um fluxo para executar junto com o aviso.
+Abre pelo rodapé: a barra de baixo mostra o próximo compromisso de hoje (ou quantos passaram do horário), e um clique abre a Agenda no meio da tela.
 
-Na hora marcada chega um aviso do Windows. Em cada compromisso dá para concluir, adiar (10 minutos, 1 hora, amanhã), editar e excluir. Os que repetem aparecem em todos os dias em que caem; neles, no lugar de concluir e adiar, **Parar de repetir** suspende os avisos até você mandar voltar. **Passaram do horário** lista os que já avisaram e ninguém concluiu.
+**Marcar um compromisso**
+
+- **Em uma linha:** escreva em **Novo** do jeito que se fala e dê Enter. A Agenda mostra o que entendeu antes de gravar.
+
+  | Você escreve | Vira |
+  |---|---|
+  | `Reunião com a Ana amanhã 14h30` | amanhã, 14:30 |
+  | `Dentista sexta às 15h` | a próxima sexta, 15:00 |
+  | `Pagar boleto dia 25` | dia 25, 09:00 |
+  | `Tomar água em 30 min` | daqui a meia hora |
+  | `Standup todo dia 9h30` | todo dia, 09:30 |
+
+- **Com tudo:** o lápis ao lado (ou duplo clique num dia) abre o formulário: título, dia, hora, duração, **Avisar** (na hora, de 5 minutos a 1 dia antes), repetição, onde (sala ou link da reunião) e notas. Com o Automator ligado, **Na hora, rodar também** escolhe um fluxo para executar junto com o aviso.
+
+**Ver**
+
+- **Mês** mostra o calendário, com a hora e o título em cada dia; o dia escolhido abre à direita.
+- **Próximos** lista os 14 dias seguintes, um bloco por dia, com quanto falta ("em 20 min") e o botão **Abrir** quando o compromisso tem link de reunião.
+
+Na hora marcada chega um aviso do Windows. Em cada compromisso dá para concluir, adiar (10 minutos, 1 hora, amanhã) e, no **⋯**, editar, enviar para outra agenda e excluir. Os que repetem aparecem em todos os dias em que caem; neles, no lugar de concluir e adiar, **Parar de repetir** suspende os avisos até você mandar voltar. **Passaram do horário** lista os que já avisaram e ninguém concluiu.
 
 Os horários são conferidos a cada cinco segundos. Se o BlueScreen estava fechado na hora, o aviso chega uma vez ao abrir; um compromisso que repete pula para a próxima ocorrência.
+
+### Agendas do Google e da Microsoft
+
+**Conectar agenda** (no topo da Agenda) traz os compromissos de outra agenda para dentro da Agenda, **só para leitura**: eles aparecem no mês e nos próximos dias, com a cor da agenda, e avisam pelo Windows como os seus.
+
+| Agenda | Onde pegar o link |
+|---|---|
+| **Google Agenda** | No computador: **Configurações** › clique na agenda (lista da esquerda) › **Integrar agenda** › **Endereço secreto no formato iCal**. |
+| **Microsoft (Outlook)** | No Outlook na Web: **Configurações › Calendário › Calendários compartilhados** › **Publicar um calendário** › escolha a agenda e **Pode exibir todos os detalhes** › **Publicar** › copie o link **ICS**. |
+| **Outra** | Qualquer link `.ics`: iCloud, Zoho, Nextcloud, calendários de feriados. |
+
+Cole o link, dê um nome e uma cor, e **Conectar**. A Agenda lê na hora e diz quantos compromissos achou.
+
+- O link vale como uma senha (quem tem, lê a agenda): ele fica cifrado neste PC e a tela não o mostra de novo.
+- A leitura se repete a cada 10 minutos com a IDE aberta. **Ler agora**, na janela das agendas, força.
+- Em cada agenda conectada: o **aviso** (sem aviso, na hora, ou de 5 minutos a 1 hora antes; o padrão é 10 minutos), mostrar ou esconder, e a lixeira, que desliga e apaga o link.
+- Repetições (toda semana, toda segunda quarta do mês...), exceções, fusos e compromissos de dia inteiro são respeitados. Compromissos de dia inteiro avisam às 9h.
+- Com o BlueScreen na bandeja, os avisos dos próximos 14 dias continuam saindo; compromissos criados na outra agenda depois da última leitura só entram quando a IDE for aberta de novo.
+- É leitura: o que você marca na Agenda não vai para o Google nem para a Microsoft. Para levar um compromisso seu para lá, use **⋯ › Abrir no Google Agenda** ou **Abrir no Outlook** (abre a tela de novo compromisso já preenchida), ou **Gravar como arquivo .ics** (dois cliques nele abrem no Outlook do Windows).
 
 ## Estúdio: os plugins sem a IDE
 
@@ -670,7 +712,7 @@ Na tela inicial, o cartão **Estúdio** abre uma janela só dos plugins, sem pro
 - **Início:** a saudação, um cartão por plugin e os projetos recentes. Clicar num projeto abre ele na janela da IDE; **Abrir uma pasta…** e **Ver todos os projetos** também levam para lá.
 - **Dentro de um plugin:** a barra de cima mostra **‹ Estúdio › Automator**. Clicar em **Estúdio**, no ícone de casa da barra da esquerda ou Alt+Home volta para o início sem fechar nada; o cartão do plugin retorna de onde você parou.
 - **Barra da esquerda:** um ícone por plugin, para trocar com um clique.
-- **Rodapé:** a Agenda fica na barra de baixo, com o próximo compromisso de hoje ou quantos estão atrasados; um clique abre ela. O mesmo resumo aparece na barra de baixo da IDE.
+- **Rodapé:** a Agenda fica na barra de baixo, com o próximo compromisso de hoje (seu ou de uma agenda conectada) ou quantos estão atrasados; um clique abre ela. O mesmo resumo aparece na barra de baixo da IDE.
 - **Direto num plugin:** na tela inicial da IDE, clicar num dos ícones do cartão Estúdio abre a janela já naquele plugin. `BlueScreen.exe --studio automator` faz o mesmo quando o BlueScreen já está aberto; sem ele, abre a IDE normal. No navegador (`--web`), o Estúdio abre em outra aba, em `/?studio=1`.
 
 ## Bandeja do Windows

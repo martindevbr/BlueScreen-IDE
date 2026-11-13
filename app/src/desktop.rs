@@ -184,6 +184,8 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>, studio: bool) -> !
     };
     let mut dark = dark;
     let mut caption = saved["caption"].as_str().unwrap_or("#0F1A2E").to_string();
+    // a janela estava maximizada quando entrou em tela cheia (Apresentar): volta a ficar ao sair
+    let mut fs_max = false;
     let mut ctx = ctx;
     let mut prompts: std::collections::HashMap<WindowId, PromptWin> = Default::default();
 
@@ -282,7 +284,21 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>, studio: bool) -> !
                         if let Some(c) = m["caption"].as_str() { caption = c.to_string(); }
                         paint_titlebar(&window, dark, colorref(&caption));
                     }
-                    Some("fullscreen") => window.set_fullscreen(if m["on"].as_bool().unwrap_or(false) { Some(Fullscreen::Borderless(None)) } else { None }),
+                    // Maximizada, a janela sem moldura não cresce até a tela inteira: a página ficava com a altura da área de
+                    // trabalho e sobrava embaixo uma faixa vazia e transparente, do tamanho da barra de tarefas. Por isso sai do
+                    // maximizado antes de entrar em tela cheia, e volta a ele na saída.
+                    Some("fullscreen") => {
+                        if m["on"].as_bool().unwrap_or(false) {
+                            if window.fullscreen().is_none() {
+                                fs_max = window.is_maximized();
+                                if fs_max { window.set_maximized(false); }
+                                window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                            }
+                        } else {
+                            window.set_fullscreen(None);
+                            if fs_max { fs_max = false; window.set_maximized(true); }
+                        }
+                    }
                     Some("devtools") if devtools => webview.open_devtools(),
                     // barra de título própria
                     Some("drag") => { let _ = window.drag_window(); }

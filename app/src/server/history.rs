@@ -29,4 +29,28 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         let since = r.q_or("since", "0").parse().unwrap_or(0);
         ok(vcs::scan(&project(&r)?, since, r.q("until").and_then(|u| u.parse().ok()), &terms, 400).await)
     }));
+    // ----- gravar no repositório: só da própria máquina (quem entra pela rede local lê e edita, mas não commita) -----
+    // POST { files: [{ path, code }], message, amend?, all? }: commit desses arquivos (Git e SVN)
+    add("vcs/commit", route_fn(|r| async move {
+        r.local_only()?;
+        if !r.is_post() { return Err(fail("POST", 405)); }
+        let b: Value = r.body_json()?;
+        let files: Vec<(String, String)> = b["files"].as_array().into_iter().flatten().filter_map(|f| Some((f["path"].as_str()?.to_string(), f["code"].as_str().unwrap_or("M").to_string()))).collect();
+        vcs::commit(&project(&r)?, &files, b["message"].as_str().unwrap_or(""), b["amend"].as_bool().unwrap_or(false), b["all"].as_bool().unwrap_or(false)).await.map_err(|e| fail(e, 400)).and_then(ok)
+    }));
+    add("vcs/branches", route_fn(|r| async move { vcs::branches(&project(&r)?).await.map_err(|e| fail(e, 400)).and_then(ok) }));
+    // POST { name, create? }: troca de branch (ou cria a partir da atual)
+    add("vcs/checkout", route_fn(|r| async move {
+        r.local_only()?;
+        if !r.is_post() { return Err(fail("POST", 405)); }
+        let b: Value = r.body_json()?;
+        vcs::checkout(&project(&r)?, b["name"].as_str().unwrap_or(""), b["create"].as_bool().unwrap_or(false)).await.map_err(|e| fail(e, 400)).and_then(ok)
+    }));
+    // POST { action: push | pull | fetch }
+    add("vcs/sync", route_fn(|r| async move {
+        r.local_only()?;
+        if !r.is_post() { return Err(fail("POST", 405)); }
+        let b: Value = r.body_json()?;
+        vcs::sync(&project(&r)?, b["action"].as_str().unwrap_or("")).await.map_err(|e| fail(e, 400)).and_then(ok)
+    }));
 }

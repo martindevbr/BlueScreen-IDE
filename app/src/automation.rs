@@ -76,6 +76,31 @@ struct Agenda {
     done: bool,
     notified: bool,
     flow_id: Option<String>,
+    /// avisar quantos minutos antes do horário (0: na hora)
+    alert_minutes: u64,
+    /// fim do compromisso em ms (0: sem fim marcado) e se ocupa o dia inteiro
+    end: i64,
+    all_day: bool,
+    location: String,
+    /// endereço da reunião ou do compromisso na agenda de origem
+    link: String,
+    /// de qual agenda de fora veio (Google, Microsoft: o plugin Agenda lê o link ICS e manda para cá os próximos
+    /// compromissos, só para o aviso sair mesmo com a IDE na bandeja); vazio: criado aqui
+    calendar: String,
+}
+impl Agenda {
+    /// a hora em que o aviso sai
+    fn due(&self) -> i64 { self.at - self.alert_minutes.min(40320) as i64 * 60000 }
+    /// o texto do aviso do Windows: a hora (quando avisa antes), o lugar e as notas
+    fn notice(&self) -> String {
+        let mut parts: Vec<String> = vec![];
+        if self.alert_minutes > 0 && !self.all_day && let Some(t) = chrono::DateTime::from_timestamp_millis(self.at) { parts.push(format!("Às {}", t.with_timezone(&chrono::Local).format("%H:%M"))); }
+        if self.all_day { parts.push("Dia inteiro".into()); }
+        if !self.location.trim().is_empty() { parts.push(self.location.trim().to_string()); }
+        let head = parts.join(" · ");
+        let notes = self.notes.trim();
+        if head.is_empty() { notes.to_string() } else if notes.is_empty() { head } else { format!("{head}\n{notes}") }
+    }
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -139,13 +164,19 @@ fn with_store<T>(f: impl FnOnce(&Store, &mut Option<String>) -> T) -> ApiResult<
     let mut c = CACHE.lock();
     if let (Some(x), Some(st)) = (c.as_mut(), stamp) && x.path == path && x.stamp == st { return Ok(f(&x.store, &mut x.compact)); }
     let store: Store = match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)?,
+        Ok(text) => { let mut s: Store = serde_json::from_str(&text)?; s.flows.iter_mut().for_each(migrate_flow); s }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => { *c = None; return Ok(f(&Store::default(), &mut None)); }
         Err(e) => return Err(e.into()),
     };
     // a data é a de antes da leitura: se o arquivo mudou no meio, a próxima consulta relê
     let x = c.insert(Cached { path, stamp: stamp.unwrap_or((None, 0)), store, compact: None });
     Ok(f(&x.store, &mut x.compact))
+}
+/// Nós que mudaram de tipo: os do antigo plugin Navegador (`plugin.navegador.site` e `plugin.navegador.test`) agora são
+/// do núcleo. Vale para o arquivo de dados e para um fluxo que chega de fora (importado, colado), para o que foi gravado
+/// antes continuar rodando.
+fn migrate_flow(f: &mut Flow) {
+    for n in &mut f.nodes { if let Some(kind) = browser::migrate(&n.kind, &mut n.params) { n.kind = kind.into(); } }
 }
 fn load() -> ApiResult<Store> { with_store(|s, _| s.clone()) }
 fn edit<T>(f: impl FnOnce(&mut Store) -> ApiResult<T>) -> ApiResult<T> {
@@ -1047,7 +1078,7 @@ const GEN_RULES: &str = "# Regras
 - Senhas, tokens e chaves nunca ficam escritos no fluxo: use {{cred:nome}}, uma credencial do Automator ({{cred:nome.user}} é o usuário dela). Reaproveite as de 'Credenciais que já existem' quando servirem. O pedido pode trazer {{cred:nome}} no lugar de uma senha que o usuário escreveu: use exatamente essa referência onde a senha é usada. Se ainda houver uma senha ou token escrito no pedido, não o copie para o fluxo: dê um nome, use {{cred:nome}} e liste em 'secrets' como {\"name\":\"nome\",\"value\":\"o valor\"}.
 - {{cred:nome}} funciona nos campos dos nós e dentro do script de windows.powershell (fora de aspas simples). Não funciona nos argumentos de windows.command.
 - Dias e horários: para o fluxo rodar sozinho só em certos dias e horas, use trigger.schedule com 'days' e, no modo interval, window 'between' com 'from' e 'to'. Para decidir no meio do fluxo se agora é dia e hora de trabalho, use time.window (saídas true e false). Os dias são números: 1 segunda … 6 sábado, 0 domingo.\n- Prefira os nós prontos a scripts (windows.powershell e windows.command só quando nenhum nó faz o trabalho). Num script, o que chegou vem em $env:BS_INPUT e a saída é o que o script escrever.
-- Sites: para entrar num site, clicar, preencher e ler o que está na tela, use browser.run. Cada passo é {\"do\":ação,\"on\":onde,\"value\":valor}; 'on' é um seletor CSS ou texto=Rótulo do botão. Vários browser.run no mesmo fluxo continuam na mesma página (deixe 'url' vazio nos seguintes). Se não souber os seletores do site, deixe os passos que souber e avise em 'notes' que o usuário pode completar com o botão Gravar. Para ler dados da tela: read (um valor; 'on' pode ser rotulo=Texto que fica ao lado do valor), table (a tabela vira lista de objetos em values.tabela) ou page (o texto inteiro da página em values.pagina, bom para um agent.cli extrair o que interessa). O que nem sempre aparece (o login quando a sessão já está aberta, o aviso de cookies) leva \"opt\":\"skip\" no passo. Código que chega no celular: passo ask ('value' é a pergunta, 'on' o campo do site). Painel pesado: speed 'fast' e um passo idle antes de ler.
+- Sites: para entrar num site, clicar, preencher e ler o que está na tela, use browser.run. Cada passo é {\"do\":ação,\"on\":onde,\"value\":valor}; 'on' é um seletor CSS ou texto=Rótulo do botão. Vários browser.run no mesmo fluxo continuam na mesma página (deixe 'url' vazio nos seguintes). Se não souber os seletores do site, deixe os passos que souber e avise em 'notes' que o usuário pode completar com o botão Gravar. Para ler dados da tela: read (um valor; 'on' pode ser rotulo=Texto que fica ao lado do valor), table (a tabela vira lista de objetos em values.tabela) ou page (o texto inteiro da página em values.pagina, bom para um agent.cli extrair o que interessa). O que nem sempre aparece (o login quando a sessão já está aberta, o aviso de cookies) leva \"opt\":\"skip\" no passo. Código que chega no celular: passo ask ('value' é a pergunta, 'on' o campo do site). Painel pesado: speed 'fast' e um passo idle antes de ler. Para testar um site (QA), use browser.test: os mesmos passos, mas sai por 'true' (passou) ou 'false' (falhou) com o placar de cada passo, a tela na hora da falha e um relatório em HTML; tem ainda os passos look (compara a tela com uma imagem de referência) e a11y (acessibilidade básica).
 - Servidores e serviços: ssh.run e ssh.copy (SSH e SFTP), mail.send e mail.read (e-mail), ftp.files, db.query (SQL), mqtt.publish, notify.telegram. Usuário e senha deles vêm de uma credencial: {{cred:nome.user}} e {{cred:nome}}.
 - Tipos dos parâmetros: número vai sem aspas; campo de linhas é uma lista JSON; campo de objeto é um objeto, não texto; campo de passos ou regras é uma lista de objetos com as colunas indicadas. Não deixe valor de exemplo (example.com): o que só o usuário sabe fica vazio e vai em 'notes'.
 - O que cada saída entrega: 'item' é o item da vez; 'done' é a LISTA dos resultados (para um campo de cada um, json.pluck); 'ok' é o que o trecho protegido entregou; 'error' é {error, attempts, input}; true/false e os casos de logic.switch passam adiante a mesma entrada. {{nodes.ID}} lê a saída 'out': numa Condição use {{nodes.ID.true}}.
@@ -1953,7 +1984,7 @@ pub fn catalog() -> Value {
     }
     for s in &mut all {
         let kind = s["type"].as_str().unwrap_or("");
-        let Some((takes, gives)) = io_kind(kind).or_else(|| links::io_kind(kind)).or_else(|| extra::io_kind(kind)).or_else(|| (kind == "browser.run").then_some(("any", "object"))) else { continue };
+        let Some((takes, gives)) = io_kind(kind).or_else(|| links::io_kind(kind)).or_else(|| extra::io_kind(kind)).or_else(|| browser::io_kind(kind)) else { continue };
         if s["takes"].as_str().is_none_or(str::is_empty) { s["takes"] = json!(takes); }
         if s["gives"].as_str().is_none_or(str::is_empty) { s["gives"] = json!(gives); }
     }
@@ -2010,6 +2041,7 @@ fn keywords(kind: &str) -> Option<&'static str> {
         "mail.read" => "email gmail outlook caixa de entrada receber anexo",
         "notify.telegram" | "notify.chat" => "mensagem avisar chat grupo canal slack teams discord telegram",
         "browser.run" => "site web pagina clicar login portal dynatrace painel raspar ler tela automatizar chrome edge",
+        "browser.test" => "site web pagina teste testar conferir roteiro e2e regressao visual acessibilidade evidencia relatorio qa navegador chrome edge",
         "db.query" => "banco de dados sql mysql postgres consulta tabela",
         "ssh.run" | "ssh.copy" => "servidor linux remoto terminal sftp",
         "data.csv" => "planilha excel tabela csv",
@@ -2052,11 +2084,11 @@ fn check_flow(f: &Flow) -> Vec<Value> {
         }
     }
     // o primeiro Navegador do caminho precisa de um endereço (ou de um passo "Ir para endereço")
-    for n in f.nodes.iter().filter(|n| !n.disabled && n.kind == "browser.run") {
+    for n in f.nodes.iter().filter(|n| !n.disabled && n.kind.starts_with("browser.")) {
         let (mut seen, mut stack, mut earlier) = (HashSet::new(), vec![n.id.as_str()], false);
-        while let Some(x) = stack.pop() { for e in f.edges.iter().filter(|e| e.to == x) { if seen.insert(e.from.as_str()) { earlier |= f.nodes.iter().any(|o| o.id == e.from && o.kind == "browser.run" && !o.disabled); stack.push(e.from.as_str()); } } }
+        while let Some(x) = stack.pop() { for e in f.edges.iter().filter(|e| e.to == x) { if seen.insert(e.from.as_str()) { earlier |= f.nodes.iter().any(|o| o.id == e.from && o.kind.starts_with("browser.") && !o.disabled); stack.push(e.from.as_str()); } } }
         let goes = n.params["steps"].as_array().is_some_and(|a| a.iter().any(|s| s["do"] == "goto"));
-        if !earlier && !goes && n.params["url"].as_str().is_none_or(|u| u.trim().is_empty()) { out.push(json!({"node": n.id, "field": "url", "text": "falta preencher \"Endereço\": é o primeiro Navegador do fluxo, então ele precisa saber que site abrir"})); }
+        if !earlier && !goes && n.params["url"].as_str().is_none_or(|u| u.trim().is_empty()) { out.push(json!({"node": n.id, "field": "url", "text": "falta preencher \"Endereço\": é o primeiro nó de navegador do fluxo, então ele precisa saber que site abrir"})); }
     }
     for issue in flow_issues(f) {
         // "id (Nome): texto" -> o nó e o texto
@@ -2561,8 +2593,9 @@ async fn run_node(flow: &str, n: &Node, p: Value, input: Value) -> ApiResult<Val
     }
     crate::creds::note_use(&text, &who, true, "");
     let values: Vec<String> = found.iter().map(|x| x.1.clone()).collect();
-    // nó de plugin e script do PowerShell recebem por variável de ambiente (secret_env); os outros, no próprio campo
-    let p = if n.kind.starts_with("plugin.") || n.kind == "windows.powershell" { p } else { crate::creds::fill(&p, &found) };
+    // nó de plugin e script do PowerShell recebem por variável de ambiente (secret_env); o Testar site troca ele mesmo,
+    // na hora de usar, para o placar e o relatório ficarem com a referência; os outros, no próprio campo
+    let p = if n.kind.starts_with("plugin.") || n.kind == "windows.powershell" || n.kind == "browser.test" { p } else { crate::creds::fill(&p, &found) };
     // senha curta ("2026", "admin") aparece por acaso em datas e nomes: apagar da saída estragaria o dado que segue
     // para os próximos nós. Ela some só do que fica gravado no histórico (ver `hide_short`).
     let (strong, short): (Vec<String>, Vec<String>) = values.iter().cloned().partition(|v| v.chars().count() >= 8);
@@ -4101,7 +4134,8 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
         r.local_only()?; require_enabled("automator")?;
         if !r.is_post() { return Err(fail("use POST", 405)); }
         let b: Value = r.body_json()?;
-        let f: Flow = serde_json::from_value(b["flow"].clone()).map_err(|e| fail(format!("fluxo inválido: {e}"), 400))?;
+        let mut f: Flow = serde_json::from_value(b["flow"].clone()).map_err(|e| fail(format!("fluxo inválido: {e}"), 400))?;
+        migrate_flow(&mut f);
         ok(json!({"issues": check_flow(&f), "risks": risk_notes(&f, b["request"].as_str().unwrap_or(""))}))
     }));
     m.insert(
@@ -4247,6 +4281,7 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
                 });
             }
             let mut f: Flow = serde_json::from_value(b.get("flow").cloned().unwrap_or(b))?;
+            migrate_flow(&mut f);
             validate(&f)?;
             if f.id.is_empty() {
                 f.id = id();
@@ -4473,7 +4508,26 @@ pub fn add_routes(m: &mut HashMap<String, RouteFn>) {
                     s.events.retain(|e| Some(e.id.as_str()) != b["id"].as_str());
                     return ok(json!({"ok":true}));
                 }
+                // { action: "sync", calendar, events: [...] }: os próximos compromissos de uma agenda de fora trocam os que
+                // estavam guardados dela (lista vazia: a agenda foi desligada). Quem já avisou continua avisado.
+                if b["action"] == "sync" {
+                    let cal = b["calendar"].as_str().unwrap_or("").trim().to_string();
+                    if cal.is_empty() || cal.len() > 80 { return Err(fail("agenda: informe a agenda", 400)); }
+                    let told: std::collections::HashSet<String> = s.events.iter().filter(|e| e.calendar == cal && e.notified).map(|e| e.id.clone()).collect();
+                    s.events.retain(|e| e.calendar != cal);
+                    let mut n = 0;
+                    for v in b["events"].as_array().into_iter().flatten().take(500) {
+                        let Ok(mut e) = serde_json::from_value::<Agenda>(v.clone()) else { continue };
+                        if e.id.is_empty() || e.title.trim().is_empty() || e.at <= 0 { continue; }
+                        e.calendar = cal.clone(); e.flow_id = None; e.repeat_minutes = 0; e.done = false;
+                        // o que já passou quando chegou não vira aviso atrasado
+                        e.notified = told.contains(&e.id) || e.at < now() - 60000;
+                        s.events.push(e); n += 1;
+                    }
+                    return ok(json!({"ok":true,"events":n}));
+                }
                 let mut e: Agenda = serde_json::from_value(b.get("event").cloned().unwrap_or(b))?;
+                e.calendar.clear(); // compromisso gravado por aqui é sempre local
                 if e.title.trim().is_empty() || e.at <= 0 || e.repeat_minutes > 525600 {
                     return Err(fail(
                         "informe título, data válida e repetição de até um ano",
@@ -4516,7 +4570,7 @@ pub async fn scheduler() {
             let t = now();
             s.pending.is_empty()
                 && !(automator && s.flows.iter().any(|f| f.active && (f.next_run.is_some_and(|x| x <= t) || f.nodes.iter().any(|n| n.kind == "trigger.file" && !n.disabled))))
-                && !(agenda && s.events.iter().any(|e| !e.done && !e.notified && e.at <= t))
+                && !(agenda && s.events.iter().any(|e| !e.done && !e.notified && e.due() <= t))
         }).unwrap_or(false);
         if quiet { continue; }
         let due = edit(|s| {
@@ -4535,8 +4589,8 @@ pub async fn scheduler() {
             }
             if enabled("agenda") {
                 for e in &mut s.events {
-                    if !e.done && !e.notified && e.at <= now() {
-                        notifications.push((e.title.clone(), e.notes.clone()));
+                    if !e.done && !e.notified && e.due() <= now() {
+                        notifications.push((e.title.clone(), e.notice()));
                         if let Some(fid) = &e.flow_id
                             && let Some(f) = s.flows.iter().find(|f| &f.id == fid)
                         {
@@ -4544,7 +4598,7 @@ pub async fn scheduler() {
                         }
                         if e.repeat_minutes > 0 {
                             let step = e.repeat_minutes as i64 * 60000;
-                            e.at += ((now() - e.at) / step + 1) * step;
+                            e.at += ((now() - e.at).max(0) / step + 1) * step;
                         } else {
                             e.notified = true;
                         }
@@ -4642,6 +4696,32 @@ mod tests {
         assert!(cli_command(&c("claude", "", &[]), "", "enorme", "", "").is_err());
         assert!(cli_command(&c("custom", "", &[]), "", "", "", "").is_err());
         assert_eq!(clis().iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["codex", "claude"]);
+    }
+    #[test]
+    fn old_browser_plugin_nodes_become_native() {
+        let mut f: Flow = serde_json::from_value(json!({"name":"Antigo","nodes":[
+            {"id":"t","type":"trigger.manual","params":{}},
+            {"id":"s","type":"plugin.navegador.site","params":{"url":"https://exemplo.com","steps":[{"do":"type","on":"#senha","value":"{{vault:site}}"},{"do":"read","on":"h1","value":"titulo"}],"show":"no","after":"keep","wait_s":20}},
+            {"id":"q","type":"plugin.navegador.test","params":{"name":"Login","url":"{{ vault: portal }}/entrar","steps":[{"do":"look","on":"","value":""},{"do":"gone","on":".aviso","value":""}],"device":"phone","on_fail":"continue","js_errors":"fail","tolerance":1.5,"show":"yes","after":"close_always","wait_s":10}},
+            {"id":"o","type":"plugin.outro.site","params":{"url":"{{vault:site}}"}}],
+            "edges":[{"from":"t","from_port":"out","to":"s","to_port":"in"},{"from":"s","from_port":"out","to":"q","to_port":"in"},{"from":"q","from_port":"false","to":"o","to_port":"in"}]})).unwrap();
+        migrate_flow(&mut f);
+        assert_eq!(f.nodes.iter().map(|n| n.kind.as_str()).collect::<Vec<_>>(), ["trigger.manual", "browser.run", "browser.test", "plugin.outro.site"]);
+        assert_eq!(f.nodes[1].params, json!({"url":"https://exemplo.com","steps":[{"do":"type","on":"#senha","value":"{{cred:site}}","opt":""},{"do":"read","on":"h1","value":"titulo","opt":""}],"show":"no","after":"keep","wait_s":20,"profile":"keep","device":"desktop","speed":"normal"}));
+        assert_eq!(f.nodes[2].params, json!({"name":"Login","url":"{{cred:portal}}/entrar","steps":[{"do":"look","on":"","value":"","opt":""},{"do":"gone","on":".aviso","value":"","opt":""}],"device":"phone","on_fail":"continue","js_errors":"fail","tolerance":1.5,"show":"yes","after":"close_always","wait_s":10,"profile":"keep"}));
+        // nó de outro plugin fica como está, e migrar de novo não muda nada
+        assert_eq!(f.nodes[3].params, json!({"url":"{{vault:site}}"}));
+        let once = serde_json::to_value(&f).unwrap();
+        migrate_flow(&mut f);
+        assert_eq!(serde_json::to_value(&f).unwrap(), once);
+        // os tipos novos existem no catálogo, com as portas e os passos do teste
+        let all = catalog();
+        let spec = |k: &str| all.as_array().unwrap().iter().find(|s| s["type"] == k).cloned().unwrap();
+        assert_eq!((spec("browser.test")["outputs"].clone(), spec("browser.test")["category"].clone(), spec("browser.run")["outputs"].clone()), (json!(["true", "false"]), json!("QA"), json!(["out"])));
+        for k in ["browser.run", "browser.test"] { let acts = spec(k)["fields"].as_array().unwrap().iter().find(|f| f["name"] == "steps").unwrap()["columns"][0]["options"].clone(); for a in ["look", "a11y", "gone", "table"] { assert!(acts.as_array().unwrap().iter().any(|o| o["value"] == a), "{k} {a}"); } }
+        assert!(validate(&f).is_err(), "plugin.outro.site não existe");
+        f.nodes.pop(); f.edges.pop();
+        assert!(validate(&f).is_ok() && check_flow(&f).is_empty());
     }
     #[test]
     fn wildcard_and_catalog() {

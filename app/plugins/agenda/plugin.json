@@ -1,8 +1,8 @@
 {
   "id": "agenda",
   "name": "Agenda",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "BlueScreen",
   "order": 81,
-  "description": "Calendário do mês, compromissos e lembretes que viram aviso do Windows, com repetição e a opção de rodar um fluxo do Automator na hora marcada. Funciona com o BlueScreen na bandeja."
+  "description": "Compromissos e lembretes que viram aviso do Windows, com o mês e os próximos 14 dias. Compromisso novo em uma linha (Reunião amanhã 14h), aviso antecipado, repetição e a opção de rodar um fluxo do Automator. Mostra junto os compromissos do Google Agenda e do Outlook (pelo link ICS, só leitura). Abre pelo rodapé e funciona com o BlueScreen na bandeja."
 }

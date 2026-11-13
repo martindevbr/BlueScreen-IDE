@@ -8,7 +8,7 @@ Plugins ligam e desligam na aba **Plugins** (`Alt+7`), sem recompilar o BlueScre
 
 Os plugins da sua pasta também podem ser **removidos**: a lixeira no cartão (ou botão direito › **Remover…**) manda a pasta para a Lixeira do Windows, e dá para restaurar de lá. Se você marcar a opção, a pasta de dados do plugin vai junto. Os plugins que vêm com o BlueScreen só desligam. O IAMaker nunca altera nem sobrepõe um deles: ao editar, cria uma versão sua, um plugin à parte com id próprio (`<id>-meu`), e desliga o original. Remover essa versão faz o IAMaker ligar o original de novo. Uma cópia com o mesmo id do original (de versões antigas do IAMaker) vale no lugar dele, e removê-la devolve a versão original. Pela API: `POST plugins/uninstall { id, data }`.
 
-Para criar ou alterar plugins conversando com uma IA, sem escrever o código, use o plugin [IAMaker](../app/plugins/iamaker/README.md) (`Alt+0`).
+Para criar ou alterar plugins conversando com uma IA, sem escrever o código, use o plugin [IAMaker](https://github.com/martindevbr/BlueScreen-Plugins/tree/main/plugins/iamaker) (`Alt+0`), instalado pela loja de plugins.
 
 ## Onde ficam
 
@@ -32,7 +32,7 @@ Cada pasta tem:
 |---|---|
 | `plugin.json` | `{ "id", "name", "description", "version", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }` |
 | `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
-| `bs.footer.set(id, { icon, text, title, run })` | um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso); `bs.footer.remove(id)` tira. Janela registrada com `footer: true` em `bs.bubble.register` não ganha ícone nem cartão no Estúdio |
+| `bs.footer.set(id, { icon, text, title, run })` | um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso); `bs.footer.remove(id)` tira. Janela registrada com `footer: true` em `bs.bubble.register` é a janela de um item do rodapé: não entra na lista do balão, não ganha ícone nem cartão no Estúdio e abre no meio da tela |
 | `icon.svg` ou `icon.png` (opcional) | o ícone na aba Plugins e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
 | `ui.js` (opcional) | roda na página dentro de `function (bs, plugin) { ... }` e enxerga tudo do núcleo (`S`, `api`, `$`, `esc`, `toast`, `store`, `I`, `TI`, `monaco`, `editor`, `openFile`, `openTool`...) |
 | `style.css` (opcional) | injetado junto com o `ui.js` |
@@ -115,18 +115,24 @@ Abre pelo ícone da chave na barra da esquerda (**Alt+8**, se nenhum plugin usar
 
 ### Para quem usa
 
-1. No Cofre, preencha nome (`github`), descrição e **sites liberados** (`api.github.com`). Se o segredo vem do pedido de um plugin, isso já vem preenchido, junto com o que ele pede (um token, usuário e senha...). Sem pedido, escolha em **O que guardar**: um token ou usuário e senha.
-2. Clique em **Digitar e guardar…**. Abre uma janela do Windows (*BlueScreen · Cofre*) com um campo para cada coisa que o plugin pediu. Ela mostra para onde o segredo pode ir. Digite ou cole (Ctrl+V); senhas e tokens aparecem como `•••` (marque **Mostrar o que eu digito** para conferir). **Guardar** grava, **Cancelar** (ou Esc) desiste. Se o que você colou ainda estiver na área de transferência, ela é limpa.
-3. Libere o segredo para os plugins: pelo cartão de pedido do plugin (**Permitir**) ou por **Liberar para um plugin…** no segredo. Cada liberação pede o "Sim" numa caixa do Windows.
+A janela do Cofre tem duas partes: **Esperando você** (o que os plugins pedem) e **Guardadas** (as credenciais que já existem).
 
-Para trocar uma senha ou token vencido: **⋯ › Trocar o valor…** no segredo. Os campos que não são secretos (usuário) vêm preenchidos, e um campo secreto deixado em branco mantém o valor atual.
+1. **Um plugin pediu.** O pedido aparece no topo com um botão só:
+   - **Guardar…**: abre a janela do Windows (*BlueScreen · Cofre*) com um campo para cada coisa que o plugin pediu, já com os sites para onde ela pode ir. Digite ou cole (Ctrl+V); senhas e tokens aparecem como `•••` (marque **Mostrar o que eu digito** para conferir). **Guardar** grava e já libera o plugin.
+   - **Permitir**: a credencial já existe; falta liberar este plugin.
+   - **Deixar ler**: o plugin (um servidor de plugin) pede para enxergar o valor. É um passo à parte, depois de guardar.
+   - **Usar "nome"**: já existe uma credencial para o mesmo site; ela serve a este plugin também.
+2. **Por conta própria.** **Nova credencial**: dê um nome (`github`) e escolha o que é (um token, usuário e senha...). **Onde ela pode ser usada** (descrição, sites e programas) é opcional: em branco, você libera quando um plugin pedir.
+3. Cada gravação e cada liberação pede o "Sim" numa caixa do Windows.
 
-Em cada segredo você vê quando ele foi usado e por quem. O **Registro de uso** lista os usos e as recusas. Tirar o acesso de um plugin ou apagar um segredo vale na hora, sem confirmação.
+Em cada credencial guardada: **Trocar valor** (os campos que não são secretos vêm preenchidos, e um campo secreto deixado em branco mantém o valor atual), a lixeira, e **Quem usa**, com um × para tirar o acesso de cada plugin. **Detalhes** abre o resto: sites, programas, anotação, **pode ler o valor** por plugin e **Liberar para um plugin…**.
+
+O **Registro de uso**, no fim, lista os usos e as recusas. Tirar o acesso de um plugin ou apagar uma credencial vale na hora, sem confirmação.
 
 | Permissão | O plugin… |
 |---|---|
 | **usar** | manda o token nos pedidos HTTP para os **sites liberados** (só HTTPS, menos `localhost`) e nas variáveis de ambiente dos **programas liberados**, sem ver o valor |
-| **ver valor** | lê o valor. Só vale para **servidores** de plugin, e com ela o plugin pode copiar o token para qualquer lugar: só marque para plugins em que você confia |
+| **ler o valor** | lê o valor. Só vale para **servidores** de plugin, e com ela o plugin pode copiar o token para qualquer lugar: só marque para plugins em que você confia |
 
 ### Para quem escreve plugins
 
@@ -270,7 +276,14 @@ O objeto `bs` (também em `window.BS`):
 | `bs.terminal.open(pasta, shell)` / `run(comando, pasta)` / `shells()` | terminal |
 | `bs.lsp.tools()` / `clientFor(aba)` / `restart(ferramenta, raiz)` | servidores de linguagem: lista, cliente da aba (para pedidos LSP próprios) e reinício |
 | `bs.debug.start(aba)` / `stop()` / `session()` | depurador |
-| `bs.hooks.on(evento, fn)` | `project:select`, `project:refresh`, `tab:open`, `tab:activate`, `tab:close`, `tab:save`, `editor:ready(editor, diffEditor)`, `dashboard:render(el)`, `build:render(body, info)`, `codefont(tamanho)`, `refresh`, `escape` |
+| `bs.settings.open(seção)` / `close()` | a janela de Configurações (engrenagem do topo). Seções: `geral`, `editor`, `aparencia`, `atalhos`, `rede`, `terminal`, `sobre` |
+| `bs.settings.section({ id, title, icon, order, sub, render(el), show(), hide() })` | uma **seção sua nas Configurações**: `render` roda uma vez, `show` e `hide` a cada vez que ela aparece e some. Sai sozinha quando o plugin é desligado |
+| `bs.editorPrefs.get()` / `set(chave, valor)` / `reset()` | preferências do editor (minimapa, números de linha, largura da indentação...): as de Configurações › Editor |
+| `bs.keys.rebind(padrão, nova)` / `custom()` / `label(tecla)` / `resetAll()` | teclas trocadas pelo usuário em Configurações › Teclas de atalho. `label` devolve a tecla que vale agora, para mostrar na tela |
+| `bs.zoom[nome] = (passo) => …` | zoom próprio de uma área: num elemento com `data-zoom="nome"`, `Ctrl` + roda do mouse chama a sua função (passo `+1` ou `-1`) em vez de mudar a letra do código. O terminal usa `data-zoom="terminal"` |
+| `bs.markdown.run(ação)` | formata a seleção do `.md` aberto: `bold`, `italic`, `strike`, `code`, `link`, `image`, `ul`, `ol`, `task`, `quote`, `block`, `table`, `hr`, `h1` a `h4`, `h0` (texto normal) |
+| `bs.appearance.toggle()` / `use(id)` / `current()` | alterna entre o tema claro e o escuro, aplica uma predefinição, o tema em uso |
+| `bs.hooks.on(evento, fn)` | `project:select`, `project:refresh`, `tab:open`, `tab:activate`, `tab:close`, `tab:save`, `editor:ready(editor, diffEditor)`, `dashboard:render(el)`, `build:render(body, info)`, `codefont(tamanho)`, `editor:prefs(preferências)`, `refresh`, `escape` |
 | `bs.hooks.filter(nome, fn)` | `tree:marks`, `menu:file`, `menu:tab`, `menu:project`, `menu:commit`, `build:path(rel, caminho)`, `plugin:buttons(itens, p)` (botões `{ label, icon, action }` no cartão e no botão direito de cada plugin da aba Plugins, como o "Editar com o IAMaker") |
 
 Funções do núcleo declaradas com `function` também podem ser trocadas: `window.renderTree = function () { ... }`.
@@ -418,9 +431,9 @@ O catálogo oficial é o repositório [martindevbr/BlueScreen-Plugins](https://g
 
 **Na IDE:**
 - **Onde fica.** O painel **Plugins** (`Alt+7`) mostra os instalados na esquerda e abre a **Loja de plugins** na área grande, numa aba fixa.
-- **Loja.** Busca, filtros (**Todos**, **Instalados**, **Atualizações**, **Com nós**) e um cartão por plugin. O cartão diz quantos nós o plugin acrescenta ao Automator e se o servidor dele precisa de Node.js, Python ou PowerShell.
+- **Loja.** Busca, filtros (**Todos**, **Instalados**, **Atualizações**, **Com nós**) e um cartão por plugin. O cartão diz quem publicou o plugin (o autor do primeiro commit da pasta dele, com a foto do GitHub) e, menor, quem fez a última edição e quando; o tamanho do pacote; quantos nós o plugin acrescenta ao Automator; e se o servidor dele precisa de Node.js, Python ou PowerShell.
 - **Página do plugin.** Clique no cartão: descrição, README, nós do Automator, tamanho e o link do código no GitHub.
-- **Instalar e atualizar.** O plugin liga na hora, sem recarregar a janela. Vai para `~/.bluescreen/plugins/<id>`, que vale mais que o do app, com um `.origin.json` (origem, versão e sha256).
+- **Instalar e atualizar.** O plugin liga na hora, sem recarregar a janela. Vai para `~/.bluescreen/plugins/<id>`, que vale mais que o do app, com um `.origin.json` (origem, versão, sha256 e `disk`). Depois de gravar, a IDE mede a pasta: o aviso de instalação e o cartão passam a mostrar o espaço que o plugin ocupa no disco.
 - **Aviso de atualização.**
   - A IDE consulta a loja alguns segundos depois de abrir, de meia em meia hora e quando você volta para a janela.
   - Havendo versão maior de um plugin instalado, aparecem o selo no topo e o número no ícone do painel.
@@ -431,6 +444,7 @@ O catálogo oficial é o repositório [martindevbr/BlueScreen-Plugins](https://g
 - Um pedido só: o zip do branch `main` (`codeload.github.com`), guardado em `~/.bluescreen/store-cache/` com o ETag. Sem mudança no repositório, o GitHub responde que nada mudou e nada é baixado de novo.
 - Sem rede, a loja mostra o catálogo guardado e avisa.
 - Pasta sem `plugin.json` válido, ou com `id` diferente do nome da pasta, não entra.
+- Quem fez cada plugin vem da API do GitHub (os commits de `plugins/<id>`: o primeiro e o último), dois pedidos por plugin, guardados em `store-cache/authors.json` até o repositório mudar. Sem resposta (sem rede, ou no limite de pedidos da API), o cartão mostra o `author` do `plugin.json`. Com `BLUESCREEN_PLUGIN_REPO`, vem do `git log` da pasta.
 
 **Publicar um plugin:** ponha a pasta em `plugins/<id>/` no repositório e faça o push na `main`. Para as IDEs receberem o aviso de atualização, aumente o `version` do `plugin.json`.
 

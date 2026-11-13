@@ -151,7 +151,7 @@ function apply(t, persistLocal = true) {
     if (!document.getElementById('app').classList.contains('present')) { BS.editor?.updateOptions(o); BS.diffEditor?.updateOptions(o); }
     monaco.editor.remeasureFonts?.();
   }
-  S.fontSize = t.fonts.codeSize;
+  if (S.fontSize !== t.fonts.codeSize) { S.fontSize = t.fonts.codeSize; BS.hooks.run('codefont', S.fontSize); } // o terminal acompanha
   try { if (window.BS_DESKTOP && window.ipc) { window.ipc.postMessage(JSON.stringify({ type: 'theme', dark: t.mode !== 'light', caption: t.ui.canvas })); window.ipc.postMessage(JSON.stringify({ type: 'zoom', factor: (t.fonts.uiZoom || 100) / 100 })); } } catch {}
   if (persistLocal) try { localStorage.setItem('bs.themeCache', JSON.stringify(v)); localStorage.setItem('bs.theme', JSON.stringify(root.dataset.theme)); } catch {}
 }
@@ -181,9 +181,8 @@ window.codeFont = function (size, quiet) {
   if (!quiet) toast(`Fonte do código: ${n}px`, null, 'font');
   if (A.open && A.tab === 'fontes') renderPanel();
 };
-// botão da lua: alterna entre o tema escuro e o claro escolhidos por último
-document.getElementById('btnTheme').onclick = () => usePreset(A.theme && A.theme.mode === 'light' ? (A.settings.dark || 'bluescreen') : (A.settings.light || 'bluescreen-claro'));
-document.getElementById('btnTheme').title = 'Tema claro / escuro (Aparência: Ctrl+Alt+S)';
+// alterna entre o tema escuro e o claro escolhidos por último (ação "Tema claro / escuro" e a lua da tela de boas-vindas)
+const toggleMode = () => usePreset(A.theme && A.theme.mode === 'light' ? (A.settings.dark || 'bluescreen') : (A.settings.light || 'bluescreen-claro'));
 
 // ---------- painel Aparência ----------
 const swatch = (t) => { const u = { ...PRESETS[0].ui, ...(t.ui || {}) }; return `<span class="sw4"><i style="background:${u.canvas}"></i><i style="background:${u.panel}"></i><i style="background:${u.accent}"></i><i style="background:${(t.syntax || {}).keyword || u.accent}"></i><i style="background:${(t.syntax || {}).string || u.add}"></i></span>`; };
@@ -217,7 +216,7 @@ function renderPanel() {
     </div>
     <div class="apr-main">
       <div class="apr-top"><div class="apr-tabs">${[['cores', 'Interface'], ['sintaxe', 'Código'], ['fontes', 'Fontes'], ['forma', 'Forma']].map(([k, l]) => `<button data-tab="${k}" class="${A.tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-        <span class="apr-cur">${esc(t.name || 'Personalizado')}${A.dirty ? ' (alterado)' : ''}</span><button class="icon-btn" id="aprClose" title="Fechar (Esc)">${I.x}</button></div>
+        <span class="apr-cur">${esc(t.name || 'Personalizado')}${A.dirty ? ' (alterado)' : ''}</span><button class="icon-btn" id="aprMode" title="Trocar entre o tema claro e o escuro">${MODE_ICO}</button></div>
       <div class="apr-body">${body}</div>
     </div>`;
   bindPanel(box);
@@ -242,7 +241,7 @@ function bindPanel(box) {
   box.querySelectorAll('.apr-p').forEach(el => { el.onclick = (e) => { if (e.target.closest('[data-del]')) return; A.dirty = false; usePreset(el.dataset.id); }; el.onkeydown = (e) => { if (e.key === 'Enter') el.click(); }; });
   box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { A.settings.presets = A.settings.presets.filter(p => p.id !== b.dataset.del); persist(); renderPanel(); toast('Predefinição apagada'); });
   box.querySelectorAll('.apr-tabs button').forEach(b => b.onclick = () => { A.tab = b.dataset.tab; renderPanel(); });
-  box.querySelector('#aprClose').onclick = close;
+  box.querySelector('#aprMode').onclick = toggleMode;
   // cores: seletor e campo hex andam juntos
   box.querySelectorAll('input[type=color], input.hex').forEach(inp => inp.oninput = () => {
     let val = inp.value.trim(); if (!/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(val)) return;
@@ -280,20 +279,16 @@ function bindPanel(box) {
     catch { toast('Este ambiente não deixou listar as fontes. Digite o nome da fonte instalada.'); }
   };
 }
-function open() {
-  if (!A.theme) return;
-  let back = document.getElementById('aprBack');
-  if (!back) { document.body.insertAdjacentHTML('beforeend', '<div id="aprBack" hidden><div id="apr" role="dialog" aria-label="Aparência"></div></div>'); back = document.getElementById('aprBack'); back.onclick = (e) => { if (e.target === back) close(); }; }
-  A.open = true; back.hidden = false; renderPanel();
-}
-function close() { A.open = false; const b = document.getElementById('aprBack'); if (b) b.hidden = true; }
+// a Aparência é uma seção das Configurações (settings.js): ela cria o #apr e avisa quando ele aparece e some
+const MODE_ICO = '<svg class="i" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>';
+function open() { if (A.theme && BS.settings) BS.settings.open('aparencia'); }
+function close() { if (A.open && BS.settings) BS.settings.close(); }
+function mounted(on) { A.open = !!on && !!A.theme; if (A.open) renderPanel(); else { prevEd?.getModel()?.dispose(); prevEd?.dispose(); prevEd = null; } }
 
 // ---------- registro ----------
-BS.appearance = { open, close, use: usePreset, presets: () => allPresets(), current: () => A.theme };
+BS.appearance = { open, close, mounted, toggle: toggleMode, use: usePreset, presets: () => allPresets(), current: () => A.theme };
 BS.keys.add('Ctrl+Alt+S', () => open());
-BS.hooks.on('escape', () => close());
 BS.actions.add([{ label: 'Aparência: temas e fontes', k: 'Ctrl+Alt+S', run: () => open(), icon: I.edit }, ...PRESETS.map(p => ({ label: 'Tema: ' + p.name, k: '', run: () => usePreset(p.id), icon: I.edit }))]);
-document.getElementById('btnAppearance')?.addEventListener('click', () => open());
 
 // carrega: cópia local (já aplicada pelo index.html) e depois o que está salvo em ~/.bluescreen/settings.json
 (async () => {
@@ -302,7 +297,7 @@ document.getElementById('btnAppearance')?.addEventListener('click', () => open()
   A.settings = { presets: [], dark: 'bluescreen', light: 'bluescreen-claro', ...s };
   A.theme = A.settings.theme ? normalize(A.settings.theme) : (() => { const legacy = store.get('theme', 'dark'); const p = PRESETS.find(x => x.id === (legacy === 'light' ? 'bluescreen-claro' : 'bluescreen')); const t = normalize(p); t.from = p.id; t.name = p.name; return t; })();
   if (store.get('fontSize', null) && !A.settings.theme) A.theme.fonts.codeSize = store.get('fontSize', 13);
-  apply(A.theme);
+  apply(A.theme); if (A.open) renderPanel();
   const wait = setInterval(() => { if (window.monaco) { clearInterval(wait); apply(A.theme, false); } }, 100);
 })();
 })();

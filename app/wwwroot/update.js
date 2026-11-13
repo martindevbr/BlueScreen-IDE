@@ -16,11 +16,11 @@ const IC = {
 };
 const U = { info: null, poll: null };
 
-// selo no topo, ao lado da rede
+// selo no topo, ao lado da engrenagem
 const pill = document.createElement('button');
 pill.id = 'updPill'; pill.className = 'chip'; pill.hidden = true;
 pill.innerHTML = `<span class="up-dot"></span>${IC.up}<span class="up-txt">Atualização</span>`;
-$('#btnNet').before(pill);
+$('#btnSettings').before(pill);
 pill.onclick = () => openDialog();
 
 const back = document.createElement('div');

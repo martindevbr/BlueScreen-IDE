@@ -80,7 +80,7 @@ const EXTS = new Set(R.langs.flatMap(l => l.exts));
 // linguagens em que "Depurar" funciona (depurador da IDE, debug.js; o que falta instalar ele oferece na hora)
 const DEBUG = new Set(['java', 'python', 'javascript', 'typescript', 'go', 'rust', 'c', 'cpp', 'csharp', 'ruby']);
 const extOf = (p) => String(p || '').toLowerCase().split('/').pop().split('.').slice(1).pop() || '';
-const known = (t) => t && t.mode === 'editor' && !t.virtual && t.model && EXTS.has(extOf(t.path));
+const known = (t) => t && t.mode === 'editor' && !t.virtual && t.model && (EXTS.has(extOf(t.path)) || !!R.lang(t.path));
 const LEFT = () => bs.monaco.editor.GlyphMarginLane.Left;
 
 // ---------- ▶ na margem ----------
@@ -100,7 +100,7 @@ async function scan(tab) {
   const monaco = bs.monaco;
   rt.decos = tab.model.deltaDecorations(rt.decos, rt.entries.map(en => ({
     range: new monaco.Range(en.line, 1, en.line, 1),
-    options: { glyphMarginClassName: 'rt-run', glyphMargin: { position: LEFT() }, glyphMarginHoverMessage: { value: `**Executar** \`${en.label}\` · Ctrl+Shift+F10  \nClique para mais opções` }, stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+    options: { glyphMarginClassName: 'rt-run', glyphMargin: { position: LEFT() }, glyphMarginHoverMessage: { value: `**Executar** \`${en.label}\` · Ctrl+Shift+F10  \nClique para executar, passar argumentos ou copiar o comando` }, stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
   })));
   if (S.active === tab && ctxKey) ctxKey.set(rt.entries.length > 0);
 }
@@ -582,14 +582,18 @@ function runtimesCore(io) {
     l('d', 'D', ['d'], [['dlang']]),
     l('shell', 'Shell', ['sh', 'bash'], [['bash']]),
     l('latex', 'LaTeX', ['tex'], [['tex']]),
+    l('powershell', 'PowerShell', ['ps1'], []),
+    l('batch', 'Batch', ['bat', 'cmd'], []),
+    // pelo nome do arquivo (langOf): cada script do package.json é um ponto de execução
+    l('npm', 'Scripts do package.json', [], [['node', 'bun']]),
   ];
   const baseName = (p) => String(p).split(/[\\/]/).pop();
   // extensão como a do Rust: ".bashrc" não tem; "a.tar.gz" é "gz"
   const extOfName = (p) => { const n = baseName(p); const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1).toLowerCase() : null; };
-  const langOf = (p) => { const e = extOfName(p); return e == null ? null : LANGS.find(x => x.exts.includes(e)) || null; };
+  const langOf = (p) => { if (baseName(p).toLowerCase() === 'package.json') return LANGS.find(x => x.id === 'npm'); const e = extOfName(p); return e == null ? null : LANGS.find(x => x.exts.includes(e)) || null; };
   // todos os programas que o catálogo procura (uma consulta só ao núcleo)
   function allProgs() {
-    const v = TOOLS.flatMap(x => x.progs).concat(['mvn', 'gradle', 'java', 'npx', 'tsx', 'sbt', 'lein', 'stack', 'bundle', 'scoop', 'winget', 'kotlin', 'flutter']);
+    const v = TOOLS.flatMap(x => x.progs).concat(['mvn', 'gradle', 'java', 'npx', 'tsx', 'sbt', 'lein', 'stack', 'bundle', 'scoop', 'winget', 'kotlin', 'flutter', 'npm', 'pnpm', 'yarn']);
     return [...new Set(v)].sort();
   }
   // Kotlin, Scala e Groovy dentro de um projeto Gradle/Maven/sbt não precisam do compilador solto: o build baixa o dele
@@ -841,6 +845,7 @@ function runtimesCore(io) {
     const out = [];
     const name = baseName(file);
     const each = (text, re, mk) => lines(text).forEach((ln, i) => { if (re.test(ln)) out.push(mk(i + 1)); });
+    const script = (comment, off) => { if (off) return; const i = lines(src).findIndex(x => x.trim() && !comment.test(x)); if (i >= 0) out.push(entry(i + 1, name, '')); };
     switch (lang) {
       case 'java': case 'groovy': {
         const cl = clean(src, lang);
@@ -944,11 +949,56 @@ function runtimesCore(io) {
         });
         break;
       }
-      case 'python': each(src, /^if\s+(?:__name__\s*==\s*['"]__main__['"]|['"]__main__['"]\s*==\s*__name__)\s*:/, (n) => entry(n, name, '')); break;
-      case 'ruby': each(src, /^\s*(?:if|unless)\s+(?:__FILE__\s*==\s*\$(?:0|PROGRAM_NAME)|\$(?:0|PROGRAM_NAME)\s*==\s*__FILE__)/, (n) => entry(n, name, '')); break;
-      case 'javascript': case 'typescript': each(clean(src, lang), /\brequire\.main\s*===?\s*module\b|\bmodule\s*===?\s*require\.main\b|\bimport\.meta\.main\b/, (n) => entry(n, name, '')); break;
+      // Linguagens de script: havendo o "main" da linguagem (if __name__ == "__main__", require.main === module), o ▶
+      // fica nele; sem ele, na primeira linha solta que executa alguma coisa (o arquivo roda inteiro)
+      case 'python': {
+        each(src, /^if\s+(?:__name__\s*==\s*['"]__main__['"]|['"]__main__['"]\s*==\s*__name__)\s*:/, (n) => entry(n, name, ''));
+        if (!out.length && name !== '__init__.py') {
+          const i = lines(src).findIndex(x => /^(?:[A-Za-z_][\w.]*\s*\(|(?:for|while|with|async\s+with|async\s+for|match)\b.*:\s*(?:#.*)?$|if\s+(?!TYPE_CHECKING\b|typing\.TYPE_CHECKING\b|sys\.version_info\b).*:\s*(?:#.*)?$|(?:print|await|raise|assert)\b)/.test(x) && !/^(?:def|class|import|from)\b/.test(x));
+          if (i >= 0) out.push(entry(i + 1, name, ''));
+        }
+        break;
+      }
+      case 'ruby': {
+        each(src, /^\s*(?:if|unless)\s+(?:__FILE__\s*==\s*\$(?:0|PROGRAM_NAME)|\$(?:0|PROGRAM_NAME)\s*==\s*__FILE__)/, (n) => entry(n, name, ''));
+        if (!out.length) {
+          const i = lines(src).findIndex(x => /^(?:puts|print|pp?|exit|abort|loop|system|exec)\b|^[a-z_]\w*[!?]?\s*\(|^[A-Z][\w:]*\.(?:new|run|call|start|main)\b/.test(x) && !/^(?:require|require_relative|load|include|extend|private|public|protected|alias|attr_\w+)\b/.test(x));
+          if (i >= 0) out.push(entry(i + 1, name, ''));
+        }
+        break;
+      }
+      case 'javascript': case 'typescript': {
+        const cl = clean(src, lang);
+        each(cl, /\brequire\.main\s*===?\s*module\b|\bmodule\s*===?\s*require\.main\b|\bimport\.meta\.main\b|\bimport\.meta\.url\s*===?\s*(?:(?:url\.)?pathToFileURL\s*\(|`file:)/, (n) => entry(n, name, ''));
+        if (!out.length) {
+          // #!/usr/bin/env node na primeira linha, ou a chamada solta de main() / de uma função assíncrona imediata
+          if (/^#!.*\b(?:node|deno|bun|tsx|ts-node)\b/.test(lines(src)[0] || '')) out.push(entry(1, name, ''));
+          else { const i = lines(cl).findIndex(x => /^(?:await\s+|void\s+)?main\s*\(|^\(\s*async\s*(?:function\s*\w*\s*)?\(\s*\)\s*(?:=>)?\s*\{/.test(x)); if (i >= 0) out.push(entry(i + 1, name, '')); }
+        }
+        break;
+      }
+      // o arquivo é o programa: o ▶ fica na primeira linha que não é comentário (a do #!, quando existe)
+      case 'shell': case 'perl': case 'r': script(/^\s*#(?!!)/, lang === 'perl' && !name.toLowerCase().endsWith('.pl')); break;
+      case 'powershell': script(/^\s*#/); break;
+      case 'batch': script(/^\s*(?:@?rem\b|::)/i); break;
+      case 'lua': script(/^\s*--/); break;
+      case 'ocaml': script(/^\s*\(\*/); break;
+      case 'php': { const i = lines(src).findIndex(x => /<\?(?:php\b|=)/i.test(x)); if (i >= 0) out.push(entry(i + 1, name, '')); break; }
+      case 'erlang': each(src, /^main\s*\(/, (n) => entry(n, 'main/1', '')); break;
+      // package.json: um ▶ por script ("dev": "vite" roda com npm, pnpm, yarn ou bun, conforme o lockfile)
+      case 'npm': {
+        let inside = false;
+        lines(src).forEach((ln, i) => {
+          let text = ln;
+          if (!inside) { const k = /^\s*"scripts"\s*:\s*\{/.exec(ln); if (!k) return; inside = true; text = ln.slice(k[0].length); }
+          else if (/^\s*\}/.test(ln)) { inside = false; return; }
+          const m = /^\s*"((?:[^"\\]|\\.)+)"\s*:\s*"/.exec(text); if (m) out.push(entry(i + 1, m[1], m[1]));
+          if (text !== ln && text.includes('}')) inside = false;
+        });
+        break;
+      }
       case 'nim': each(src, /^when\s+isMainModule\b/, (n) => entry(n, name, '')); break;
-      case 'julia': each(src, /abspath\(PROGRAM_FILE\)\s*==\s*@__FILE__/, (n) => entry(n, name, '')); break;
+      case 'julia': each(src, /abspath\(PROGRAM_FILE\)\s*==\s*@__FILE__/, (n) => entry(n, name, '')); if (!out.length && !/^module\s/m.test(src)) script(/^\s*#/); break;
       case 'haskell': { const i = lines(src).findIndex(x => /^main\s*(?:::|=)/.test(x)); if (i >= 0) out.push(entry(i + 1, 'main', '')); break; }
       case 'clojure': {
         const ns = (/\(ns\s+([\w.\-*+!?]+)/.exec(src) || [])[1] || '';
@@ -1156,6 +1206,12 @@ allprojects {
       }
       case 'elixir': return done('elixir', [step('elixir', withArgs([f]), D)]);
       case 'd': return has('rdmd') ? done('rdmd', [step('rdmd', withArgs([f]), D)]) : done('dmd -run', [step('dmd', withArgs(['-run', f]), D)]);
+      case 'npm': {
+        let pm = 'npm';
+        find: for (const d of chain) for (const [lock, prog] of [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lockb', 'bun'], ['bun.lock', 'bun'], ['package-lock.json', 'npm']]) if (await fs.isFile(jn(d, lock)) && has(prog)) { pm = prog; break find; }
+        const a = ['run', en.target]; if (argv.length) a.push(...(pm === 'npm' ? ['--'] : []), ...argv);
+        return { title: `${pm} run ${en.target}`, how: pm, steps: [step(pm, a, D)] };
+      }
       default: return null;
     }
   }
@@ -1386,6 +1442,8 @@ allprojects {
   const needProject = (project) => { if (!project) throw new Error('project obrigatório'); return project; };
   return {
     langs: LANGS,
+    // id da linguagem de um arquivo (pela extensão, ou pelo nome: package.json), ou null
+    lang(file) { const lg = langOf(file || ''); return lg ? lg.id : null; },
     // { lang, entries: [{ line, label, target, instance }] } (o ▶ da margem)
     entries(file, text) {
       const lg = langOf(file || '');

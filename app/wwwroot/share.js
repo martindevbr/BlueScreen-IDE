@@ -45,7 +45,7 @@ function netRenderSide() {
   $('#netRemote').hidden = !away; $('#netRemoteHost').textContent = S.hostName || location.host;
   $('#loginBack').hidden = !away;
   $('#netJoin').hidden = netAway; // conectar a partir de uma página remota não faz sentido: volte primeiro
-  if (away) { $('#btnNet').classList.add('on'); $('#btnNet').title = 'Rede local · conectado a ' + (S.hostName || location.host); }
+  if (away) { $('#btnSettings').classList.add('net-on'); $('#btnSettings').title = 'Configurações · conectado a ' + (S.hostName || location.host); }
 }
 $('#netAddrForm').onsubmit = (e) => { e.preventDefault(); netConnect($('#netAddr').value); };
 $('#netAddr').value = NET.addr;
@@ -127,7 +127,7 @@ function mrSet(on) {
   if (on) mrConnect(); else { clearTimeout(MR.retryT); const ws = MR.ws; MR.ws = null; ws && ws.close(); MR.peers = 0; }
   mrRender();
 }
-const mrStatus = BS.status.add({ id: 'stMirror', title: 'Espelhar ações (Rede local)', onclick: () => $('#btnNet').click() });
+const mrStatus = BS.status.add({ id: 'stMirror', title: 'Espelhar ações (Rede local)', onclick: () => BS.settings && BS.settings.open('rede') });
 function mrRender() {
   $('#mirrorToggle').classList.toggle('on', MR.on);
   const others = Math.max(0, MR.peers - 1), live = MR.ws && MR.ws.readyState === 1;

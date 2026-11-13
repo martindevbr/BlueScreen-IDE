@@ -57,10 +57,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
     <button class="chip proj-chip" id="projChip" title="Projetos: novo, abrir, recentes, fechar (Alt+P troca rápido)"><b id="projName">Nenhum projeto</b><span class="branch" id="projBranch"></span><svg class="i caret" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></button>
     <button id="seBtn" title="Buscar em tudo (Shift duas vezes)"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span>Buscar classes, arquivos, texto e ações</span></button>
     <div class="split" id="saveGrp"><button class="chip" id="btnSave" title="Salvar arquivo atual (Ctrl+S)"><svg class="i" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span>Salvar</span></button><button class="chip caret" id="btnSaveMenu" title="Opções de salvamento" aria-haspopup="menu"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></button></div>
-    <button class="icon-btn" id="btnNet" title="Rede local"><svg class="i" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg></button>
-    <button class="icon-btn" id="btnAppearance" title="Aparência: temas e fontes (Ctrl+Alt+S)"><svg class="i" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.8-.4-1.1-.3-.3-.4-.6-.4-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5C21 6.4 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.1"/><circle cx="10.5" cy="7.5" r="1.1"/><circle cx="15" cy="7.5" r="1.1"/></svg></button>
-    <button class="icon-btn" id="btnTheme" title="Tema claro / escuro"><svg class="i" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg></button>
-    <button class="icon-btn" id="btnKeys" title="Atalhos (F1)"><svg class="i" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 15h10"/></svg></button>
+    <button class="icon-btn" id="btnSettings" title="Configurações: salvamento, aparência, atalhos e rede (Ctrl+,)" aria-haspopup="dialog"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
     <div class="winctl" id="winCtl" hidden>
       <button data-w="min" title="Minimizar"><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></button>
       <button data-w="max" title="Maximizar"><svg viewBox="0 0 10 10" class="w-max"><rect x=".5" y=".5" width="9" height="9"/></svg><svg viewBox="0 0 10 10" class="w-res"><path d="M2.5 2.5V.5h7v7h-2"/><rect x=".5" y="2.5" width="7" height="7"/></svg></button>
@@ -107,7 +104,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
     <span class="spacer"></span>
     <span class="s" id="stDirty" hidden>Não salvo</span>
     <span class="s" id="stMin" hidden></span>
-    <span class="s" id="stLint"></span>
+    <span class="s" id="stLint" title="Abrir a lista de problemas" hidden></span>
     <span class="s" id="stPos"></span>
     <span class="s" id="stLang"></span>
     <span class="s">UTF-8</span>
@@ -145,8 +142,8 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 </div>
 <button class="chip" id="present-exit" title="Sair (Esc)">Sair da apresentação</button>
 
-<div class="pop" id="netPop" hidden>
-  <h3>Rede local</h3>
+<!-- Rede local: settings.js leva este bloco para dentro das Configurações; share.js cuida do conteúdo -->
+<div class="netp" id="netPop" hidden>
   <div id="netRemote" class="net-remote" hidden><span>Conectado a <b id="netRemoteHost"></b></span><button class="chip" id="netLeave">Desconectar</button></div>
   <label class="toggle" id="netToggle"><span class="sw"></span><span>Permitir acesso pela rede</span></label>
   <div id="netInfo" hidden>
@@ -167,10 +164,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
     <label class="toggle" id="mirrorToggle"><span class="sw"></span><span>Espelhar ações</span></label>
     <p id="mirrorInfo">Projeto, abas, edição, cursor e rolagem se repetem em todas as janelas com o espelho ligado.</p>
   </div>
-  <div class="actions"><button class="chip" id="netClose">Fechar</button></div>
 </div>
-
-<div id="keysBack" hidden><div id="keys" role="dialog" aria-label="Atalhos"></div></div>
 
 <div id="login" hidden><div class="box">
   <div class="logo" style="justify-content:center"><img class="mark" src="icon.svg" alt="">BlueScreen</div>
@@ -198,6 +192,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <script src="dock.js"></script>
 <script src="bubble.js"></script>
 <script src="preview.js"></script>
+<script src="markdown.js"></script>
 <script src="sync.js"></script>
 <script src="share.js"></script>
 <script src="viewer.js"></script>
@@ -219,5 +214,6 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <script src="vault.js"></script>
 <script src="aiclis.js"></script>
 <script src="theme.js"></script>
+<script src="settings.js"></script>
 </body>
 </html>

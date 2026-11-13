@@ -215,6 +215,44 @@ test('requisitos de um arquivo (runtimes/check)', async () => {
   fs.rmSync(d, { recursive: true, force: true });
 });
 
+test('scripts sem main e scripts do package.json', async () => {
+  const L = (lang, file, src) => _.find(lang, file, src).map(e => e.line);
+  // Python: o "if __name__" ganha; sem ele, a primeira instrução solta; módulo só com definições não tem ▶
+  assert.deepStrictEqual(L('python', 'a.py', 'import os\n\ndef f():\n    pass\n\nprint(f())\n'), [6]);
+  assert.deepStrictEqual(L('python', 'a.py', 'def f():\n    pass\n\nif __name__ == "__main__":\n    f()\n'), [4]);
+  assert.deepStrictEqual(L('python', 'lib.py', 'from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import x\n\nclass A:\n    pass\n'), []);
+  assert.deepStrictEqual(L('python', '__init__.py', 'print(1)\n'), []);
+  // JavaScript: #! do node, ou a chamada solta de main()
+  assert.deepStrictEqual(L('javascript', 'cli.js', '#!/usr/bin/env node\nconsole.log(1)\n'), [1]);
+  assert.deepStrictEqual(L('javascript', 'a.mjs', 'async function main() {}\n\nmain().catch(console.error);\n'), [3]);
+  assert.deepStrictEqual(L('typescript', 'util.ts', 'export const soma = (a: number, b: number) => a + b;\n'), []);
+  // o arquivo é o programa: primeira linha que não é comentário
+  assert.deepStrictEqual(L('shell', 'x.sh', '#!/bin/bash\n# comentário\necho oi\n'), [1]);
+  assert.deepStrictEqual(L('shell', 'x.sh', '# comentário\n\necho oi\n'), [3]);
+  assert.deepStrictEqual(L('powershell', 'x.ps1', '# nota\nWrite-Host "oi"\n'), [2]);
+  assert.deepStrictEqual(L('batch', 'x.bat', 'REM nota\n@echo off\n'), [2]);
+  assert.deepStrictEqual(L('lua', 'x.lua', '-- nota\nprint("oi")\n'), [2]);
+  assert.deepStrictEqual(L('php', 'x.php', '<html>\n<?php echo 1; ?>\n'), [2]);
+  assert.deepStrictEqual(L('perl', 'Lib.pm', 'package Lib;\n1;\n'), []);
+  assert.deepStrictEqual(L('ruby', 'x.rb', 'require "json"\n\nputs JSON.generate({})\n'), [3]);
+  assert.strictEqual(_.langOf('x.ps1').id, 'powershell');
+  assert.strictEqual(_.langOf('web/package.json').id, 'npm');
+  assert.strictEqual(_.langOf('outro.json'), null);
+  // package.json: um ponto de execução por script
+  const pkg = '{\n  "name": "x",\n  "scripts": {\n    "dev": "vite",\n    "build:prod": "vite build"\n  },\n  "dependencies": {\n    "a": "1"\n  }\n}\n';
+  assert.deepStrictEqual(_.find('npm', 'package.json', pkg), [{ line: 4, label: 'dev', target: 'dev' }, { line: 5, label: 'build:prod', target: 'build:prod' }]);
+  assert.deepStrictEqual(_.find('npm', 'package.json', '{ "name": "x" }'), []);
+  // o gerenciador sai do lockfile, quando o programa dele existe; senão, npm
+  const d = tmp('npm');
+  fs.writeFileSync(path.join(d, 'package.json'), pkg); fs.writeFileSync(path.join(d, 'pnpm-lock.yaml'), '');
+  const plan = async (has, args) => (await _.plan({ has: (x) => has.includes(x), jdks: [], work: d, mkdir() {} }, _.projectFs(d), 'package.json', 'npm', { line: 4, label: 'dev', target: 'dev' }, args || '')).steps[0];
+  let st = await plan(['pnpm', 'npm']);
+  assert.deepStrictEqual([st.program, st.args], ['pnpm', ['run', 'dev']]);
+  st = await plan(['npm'], '--host 0.0.0.0');
+  assert.deepStrictEqual([st.program, st.args], ['npm', ['run', 'dev', '--', '--host', '0.0.0.0']]);
+  fs.rmSync(d, { recursive: true, force: true });
+});
+
 (async () => {
   let fail = 0;
   for (const [name, fn] of tests) {

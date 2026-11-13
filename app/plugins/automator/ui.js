@@ -491,7 +491,7 @@ function summary(n) {
     case 'data.datetime': return one(p.format);
     case 'data.set': return Object.keys(p.value || {}).join(', ');
     case 'logic.stop': return one(p.message);
-    case 'plugin.navegador.test': case 'plugin.navegador.site': { const k = (p.steps || []).length; return [one(p.name) || one(p.url), k ? k + (k === 1 ? ' passo' : ' passos') : 'sem passos ainda'].filter(Boolean).join(' · '); }
+    case 'browser.test': { const k = (p.steps || []).length; return [one(p.name) || one(p.url), k ? k + (k === 1 ? ' passo' : ' passos') : 'sem passos ainda'].filter(Boolean).join(' · '); }
     case 'qa.api': return [one(p.name), `${p.method || 'GET'} ${one(p.url)}`].filter(Boolean).join(' · ');
     case 'qa.data': return (p.fields || []).join(', ') + (p.count > 1 ? ` × ${p.count}` : '');
     case 'qa.load': return `${p.total} chamadas, ${p.concurrency} por vez · ${one(p.url)}`;
