@@ -400,6 +400,9 @@ async fn apply(info: Value) -> Result<(), String> {
 // sem tocar no que não é do programa (Desinstalar.cmd, source.txt, unins000.exe).
 const UPD_DIR: &str = ".bs-update";
 const MANIFEST: &str = ".bluescreen-files";
+/// plugins que já vieram com o BlueScreen e saíram dele: a pasta deles sai da instalação na próxima atualização,
+/// mesmo quando o manifesto não os conhece (instalações que trocaram de versão antes de o manifesto existir)
+const RETIRED_PLUGINS: &[&str] = &["agents"];
 /// marcador gravado ao lado do exe quando ele foi compilado do código (Instalar BlueScreen.cmd ou o atualizador
 /// compilando): essa instalação se atualiza pelo git e nunca recebe o Release por cima (ver check)
 pub const LOCAL_BUILD: &str = "local-build.txt";
@@ -540,10 +543,14 @@ fn install_tree(src: &Path, dst: &Path) -> Result<(), String> {
 /// para saber que é do programa: a interface e os plugins que vêm junto).
 fn install_stage(stage: &Path, dst: &Path) -> Result<(), String> {
     let news = files_of(stage);
-    let remove = read_list(&dst.join(MANIFEST)).unwrap_or_else(|| {
+    let mut remove = read_list(&dst.join(MANIFEST)).unwrap_or_else(|| {
         let plugins: Vec<String> = news.iter().filter_map(|r| r.strip_prefix("plugins/")?.split('/').next().map(|id| format!("plugins/{id}/"))).collect();
         files_of(dst).into_iter().filter(|r| r.starts_with("wwwroot/") || plugins.iter().any(|p| r.starts_with(p.as_str()))).collect()
     });
+    for r in files_of(dst) {
+        let retired = RETIRED_PLUGINS.iter().any(|id| r.starts_with(&format!("plugins/{id}/")));
+        if retired && !news.contains(&r) && !remove.contains(&r) { remove.push(r); }
+    }
     let list = swap(dst, stage, &remove)?;
     let _ = std::fs::remove_dir_all(stage);
     write_atomic(&dst.join(MANIFEST), &(list.join("\n") + "\n")).map_err(|e| format!("manifesto: {e}"))?;
@@ -697,6 +704,7 @@ mod tests {
         let r = |p: &str| std::fs::read_to_string(d.join(p)).ok();
         // instalação antiga (sem manifesto) com arquivos que não são do programa
         w("BlueScreen.exe", "exe1"); w("wwwroot/app.js", "a1"); w("wwwroot/velho.js", "v1"); w("source.txt", "repo"); w("plugins/x/ui.js", "x1"); w("plugins/meu/ui.js", "meu");
+        w("plugins/agents/ui.js", "conselho"); w("plugins/agents/plugin.json", "{}"); // plugin que saiu do BlueScreen
         // versão nova em .bs-update\new
         w(".bs-update/new/BlueScreen.exe", "exe2"); w(".bs-update/new/wwwroot/app.js", "a2"); w(".bs-update/new/wwwroot/novo.js", "n2"); w(".bs-update/new/plugins/x/ui.js", "x2");
         install_stage(&upd(&d).join("new"), &d).unwrap();
@@ -706,6 +714,8 @@ mod tests {
         assert_eq!(r("wwwroot/velho.js"), None); // saiu da versão nova
         assert_eq!(r("source.txt").as_deref(), Some("repo")); // não é do programa: fica
         assert_eq!(r("plugins/meu/ui.js").as_deref(), Some("meu")); // plugin que não vem junto: fica
+        assert_eq!(r("plugins/agents/ui.js"), None); // plugin aposentado: sai mesmo sem estar no manifesto
+        assert!(!d.join("plugins/agents").exists());
         assert!(r(MANIFEST).unwrap().contains("wwwroot/novo.js"));
         assert!(prev_dirs(&upd(&d)).is_empty());
         assert!(!upd(&d).join("journal.json").exists());
