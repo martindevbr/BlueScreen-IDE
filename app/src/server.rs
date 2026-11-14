@@ -313,7 +313,9 @@ fn mime(p: &Path) -> &'static str {
         "html" | "htm" => "text/html; charset=utf-8", "mjs" => "text/javascript; charset=utf-8", "txt" | "md" => "text/plain; charset=utf-8", "xml" => "application/xml",
         "mp4" | "m4v" => "video/mp4", "webm" => "video/webm", "ogv" => "video/ogg", "mov" => "video/quicktime", "mp3" => "audio/mpeg", "wav" => "audio/wav", "ogg" | "opus" | "oga" => "audio/ogg", "flac" => "audio/flac", "m4a" => "audio/mp4", "aac" => "audio/aac", "bmp" => "image/bmp", "pdf" => "application/pdf", "avif" => "image/avif", "otf" => "font/otf", "js" => "text/javascript; charset=utf-8", "css" => "text/css; charset=utf-8",
         "svg" => "image/svg+xml", "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp", "ico" => "image/x-icon", "json" => "application/json",
-        "woff2" => "font/woff2", "woff" => "font/woff", "ttf" => "font/ttf", "map" => "application/json", _ => "application/octet-stream",
+        "woff2" => "font/woff2", "woff" => "font/woff", "ttf" => "font/ttf", "map" => "application/json",
+        // celular: manifesto do app instalável (iOS/PWA) e o app Android que a IDE serve na rede local
+        "webmanifest" => "application/manifest+json", "apk" => "application/vnd.android.package-archive", _ => "application/octet-stream",
     }
 }
 fn cookie(req: &Request<Body>, name: &str) -> Option<String> {
@@ -465,7 +467,8 @@ async fn handle(req: Request<Body>, remote: bool) -> Response {
 
 async fn serve_static(path: &str) -> Response {
     let base = app_dir().join("wwwroot");
-    let rel = if path == "/" { "index.html" } else { path.trim_start_matches('/') };
+    // /instalar: a página que o QR code das Configurações › Rede local abre no celular
+    let rel = match path { "/" => "index.html", "/instalar" | "/instalar/" => "instalar.html", _ => path.trim_start_matches('/') };
     let rel = urlencoding::decode(rel).map(|s| s.into_owned()).unwrap_or_default();
     let file = absolute(&base.join(&rel));
     if !within(&base, &file) { return bad("not found", 404); }

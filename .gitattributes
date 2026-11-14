@@ -1,3 +1,6 @@
 # scripts do Windows precisam de CRLF (o cmd lê linha a linha e se perde com LF, sobretudo com rótulos e goto)
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# o gradlew roda no Linux da esteira: LF sempre
+mobile/android/gradlew text eol=lf
+*.jar binary

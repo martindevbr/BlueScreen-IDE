@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlueScreen</title>
+<style>
+/* Escolha do PC: os já usados, os achados na rede (anúncio do BlueScreen + varredura) e o endereço digitado.
+   Fala com o app pela ponte window.BSApp (MainActivity.Ponte). */
+:root { --bg: #0F1A2E; --card: #16233D; --line: #26365A; --fg: #E6EBF5; --muted: #9FB0CE; --accent: #4C8DFF; --accent-2: #6CA2FF; --err: #FF7A85; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 15px/1.5 system-ui, Roboto, 'Segoe UI', sans-serif; padding: 24px 16px 32px; -webkit-tap-highlight-color: transparent; }
+main { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.hero { display: flex; align-items: center; gap: 14px; padding: 4px 2px 6px; }
+.hero svg { width: 56px; height: 56px; flex: none; filter: drop-shadow(0 8px 20px rgba(42, 107, 255, .4)); }
+.hero h1 { margin: 0; font-size: 21px; line-height: 1.2; }
+.hero p { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+.card h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.card h2 .sp { margin-left: auto; }
+.err { border-color: color-mix(in srgb, var(--err) 55%, var(--line)); color: var(--fg); font-size: 14px; }
+.err b { color: var(--err); display: block; margin-bottom: 2px; }
+.list { display: flex; flex-direction: column; gap: 8px; }
+.pc { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 10px 10px 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); }
+.pc .ic { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-2); }
+.pc .ic svg, .x svg, .btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pc .t { min-width: 0; }
+.pc .t b { display: block; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc .t span { display: block; color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc button.go { all: unset; position: absolute; inset: 0; border-radius: 12px; cursor: pointer; }
+.pc { position: relative; }
+.pc button.go:focus-visible { outline: 2px solid var(--accent); }
+.x { position: relative; z-index: 1; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 10px; background: none; color: var(--muted); }
+.x:active { background: var(--line); }
+.empty { color: var(--muted); font-size: 14px; margin: 2px 2px 0; }
+form { display: flex; gap: 8px; }
+input { flex: 1; min-width: 0; height: 48px; padding: 0 14px; font: 16px ui-monospace, 'Roboto Mono', monospace; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+input:focus { outline: none; border-color: var(--accent); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: 600 15px system-ui, Roboto, sans-serif; }
+.btn.ghost { background: none; color: var(--accent-2); border-color: var(--line); width: 100%; margin-top: 10px; }
+.msg { color: var(--err); font-size: 13px; min-height: 0; margin: 6px 2px 0; }
+.help { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0; }
+.help b { color: var(--fg); font-weight: 600; }
+.sp { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent-2); animation: g .8s linear infinite; }
+@keyframes g { to { transform: rotate(360deg); } }
+[hidden] { display: none !important; }
+footer { text-align: center; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <svg viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17245C"/><stop offset="1" stop-color="#04060F"/></linearGradient><radialGradient id="b" cx=".56" cy=".5" r=".46"><stop offset="0" stop-color="#2A6BFF" stop-opacity=".55"/><stop offset="1" stop-color="#2A6BFF" stop-opacity="0"/></radialGradient><linearGradient id="c" x1="100" y1="48" x2="196" y2="212" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7ADCFF"/><stop offset="1" stop-color="#1B55FF"/></linearGradient></defs><rect x="10" y="10" width="236" height="236" rx="54" fill="url(#a)"/><rect x="10" y="10" width="236" height="236" rx="54" fill="url(#b)"/><g transform="translate(11 0) skewX(-9) translate(6 0)" fill="none" stroke-linejoin="miter" stroke-miterlimit="6"><rect x="62" y="50" width="29" height="156" rx="3" fill="#F2F8FF"/><path d="M112 60L172 90L112 120" stroke="url(#c)" stroke-width="28"/><path d="M112 132L188 168L112 204" stroke="#0A1030" stroke-width="46"/><path d="M112 132L188 168L112 204" stroke="url(#c)" stroke-width="28"/></g></svg>
+    <div><h1>BlueScreen</h1><p>Escolha o PC com o BlueScreen aberto</p></div>
+  </div>
+
+  <div class="card err" id="erro" role="alert" hidden><b>Não conectou</b><span id="erroTxt"></span></div>
+
+  <section class="card" id="salvos" hidden>
+    <h2>Neste celular</h2>
+    <div class="list" id="listaSalvos"></div>
+  </section>
+
+  <section class="card">
+    <h2>Na rede <span class="sp" id="girando" hidden></span></h2>
+    <div class="list" id="listaRede"></div>
+    <p class="empty" id="nada" hidden>Nenhum BlueScreen com a Rede local ligada apareceu neste Wi-Fi.</p>
+    <button class="btn ghost" id="denovo" type="button" hidden>Procurar de novo</button>
+  </section>
+
+  <section class="card">
+    <h2>Digitar o endereço</h2>
+    <form id="form" autocomplete="off">
+      <input id="ip" inputmode="url" placeholder="192.168.0.10" spellcheck="false" autocapitalize="off" aria-label="IP do PC">
+      <button class="btn" type="submit">Conectar</button>
+    </form>
+    <p class="msg" id="msg" role="status"></p>
+  </section>
+
+  <p class="help">No PC, abra as <b>Configurações</b> do BlueScreen (a engrenagem), vá em <b>Rede local</b> e ligue <b>Permitir acesso pela rede</b>. O endereço e o PIN aparecem lá.</p>
+  <footer id="ver"></footer>
+</main>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const app = window.BSApp;
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const host = (u) => String(u).replace(/^http:\/\//, '').replace(/:4748$/, '');
+  const ICON_PC = '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
+  const ICON_X = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+  // erro de quem voltou para cá (o PC não respondeu)
+  const m = /#erro=(.*)$/.exec(location.hash);
+  if (m) { $('#erro').hidden = false; $('#erroTxt').textContent = decodeURIComponent(m[1]); }
+  if (app) $('#ver').textContent = 'Versão ' + app.versao();
+
+  function abrir(url) {
+    const r = app ? app.conectar(url) : 'Abra pelo app BlueScreen.';
+    $('#msg').textContent = r || 'Conectando…';
+  }
+  function linha(pc, lixeira) {
+    const titulo = pc.nome || host(pc.url), sub = [pc.nome ? host(pc.url) : '', pc.projeto].filter(Boolean).join(' · ');
+    const el = document.createElement('div');
+    el.className = 'pc';
+    el.innerHTML = `<div class="ic">${ICON_PC}</div><div class="t"><b>${esc(titulo)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</div>`
+      + `<button class="go" type="button" aria-label="Abrir ${esc(titulo)}"></button>`
+      + (lixeira ? `<button class="x" type="button" aria-label="Esquecer ${esc(titulo)}">${ICON_X}</button>` : '<span></span>');
+    el.querySelector('.go').onclick = () => abrir(pc.url);
+    if (lixeira) el.querySelector('.x').onclick = () => { app.esquecer(pc.url); salvos(); };
+    return el;
+  }
+  function salvos() {
+    let l = [];
+    try { l = JSON.parse(app ? app.pcs() : '[]'); } catch {}
+    $('#salvos').hidden = !l.length;
+    $('#listaSalvos').replaceChildren(...l.map((pc) => linha(pc, true)));
+    const ultimo = l[0];
+    if (ultimo && !$('#ip').value) $('#ip').placeholder = host(ultimo.url);
+  }
+  // achados na rede (MainActivity chama bsAchou para cada PC e bsFim no fim)
+  const achados = new Map();
+  window.bsAchou = (pc) => {
+    const antes = achados.get(pc.url);
+    achados.set(pc.url, { ...antes, ...pc, nome: pc.nome || antes?.nome || '', projeto: pc.projeto || antes?.projeto || '' });
+    $('#listaRede').replaceChildren(...[...achados.values()].map((p) => linha(p, false)));
+    $('#nada').hidden = true;
+  };
+  window.bsFim = () => {
+    $('#girando').hidden = true; $('#denovo').hidden = false;
+    $('#nada').hidden = achados.size > 0;
+    salvos(); // o anúncio pode ter trazido o nome de um PC guardado
+  };
+  function procurar() {
+    if (!app) return;
+    $('#girando').hidden = false; $('#denovo').hidden = true; $('#nada').hidden = true;
+    app.procurar();
+  }
+  $('#denovo').onclick = procurar;
+  $('#form').onsubmit = (e) => { e.preventDefault(); abrir($('#ip').value || $('#ip').placeholder.replace(/^192\.168\.0\.10$/, '')); };
+  salvos();
+  procurar();
+})();
+</script>
+</body>
+</html>

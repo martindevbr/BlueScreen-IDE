@@ -1,0 +1,71 @@
+plugins {
+    id "com.android.application"
+}
+
+// Versão: a mesma do BlueScreen. A esteira passa -PbsVersion=X.Y.Z (a do Release); sem ela, vale a do app/Cargo.toml.
+// versionCode = X*1000000 + Y*1000 + Z (2.1.36 -> 2001036): cresce a cada versão, e o Android aceita a atualização.
+def cargoVersion = {
+    def f = rootProject.file("../../app/Cargo.toml")
+    def m = f.exists() ? (f.getText("UTF-8") =~ /(?m)^version\s*=\s*"(\d+\.\d+\.\d+)"/) : null
+    // m != null, e não só "m": o Groovy testa um Matcher chamando find(), e o find() de baixo pularia a versão
+    m != null && m.find() ? m.group(1) : "0.0.1"
+}
+def bsVersion = (project.findProperty("bsVersion") ?: cargoVersion()).toString().replaceFirst(/^v/, "")
+def parts = bsVersion.tokenize(".").collect { (it.replaceAll(/\D.*$/, "") ?: "0") as int }
+while (parts.size() < 3) parts << 0
+def bsCode = parts[0] * 1000000 + parts[1] * 1000 + parts[2]
+
+// Assinatura: o keystore e as senhas vêm só de variáveis de ambiente (na esteira, dos secrets do GitHub), nunca do
+// repositório. Sem elas, o release sai assinado com a chave de debug desta máquina: instala, mas não atualiza por
+// cima de um APK assinado com a chave oficial (o Android recusa assinaturas diferentes).
+def ksPath = System.getenv("BS_ANDROID_KEYSTORE")
+def hasKeystore = ksPath && file(ksPath).exists()
+if (!hasKeystore) logger.lifecycle("BlueScreen Android: sem BS_ANDROID_KEYSTORE; o release usa a chave de debug")
+
+android {
+    namespace "io.github.martindevbr.bluescreen"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "io.github.martindevbr.bluescreen"
+        minSdk 24
+        targetSdk 36
+        versionCode bsCode
+        versionName bsVersion
+    }
+
+    signingConfigs {
+        release {
+            if (hasKeystore) {
+                storeFile file(ksPath)
+                storePassword System.getenv("BS_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias(System.getenv("BS_ANDROID_KEY_ALIAS") ?: "bluescreen")
+                keyPassword(System.getenv("BS_ANDROID_KEY_PASSWORD") ?: System.getenv("BS_ANDROID_KEYSTORE_PASSWORD"))
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            signingConfig hasKeystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError true
+        // o app é instalado por fora da Play Store (APK do PC ou do Release): o aviso de versão nova do targetSdk não se aplica
+        disable "OldTargetApi", "ExpiredTargetSdkVersion"
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+}

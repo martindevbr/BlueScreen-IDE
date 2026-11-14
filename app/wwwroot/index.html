@@ -2,9 +2,18 @@
 <html lang="pt-BR" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>BlueScreen</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<!-- celular: app instalável (Safari: Compartilhar › Adicionar à Tela de Início; guia em /instalar) -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BlueScreen">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0F1A2E">
+<meta name="format-detection" content="telephone=no">
 <link rel="preload" href="vendor/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="vendor/fonts/jetbrains-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="app.css">
@@ -12,6 +21,7 @@
 <link rel="stylesheet" href="bubble.css">
 <link rel="stylesheet" href="vendor/xterm/xterm.css">
 <script>/* pinta o tema salvo antes de tudo (sem piscar); a Aparência (theme.js) confirma depois */
+try { if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) document.documentElement.classList.add('standalone'); } catch {}
 try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStorage.getItem('bs.theme')) || 'dark'; const v = JSON.parse(localStorage.getItem('bs.themeCache') || 'null'); if (v) for (const k in v) r.style.setProperty('--' + k, v[k]); } catch {}</script>
 <style>/* tela de abertura: CSS aqui mesmo para pintar no primeiro quadro, antes do app.css, das fontes e do Monaco */
 #splash { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: var(--canvas, #0F1A2E); color: var(--canvas-fg, #9FB0CE);
@@ -151,6 +161,10 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
     <div id="netUrls"></div>
     <p>PIN de acesso</p><div class="pin" id="netPin"></div>
     <p class="net-lock" id="netLock" role="status" hidden></p>
+    <div class="net-app" id="netApp" hidden>
+      <div class="qr" id="netQr"></div>
+      <div class="txt"><b>Instalar no celular</b><p>Aponte a câmera do celular para o código. No iPhone, ele vira um app na Tela de Início; no Android, baixa o app daqui mesmo.</p><a id="netAppUrl" target="_blank" rel="noopener"></a></div>
+    </div>
     <p class="net-warn">Sem criptografia (HTTP): na mesma rede, dá para ver o código e o PIN passando. Ligue só em redes de confiança.</p>
     <div class="pop-sec" id="netDevs" hidden><h4>Aparelhos conectados</h4><div id="netDevList"></div></div>
   </div>
@@ -186,6 +200,7 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <script src="vendor/xterm/addon-web-links.js"></script>
 <script src="vendor/xterm/addon-unicode11.js"></script>
 <script src="vendor/monaco/vs/loader.js"></script>
+<script src="qr.js"></script>
 <script src="app.js"></script>
 <script src="vcs.js"></script>
 <script src="syntax.js"></script>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- fundo da IDE desde o primeiro quadro (sem clarão branco ao abrir) -->
+    <style name="Tema" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/fundo</item>
+        <item name="android:colorPrimary">@color/fundo</item>
+        <item name="android:colorAccent">@color/destaque</item>
+        <item name="android:statusBarColor">@color/fundo</item>
+        <item name="android:navigationBarColor">@color/fundo</item>
+    </style>
+    <color name="fundo">#FF0F1A2E</color>
+    <color name="destaque">#FF4C8DFF</color>
+</resources>

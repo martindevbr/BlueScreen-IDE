@@ -1869,6 +1869,13 @@ function renderNet() {
   $('#stNet').textContent = n.enabled ? `rede · ${n.urls[0]?.url || ''}` : ''; $('#stNet').className = 's ' + (n.enabled ? 'net-on' : '');
   $('#netUrls').innerHTML = n.urls.map(u => `<div class="url"><span title="${esc(u.iface)}">${esc(u.url)}</span><button class="icon-btn" data-c="${esc(u.url)}" title="Copiar"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>`).join('');
   $('#netUrls').querySelectorAll('button').forEach(b => b.onclick = () => navigator.clipboard.writeText(b.dataset.c).then(() => toast('Copiado')).catch(() => {}));
+  // QR code da página de instalação (/instalar): a câmera do celular abre e ela guia o resto (iPhone ou Android)
+  const inst = n.enabled && n.urls[0] ? n.urls[0].url + '/instalar' : '';
+  $('#netApp').hidden = !inst || !window.BS_QR;
+  if (inst && window.BS_QR && $('#netQr').dataset.u !== inst) {
+    $('#netQr').innerHTML = BS_QR.svg(inst, { label: 'QR code para instalar no celular' }); $('#netQr').dataset.u = inst;
+    $('#netAppUrl').href = inst; $('#netAppUrl').textContent = inst;
+  }
   // PIN trocado depois de muitas tentativas erradas: o novo aparece aqui na hora (o popover se atualiza sozinho)
   const pinEl = $('#netPin'), changed = n.enabled && S.netPinChanges != null && (n.pinChanges || 0) > S.netPinChanges;
   pinEl.textContent = n.pin || '';

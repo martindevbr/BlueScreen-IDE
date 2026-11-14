@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Instalar o BlueScreen</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BlueScreen">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0F1A2E">
+<meta name="format-detection" content="telephone=no">
+<style>
+/* Página que o QR code da IDE abre no celular (Configurações › Rede local). Não pede o PIN: só explica como
+   instalar e entrega o APK; o login acontece depois, já no app. */
+:root { --bg: #0F1A2E; --card: #16233D; --line: #26365A; --fg: #E6EBF5; --muted: #9FB0CE; --accent: #4C8DFF; --accent-2: #6CA2FF; --ok: #3FB874;
+  --sa-t: env(safe-area-inset-top, 0px); --sa-b: env(safe-area-inset-bottom, 0px); --sa-l: env(safe-area-inset-left, 0px); --sa-r: env(safe-area-inset-right, 0px); color-scheme: dark; }
+@media (prefers-color-scheme: light) { :root { --bg: #EEF2FA; --card: #FFFFFF; --line: #D6DEEC; --fg: #1C2333; --muted: #5B6884; --accent: #2E63D4; --accent-2: #2457C4; --ok: #208A3C; color-scheme: light; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 15px/1.5 -apple-system, 'Segoe UI', system-ui, Roboto, sans-serif; -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%;
+  padding: calc(20px + var(--sa-t)) calc(16px + var(--sa-r)) calc(28px + var(--sa-b)) calc(16px + var(--sa-l)); }
+main { max-width: 460px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.hero { display: flex; align-items: center; gap: 14px; }
+.hero img { width: 60px; height: 60px; border-radius: 14px; flex: none; box-shadow: 0 8px 24px rgba(42, 107, 255, .35); }
+.hero h1 { margin: 0; font-size: 21px; line-height: 1.2; }
+.hero p { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+.card h2 { margin: 0 0 10px; font-size: 16px; }
+.card > p { margin: 0 0 12px; color: var(--muted); }
+.card > p:last-child { margin-bottom: 0; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; counter-reset: s; }
+ol.steps li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; counter-increment: s; }
+ol.steps li::before { content: counter(s); width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; background: var(--accent); }
+ol.steps b { font-weight: 600; }
+ol.steps small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.ico { display: inline-flex; vertical-align: -5px; width: 22px; height: 22px; padding: 2px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-2); }
+.ico svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line);
+  font: 600 15px/1.2 inherit; font-family: inherit; color: var(--fg); background: transparent; text-decoration: none; cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.btns { display: flex; flex-direction: column; gap: 10px; }
+.meta { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: -4px; }
+.note { font-size: 13px; color: var(--muted); }
+.ok { color: var(--ok); font-weight: 600; }
+.qr { width: 196px; height: 196px; margin: 4px auto 0; padding: 8px; background: #fff; border-radius: 14px; }
+.qr svg { display: block; width: 100%; height: 100%; }
+.copy { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font: 13px ui-monospace, Menlo, Consolas, monospace; }
+.copy span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.copy button { flex: none; border: 0; background: none; color: var(--accent-2); font: 600 13px inherit; font-family: inherit; cursor: pointer; padding: 4px 6px; }
+[hidden] { display: none !important; }
+footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.5; }
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <img src="icons/apple-touch-icon.png" alt="">
+    <div><h1>BlueScreen no celular</h1><p>Conectado ao PC <b id="host"></b></p></div>
+  </div>
+
+  <!-- iPhone e iPad: app pela Tela de Início (PWA) -->
+  <section class="card" id="ios" hidden>
+    <h2>Instalar no iPhone</h2>
+    <p id="iosInApp" hidden>Este navegador não instala apps. Copie o endereço e abra no <b>Safari</b>:</p>
+    <div class="copy" id="iosCopy" hidden><span class="u"></span><button type="button">Copiar</button></div>
+    <ol class="steps" id="iosSteps">
+      <li><div>Toque em <b>Compartilhar</b> <span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></span><small id="iosWhere">Na barra do Safari. No iOS 26, ele fica no botão ⋯</small></div></li>
+      <li><div>Escolha <b>Adicionar à Tela de Início</b> <span class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg></span><small>Se não aparecer, role a lista até o fim.</small></div></li>
+      <li><div>Toque em <b>Adicionar</b><small>Se aparecer <b>Abrir como app</b>, deixe ligado. O BlueScreen vira um ícone e abre em tela cheia, sem a barra do Safari.</small></div></li>
+      <li><div>Abra pelo ícone e digite o <b>PIN</b> mostrado no PC<small>No PC: Configurações › Rede local.</small></div></li>
+    </ol>
+  </section>
+  <section class="card" id="iosDone" hidden>
+    <h2 class="ok">Instalado</h2>
+    <p>Você já está no app. É só entrar com o PIN do PC.</p>
+    <a class="btn primary" href="/">Abrir o BlueScreen</a>
+  </section>
+
+  <!-- Android: APK servido pelo próprio PC -->
+  <section class="card" id="android" hidden>
+    <h2>Instalar no Android</h2>
+    <p>O app acha este PC sozinho na rede e guarda o endereço. Na próxima vez, é só tocar no ícone.</p>
+    <div class="btns">
+      <a class="btn primary" id="apk" href="mobile/BlueScreen.apk" download="BlueScreen.apk"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Baixar o app</a>
+      <div class="meta" id="apkMeta"></div>
+      <a class="btn" id="openApp" href="#"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Já tenho o app: abrir este PC</a>
+    </div>
+    <ol class="steps" style="margin-top:16px">
+      <li><div>Toque em <b>Baixar o app</b> e abra o arquivo<small>O Android pede para permitir apps desta fonte (o navegador): permita só desta vez.</small></div></li>
+      <li><div>Abra o <b>BlueScreen</b> e escolha este PC<small>Ou toque em "Já tenho o app" aqui em cima.</small></div></li>
+      <li><div>Digite o <b>PIN</b> mostrado no PC</div></li>
+    </ol>
+  </section>
+
+  <!-- aberto num computador: mostra o QR desta página -->
+  <section class="card" id="desk" hidden>
+    <h2>Abra esta página no celular</h2>
+    <p>Aponte a câmera do celular para o código, na mesma rede Wi-Fi deste PC.</p>
+    <div class="qr" id="qr"></div>
+  </section>
+
+  <section class="card">
+    <h2>Usar sem instalar</h2>
+    <p>Também funciona direto no navegador do celular.</p>
+    <a class="btn" href="/">Abrir no navegador</a>
+  </section>
+
+  <footer>O celular e o PC precisam estar na mesma rede. A conexão é local e sem criptografia (HTTP): use só em redes de confiança.</footer>
+</main>
+<script src="qr.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const android = /Android/i.test(ua);
+  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  const origin = location.origin;
+  $('#host').textContent = location.host;
+
+  if (ios) {
+    // aberto pelo ícone: versões do iOS que guardam o endereço da página (e não o start_url do manifesto) caem aqui
+    if (standalone) { $('#iosDone').hidden = false; location.replace('/'); return; }
+    $('#ios').hidden = false;
+    // navegadores dentro de outros apps (Instagram, Facebook, Gmail...) não têm "Adicionar à Tela de Início"
+    const inApp = /FBAN|FBAV|Instagram|Line\/|GSA\/|LinkedInApp|Twitter|MicroMessenger|TikTok/i.test(ua);
+    if (inApp) {
+      $('#iosInApp').hidden = false; $('#iosCopy').hidden = false; $('#iosSteps').hidden = true;
+      $('#iosCopy .u').textContent = location.href;
+      $('#iosCopy button').onclick = (e) => { navigator.clipboard?.writeText(location.href).then(() => { e.target.textContent = 'Copiado'; }).catch(() => {}); };
+    }
+    if (/iPad/.test(ua) || navigator.platform === 'MacIntel') $('#iosWhere').textContent = 'No canto de cima do Safari, ao lado do endereço.';
+    else if (/CriOS|FxiOS|EdgiOS/.test(ua)) $('#iosWhere').textContent = 'No botão de compartilhar do navegador (no Chrome, ao lado do endereço).';
+  } else if (android) {
+    $('#android').hidden = false;
+    // o link bluescreen:// abre o app já neste PC (quem não tem o app fica nesta página)
+    $('#openApp').href = 'bluescreen://abrir?url=' + encodeURIComponent(origin);
+    // o PC tem o APK? (vem junto da IDE instalada; numa versão compilada sem ele, o link vai para a página de versões)
+    fetch('mobile/BlueScreen.apk', { method: 'HEAD', cache: 'no-store' }).then((r) => {
+      if (!r.ok) throw 0;
+      const mb = (+r.headers.get('content-length') || 0) / 1048576;
+      $('#apkMeta').textContent = 'Direto deste PC, sem internet' + (mb ? ` · ${mb < 1 ? Math.max(1, Math.round(mb * 1024)) + ' KB' : mb.toFixed(1).replace('.', ',') + ' MB'}` : '');
+    }).catch(() => {
+      const a = $('#apk'); a.removeAttribute('download'); a.href = 'https://github.com/martindevbr/BlueScreen-IDE/releases/latest';
+      $('#apkMeta').textContent = 'Este PC não tem o APK: ele vem da página de versões do BlueScreen.';
+    });
+  } else {
+    $('#desk').hidden = false;
+    try { $('#qr').innerHTML = BS_QR.svg(location.href, { label: 'QR code desta página' }); } catch { $('#desk').hidden = true; }
+  }
+})();
+</script>
+</body>
+</html>

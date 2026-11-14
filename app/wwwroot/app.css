@@ -534,6 +534,7 @@ body.ly-dragging, body.ly-dragging * { cursor: grabbing !important; user-select:
 #login .box { width: 320px; text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px 24px; box-shadow: var(--shadow); }
 #login input { width: 100%; text-align: center; font: 600 24px var(--mono); letter-spacing: .3em; padding: 10px; margin: 12px 0; }
 #login .err { color: var(--del); font-size: 12px; min-height: 16px; }
+#login .chip[hidden] { display: none; } /* o .chip é inline-flex e venceria o hidden: o "Voltar ao meu BlueScreen" é só da janela do Windows */
 
 #present-exit { position: fixed; top: 12px; right: 12px; z-index: 40; display: none; background: var(--panel); border: 1px solid var(--line-2); }
 #app.present ~ #present-exit { display: inline-flex; }
@@ -1950,3 +1951,28 @@ button.cfg-kb:hover { background: var(--hover); border-color: var(--line-2); }
 @container (max-width: 640px) { #apr { grid-template-columns: 190px minmax(0, 1fr); } .apr-cur { display: none; } .apr-top .icon-btn { margin-left: auto; } .cgrp { columns: 1; } }
 @container (max-width: 500px) { #apr { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); } .apr-side { max-height: 168px; border-right: 0; border-bottom: 1px solid var(--line); } .apr-h { padding: 10px 14px 6px; } .fgrid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .cfg-tx { flex: 1 1 190px; } .cfg-ct .rng { width: 100%; } .cfg-ct:has(.rng) { flex: 1 1 100%; } }
+
+/* ===== Celular: app instalado (iOS pela Tela de Início, ou Safari em paisagem) =====
+   viewport-fit=cover deixa a página ir até as bordas: o notch, a ilha e a barra de gestos viram margens.
+   Fora do celular, env() vale 0 e nada muda. */
+:root { --sa-t: env(safe-area-inset-top, 0px); --sa-r: env(safe-area-inset-right, 0px); --sa-b: env(safe-area-inset-bottom, 0px); --sa-l: env(safe-area-inset-left, 0px); }
+#app { padding: var(--sa-t) var(--sa-r) var(--sa-b) var(--sa-l); }
+#wel { padding: calc(24px + var(--sa-t)) calc(24px + var(--sa-r)) calc(24px + var(--sa-b)) calc(24px + var(--sa-l)); }
+#login { padding: var(--sa-t) var(--sa-r) var(--sa-b) var(--sa-l); }
+#login .box { max-width: calc(100vw - 32px); }
+#toasts { bottom: calc(38px + var(--sa-b)); }
+@media (max-width: 640px) {
+  #app:not(.no-tool) #tool { top: calc(96px + var(--sa-t)); bottom: calc(30px + var(--sa-b)); left: calc(8px + var(--sa-l)); right: calc(8px + var(--sa-r)); }
+  #app:not(.no-tool) #strip { top: calc(48px + var(--sa-t)); left: calc(8px + var(--sa-l)); right: calc(8px + var(--sa-r)); }
+}
+
+/* Rede local: instalar no celular (QR code para a página /instalar) */
+.net-app { display: flex; gap: 14px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.net-app .qr { flex: none; width: 128px; height: 128px; padding: 6px; border-radius: 10px; background: #fff; }
+.net-app .qr svg { display: block; width: 100%; height: 100%; }
+.net-app .txt { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.net-app .txt b { font-size: 13px; color: var(--fg); }
+.net-app .txt p { margin: 0; color: var(--muted); line-height: 1.5; }
+.net-app .txt a { overflow-wrap: anywhere; }
+@media (max-width: 420px) { .net-app { flex-direction: column; align-items: flex-start; } }
+html.standalone body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }

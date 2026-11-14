@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- O BlueScreen do PC fala HTTP na rede local (http://<ip>:4748), e o endereço é um IP que muda de rede para rede:
+     não dá para listar domínios. O app só abre IPs digitados ou achados na rede (Enderecos.java). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -69,3 +69,13 @@ $RECYCLE.BIN/
 *.bak
 tmp/
 temp/
+
+# ----- Celular (mobile/android) -----
+# saída do Gradle, cache e o caminho do SDK desta máquina; a chave de assinatura nunca entra no repositório
+mobile/android/.gradle/
+mobile/android/**/build/
+mobile/android/local.properties
+*.jks
+*.keystore
+# APK posto na interface só para testar (a esteira coloca no dist)
+app/wwwroot/mobile/

@@ -4,7 +4,9 @@
 #   .\build.ps1 -Packages bluescreen,bluescreen-unilint   compila só esses pacotes (o atualizador passa o que mudou);
 #                         os outros exes vêm do target\release da compilação anterior (sem eles, compila tudo)
 #   .\build.ps1 -PluginServer   monta só o servidor de plugins em dist\PluginServer
-param([string]$Plugin = '', [string]$Out = "$PSScriptRoot\dist", [string[]]$Packages = @(), [switch]$PluginServer)
+#   .\build.ps1 -Apk <arquivo.apk>   põe o app Android em dist\BlueScreen\wwwroot\mobile\BlueScreen.apk: a página
+#                         /instalar entrega ele pela rede local (a esteira passa o APK que acabou de compilar)
+param([string]$Plugin = '', [string]$Out = "$PSScriptRoot\dist", [string[]]$Packages = @(), [switch]$PluginServer, [string]$Apk = '')
 $ErrorActionPreference = 'Continue' # o cargo escreve o progresso no stderr; o que vale é o código de saída
 Set-Location $PSScriptRoot
 
@@ -96,6 +98,12 @@ Copy-Item 'target\release\bluescreen.exe' (Join-Path $dist 'BlueScreen.exe')
 Copy-WebView2Loader 'target\release\bluescreen.exe' $dist
 Copy-Item -Recurse 'wwwroot' (Join-Path $dist 'wwwroot')
 Get-ChildItem 'plugins' -Directory | ForEach-Object { Copy-Plugin $_.Name (Join-Path $dist "plugins\$($_.Name)") }
+if ($Apk) {
+  if (-not (Test-Path -LiteralPath $Apk -PathType Leaf)) { throw "APK não encontrado: $Apk" }
+  $mobile = Join-Path $dist 'wwwroot\mobile'; New-Item -ItemType Directory -Force $mobile | Out-Null
+  Copy-Item -LiteralPath $Apk (Join-Path $mobile 'BlueScreen.apk')
+  Write-Host ("app Android -> {0} ({1:N0} KB)" -f (Join-Path $mobile 'BlueScreen.apk'), ((Get-Item -LiteralPath $Apk).Length / 1KB))
+}
 $size = (Get-ChildItem $dist -Recurse | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("`nVersão final em {0} ({1:N1} MB). Rode BlueScreen.exe lá dentro." -f $dist, $size)
 
