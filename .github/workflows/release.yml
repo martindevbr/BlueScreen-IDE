@@ -141,7 +141,8 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/bluescreen.jks"
+          # quebras de linha (um secret colado ou gravado pelo Windows) não fazem parte do base64
+          printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/bluescreen.jks"
           echo "BS_ANDROID_KEYSTORE=$RUNNER_TEMP/bluescreen.jks" >> "$GITHUB_ENV"
 
       - name: Testes, lint e APK
