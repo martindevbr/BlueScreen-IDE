@@ -13,6 +13,7 @@ mod tray;
 mod bigfile;
 mod deps;
 mod build;
+mod capture;
 mod desktop;
 mod install;
 mod lint;

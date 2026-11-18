@@ -148,6 +148,9 @@ pub fn run(url: String, devtools: bool, doc: Option<PathBuf>, studio: bool) -> !
         .with_initialization_script(format!("window.BS_DESKTOP = true; window.BS_MAX = {}; window.BS_WELCOME = {}; window.BS_DOC = {}; window.BS_STUDIO = {};", window.is_maximized(), welcome, is_file, studio))
         .with_ipc_handler(move |req| { let _ = pi.send_event(Ev::Ipc(req.body().clone(), req.uri().to_string())); })
         .with_document_title_changed_handler(move |t| { let _ = pt.send_event(Ev::Title(t)); })
+        // microfone, câmera, área de transferência, notificações...: a página é o próprio BlueScreen, então nada de
+        // perguntar a cada vez (a janela só navega na origem dele; o resto abre no navegador)
+        .with_permission_handler(|_| wry::PermissionResponse::Allow)
         // links para fora abrem no navegador; janelas do próprio app (páginas servidas pelo BlueScreen) abrem aqui
         .with_new_window_req_handler(move |u, _| { if inside(&u, &o1, &r1) { NewWindowResponse::Allow } else { open_url(&u); NewWindowResponse::Deny } })
         .with_navigation_handler(move |u| { if inside(&u, &o2, &r2) || u.starts_with("about:") || u.starts_with("data:") { true } else { open_url(&u); false } });

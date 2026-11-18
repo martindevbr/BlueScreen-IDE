@@ -223,6 +223,8 @@ fn core_routes() -> HashMap<String, RouteFn> {
     for (name, f) in crate::plugins::data::routes() { add(name, f); }
     for (name, f) in crate::plugins::services::routes() { add(name, f); }
     for (name, f) in crate::plugins::vault::routes() { add(name, f); }
+    // captura nativa de tela, janela e som do computador (gravadores de plugin, sem o seletor do navegador)
+    for (name, f) in crate::capture::routes() { add(name, f); }
     m
 }
 
@@ -440,6 +442,7 @@ async fn handle(req: Request<Body>, remote: bool) -> Response {
     if let Err(e) = path_guard(&parse_query(req.uri().query()), remote) { return bad(e, 403); }
     if path == "/api/rpc/ws" { let q = parse_query(req.uri().query()); return crate::rpc::ws(req, remote, q).await; }
     if path == "/api/mirror/ws" { return crate::share::mirror_ws(req, remote).await; }
+    if path == "/api/capture/ws" { let q = parse_query(req.uri().query()); return crate::capture::ws(req, remote, q).await; }
     if path == "/api/terminal/ws" { let q = parse_query(req.uri().query()); return crate::terminal::ws(req, remote, q).await; }
     let name = path[5..].to_string();
     // o registro não fica preso durante a rota: instalar/atualizar um plugin troca o registro e precisa que o antigo
