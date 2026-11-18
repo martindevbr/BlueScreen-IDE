@@ -139,8 +139,14 @@ function menu(p) {
   return items.length ? ['-', ...items] : [];
 }
 
-// ----- a loja (aba fixa do painel Plugins) -----
-const TABS = [['all', 'Todos'], ['inst', 'Instalados'], ['upd', 'Atualizações'], ['nodes', 'Com nós']];
+// ----- a loja (aba fixa do painel Plugins), no jeito da Microsoft Store -----
+// Menu à esquerda (Início, Instalados, Atualizações, Com nós e as categorias), busca no topo e a área grande com uma
+// de três telas: Início (destaque + fileiras), lista (categoria, busca, instalados...) e a página de um plugin.
+// Cada tela só é refeita quando o que ela mostra muda (a chave em P.vkey): digitar na busca refaz só a lista.
+const NAV = [['all', 'Início', '<svg class="i" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>'],
+  ['inst', 'Instalados', '<svg class="i" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>'],
+  ['upd', 'Atualizações', IC.up], ['nodes', 'Com nós', IC.node]];
+const catOrder = () => [...new Set(catalog().map(p => p.category).filter(Boolean))].sort((x, y) => catName(x).localeCompare(catName(y), 'pt-BR'));
 const matches = (p) => {
   if (P.tab === 'inst' && !p.installed) return false;
   if (P.tab === 'upd' && !p.update) return false;
@@ -156,21 +162,63 @@ const stateBtn = (p, big) => {
   if (p.incompatible && p.installed !== p.version) return `<span class="ps-need" title="${p.installed ? `Você tem a v${esc(p.installed)}. ` : ''}A v${esc(p.version)} precisa do BlueScreen ${esc(p.minBlueScreen)} ou mais novo: atualize o BlueScreen primeiro.">Precisa do BlueScreen ${esc(p.minBlueScreen)}</span>`;
   if (p.update) return `<button class="chip primary ps-act" data-a="install" title="v${esc(p.installed)} → v${esc(p.version)}">${IC.up}Atualizar${big ? ' para v' + esc(p.version) : ''}</button>`;
   if (p.installed) return `<span class="ps-done">${IC.ok}Instalado</span>`;
-  return `<button class="chip primary ps-act" data-a="install">${IC.down}Instalar</button>`;
+  return `<button class="chip primary ps-act" data-a="install">${big ? IC.down : ''}Instalar</button>`;
 };
 const tags = (p) => `${p.nodes ? `<span class="ps-tag node" title="Acrescenta ${plural(p.nodes, 'nó', 'nós')} ao Automator">${IC.node}${plural(p.nodes, 'nó', 'nós')}</span>` : ''}${p.runtime ? `<span class="ps-tag" title="O servidor do plugin roda com ${esc(p.runtime)}">${esc(p.runtime)}</span>` : ''}`;
-function card(p, i) {
-  const sub = [`v${esc(p.installed && p.update ? p.installed : p.version)}`, p.category ? esc(catName(p.category)) : '', sizeOf(p)].filter(Boolean).join(' · ');
-  return `<article class="ps-card${P.sel === p.id ? ' sel' : ''}${p.update ? ' upd' : ''}" data-id="${esc(p.id)}" tabindex="0" style="--i:${Math.min(i, 16)}">
-    <header>${bs.plugIcon(p)}<div class="ps-nm"><b>${esc(p.name)}</b><small>${sub}</small></div>${p.update ? `<span class="ps-new" title="v${esc(p.installed)} → v${esc(p.version)}">nova versão</span>` : ''}</header>
+const by = (p) => esc(nameOf(p.made && p.made.first) || p.author || '');
+// cartão no estilo da Store: ícone grande, nome, categoria, duas linhas de descrição e o botão
+const tile = (p) => `<article class="ps-tile${p.update ? ' upd' : ''}" data-id="${esc(p.id)}" tabindex="0">
+    <div class="ps-tile-ic">${bs.plugIcon(p)}${p.update ? `<span class="ps-new" title="v${esc(p.installed)} → v${esc(p.version)}">nova versão</span>` : ''}</div>
+    <b class="ps-tile-nm">${esc(p.name)}</b>
+    <small class="ps-tile-sub">${[p.category ? esc(catName(p.category)) : '', by(p)].filter(Boolean).join(' · ')}</small>
     <p>${esc(p.description || 'Sem descrição.')}</p>
-    <footer>${byline(p)}<span class="ps-end"><span class="ps-tags">${tags(p)}</span>${stateBtn(p)}</span></footer>
+    <div class="ps-tile-ft"><span class="ps-tags">${tags(p)}</span>${stateBtn(p)}</div>
   </article>`;
+const ts = (iso) => Date.parse(iso || '') || 0;
+const shelf = (title, list, cat) => !list.length ? '' : `<section class="ps-shelf">
+    <header><h2>${esc(title)}</h2>${cat !== undefined ? `<button class="ps-more" data-cat="${esc(cat)}">Ver tudo<i>${list.length}</i></button>` : ''}<span class="ps-sp"></span><button class="icon-btn ps-arr" data-a="prev" title="Anteriores" aria-label="Anteriores">${IC.back}</button><button class="icon-btn ps-arr" data-a="next" title="Próximos" aria-label="Próximos">${IC.back}</button></header>
+    <div class="ps-row">${list.slice(0, 12).map(tile).join('')}</div>
+  </section>`;
+function homeView(all) {
+  // destaque: o plugin mexido por último (é o que tem novidade); sem datas, o primeiro do catálogo
+  const recent = all.slice().sort((x, y) => ts(y.made && y.made.last && y.made.last.date) - ts(x.made && x.made.last && x.made.last.date));
+  const hero = recent.find(p => p.description) || all[0];
+  const newest = all.filter(p => p.made && p.made.first && p.made.first.date).sort((x, y) => ts(y.made.first.date) - ts(x.made.first.date));
+  const cats = catOrder().map(c => [c, all.filter(p => p.category === c)]).sort((x, y) => y[1].length - x[1].length);
+  return `${hero ? `<section class="ps-hero" data-id="${esc(hero.id)}">
+      <div class="ps-hero-tx"><span class="ps-kicker">Em destaque</span><h1>${esc(hero.name)}</h1><p>${esc(hero.description || '')}</p>
+        <div class="ps-hero-act">${stateBtn(hero, true)}<button class="chip" data-a="open">Ver detalhes</button></div></div>
+      <div class="ps-hero-ic">${bs.plugIcon(hero, 'lg')}</div>
+    </section>` : ''}
+    ${shelf('Novos na loja', newest.length > 2 ? newest : [])}
+    ${shelf('Atualizados recentemente', recent.filter(p => p.made && p.made.last))}
+    ${cats.map(([c, l]) => shelf(catName(c), l, c)).join('')}
+    ${!cats.length && !newest.length ? `<div class="ps-grid">${all.map(tile).join('')}</div>` : ''}`;
+}
+function emptyView() {
+  if (!P.remote) return '<div class="ps-empty"><span class="spin"></span><p>Abrindo a loja…</p></div>';
+  if (!catalog().length) return `<div class="ps-empty"><b>A loja não respondeu</b><p>Confira a conexão e tente de novo.</p><button class="chip primary" data-a="retry">${bs.I.refresh}Tentar de novo</button></div>`;
+  const msg = P.tab === 'upd' ? 'Nenhum plugin instalado tem versão nova.' : P.tab === 'inst' ? (P.q ? 'Nenhum instalado com esse nome.' : 'Nenhum plugin da loja está instalado ainda.') : P.cat && !P.q ? 'Nenhum plugin desta categoria.' : 'Nenhum plugin com esse nome.';
+  return `<div class="ps-empty"><span class="ps-emptyic">${P.tab === 'upd' ? IC.ok : IC.search}</span><b>${P.tab === 'upd' ? 'Tudo em dia' : 'Nada por aqui'}</b><p>${msg}</p><p>Não achou o que queria? <a href="${REPO}/issues/new?template=ideia.yml" target="_blank" rel="noopener">Sugira um plugin</a> ou <a href="${REPO}/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">escreva o seu</a>.</p></div>`;
+}
+function listView(list) {
+  const t = P.q.trim() ? `Resultados para “${esc(P.q.trim())}”` : P.cat ? esc(catName(P.cat)) : esc((NAV.find(n => n[0] === P.tab) || NAV[0])[1]);
+  const scope = P.q.trim() && (P.cat || P.tab !== 'all') ? `<small>em ${esc(P.cat ? catName(P.cat) : NAV.find(n => n[0] === P.tab)[1])}</small>` : '';
+  const ups = updates();
+  const upbar = P.tab === 'upd' && ups.length > 1 ? `<button class="chip primary" data-a="upall"${ups.every(p => P.busy.has(p.id)) ? ' disabled' : ''}>${IC.up}Atualizar todos</button>` : '';
+  return `<div class="ps-listhd"><h1>${t}</h1>${scope}<span class="ps-sp"></span>${list.length ? `<span class="ps-count">${plural(list.length, 'plugin', 'plugins')}</span>` : ''}${upbar}</div>
+    ${list.length ? `<div class="ps-grid">${list.map(tile).join('')}</div>` : emptyView()}`;
 }
 function paint() {
   const el = P.el; if (!el || !el.isConnected) return;
-  const st = P.remote && P.remote.store, all = catalog();
-  el.querySelectorAll('.ps-seg button').forEach(b => { b.classList.toggle('on', b.dataset.tab === P.tab); if (b.dataset.tab === 'upd') { const n = updates().length; b.innerHTML = 'Atualizações' + (n ? `<i>${n}</i>` : ''); } });
+  const st = P.remote && P.remote.store, all = catalog(), ups = updates();
+  // menu da esquerda: a aba e a categoria marcadas, os números
+  const inst = all.filter(p => p.installed).length, cats = catOrder();
+  if (P.cat && !cats.includes(P.cat)) P.cat = '';
+  const nav = NAV.map(([k, t, ic]) => { const n = k === 'upd' ? ups.length : k === 'inst' ? inst : k === 'nodes' ? all.filter(p => p.nodes).length : 0;
+    return `<button type="button" data-tab="${k}" class="${!P.sel && !P.cat && P.tab === k ? 'on' : ''}">${ic}<span>${t}</span>${n && k !== 'all' ? `<i class="${k === 'upd' ? 'hot' : ''}">${n}</i>` : ''}</button>`; }).join('')
+    + (cats.length > 1 ? `<div class="ps-navh">Categorias</div>${cats.map(c => `<button type="button" data-cat="${esc(c)}" class="ps-navcat${!P.sel && P.cat === c ? ' on' : ''}"><span>${esc(catName(c))}</span><i>${all.filter(p => p.category === c).length}</i></button>`).join('')}` : '');
+  const navEl = el.querySelector('.ps-navlist'); if (navEl.dataset.html !== nav) { navEl.innerHTML = nav; navEl.dataset.html = nav; }
   const note = el.querySelector('.ps-note');
   note.innerHTML = [
     P.error ? `<p class="bad">Não deu para consultar a loja: ${esc(P.error)}</p>` : '',
@@ -179,43 +227,40 @@ function paint() {
     st && st.local ? '<p>Catálogo lido de uma pasta local (BLUESCREEN_PLUGIN_REPO), não do GitHub.</p>' : '',
   ].join('');
   note.hidden = !note.innerHTML;
-  // resumo do catálogo no topo
-  const inst = all.filter(p => p.installed).length, nodes = all.filter(p => p.nodes).length;
-  el.querySelector('.ps-sub').innerHTML = P.remote ? [plural(all.length, 'plugin', 'plugins'), inst ? `${inst} ${inst === 1 ? 'instalado' : 'instalados'}` : '', nodes ? `${nodes} com nós no Automator` : ''].filter(Boolean).map(s => `<span>${s}</span>`).join('') : '<span>Abrindo a loja…</span>';
-  // categorias que existem no catálogo, em chips com a contagem; sem categoria nenhuma, a fileira some
-  const cats = [...new Set(all.map(p => p.category).filter(Boolean))].sort((x, y) => catName(x).localeCompare(catName(y), 'pt-BR'));
-  if (P.cat && !cats.includes(P.cat)) P.cat = '';
-  const row = el.querySelector('.ps-cats');
-  row.hidden = cats.length < 2;
-  const chips = [['', 'Todas', all.length], ...cats.map(c => [c, catName(c), all.filter(p => p.category === c).length])]
-    .map(([c, n, k]) => `<button type="button" data-cat="${esc(c)}" class="${P.cat === c ? 'on' : ''}" aria-pressed="${P.cat === c}">${esc(n)}<i>${k}</i></button>`).join('');
-  if (row.dataset.html !== chips) { row.innerHTML = chips; row.dataset.html = chips; }
-  const list = all.filter(matches), grid = el.querySelector('.ps-grid'), empty = el.querySelector('.ps-empty');
-  el.querySelector('.ps-count').textContent = P.remote && list.length !== all.length ? `${list.length} de ${all.length}` : '';
-  // plugins com versão nova, fora da aba Atualizações: um aviso com "Atualizar todos"
-  const ups = updates(), upbar = el.querySelector('.ps-upbar');
-  upbar.hidden = !ups.length || P.tab === 'upd';
-  if (!upbar.hidden) upbar.innerHTML = `<span class="ps-upic">${IC.up}</span><span>${ups.length === 1 ? `${esc(ups[0].name)} tem versão nova (v${esc(ups[0].version)})` : `${ups.length} plugins têm versão nova`}</span><button class="chip primary" data-a="upall"${ups.every(p => P.busy.has(p.id)) ? ' disabled' : ''}>${IC.up}${ups.length === 1 ? 'Atualizar' : 'Atualizar todos'}</button>`;
-  grid.innerHTML = list.map(card).join('');
-  // os cartões entram com animação quando a lista muda de verdade (aba, categoria, a loja chegou); digitar na busca não anima
-  const k = `${P.tab}|${P.cat}|${!!P.remote}`;
-  if (P.enterKey !== k) { P.enterKey = k; grid.classList.remove('enter'); void grid.offsetWidth; grid.classList.add('enter'); clearTimeout(P.enterT); P.enterT = setTimeout(() => grid.classList.remove('enter'), 900); }
-  grid.hidden = !list.length; empty.hidden = !!list.length;
-  if (!list.length) empty.innerHTML = !P.remote ? '<span class="spin"></span><p>Abrindo a loja…</p>'
-    : !all.length ? `<b>A loja não respondeu</b><p>Confira a conexão e tente de novo.</p><button class="chip primary" data-a="retry">${bs.I.refresh}Tentar de novo</button>`
-    : `<span class="ps-emptyic">${IC.search}</span><b>${P.tab === 'upd' ? 'Tudo em dia' : 'Nada por aqui'}</b><p>${P.tab === 'upd' ? 'Nenhum plugin instalado tem versão nova.' : P.tab === 'inst' ? (P.q ? 'Nenhum instalado com esse nome.' : 'Nenhum plugin da loja está instalado ainda.') : P.cat && !P.q ? 'Nenhum plugin desta categoria com este filtro.' : 'Nenhum plugin com esse nome.'}</p><p>Não achou o que queria? <a href="${REPO}/issues/new?template=ideia.yml" target="_blank" rel="noopener">Sugira um plugin</a> ou <a href="${REPO}/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">escreva o seu</a>.</p>`;
-  paintDetail();
+  el.querySelector('.ps-back').hidden = !P.sel;
+  if (P.sel && catalog().some(x => x.id === P.sel)) return paintDetail();
+  P.sel = null; P.dkey = '';
+  const home = P.tab === 'all' && !P.cat && !P.q.trim();
+  const list = home ? all : all.filter(matches);
+  const key = ['v', home, P.tab, P.cat, P.q.trim(), P.at, [...P.busy].join(','), list.map(p => p.id).join(',')].join('|');
+  if (key === P.vkey) return;
+  const view = el.querySelector('.ps-view'), viewChanged = (P.vkey || '').split('|').slice(0, 4).join('|') !== key.split('|').slice(0, 4).join('|');
+  P.vkey = key;
+  view.innerHTML = home && all.length ? homeView(all) : listView(list);
+  arrows(view);
+  if (viewChanged) { el.querySelector('.ps-scroll').scrollTop = 0; view.classList.remove('in'); void view.offsetWidth; view.classList.add('in'); }
 }
 
-// ----- painel de detalhes (direita): desliza ao abrir e fechar; trocar de plugin faz só um esmaecer curto -----
+// as setas de cada fileira apagam quando ela já está no começo ou no fim (e somem se tudo cabe)
+function arrows(view) {
+  view.querySelectorAll('.ps-row').forEach(r => {
+    const sh = r.closest('.ps-shelf'), [pv, nx] = sh.querySelectorAll('.ps-arr');
+    const upd = () => { const max = r.scrollWidth - r.clientWidth - 2; pv.disabled = r.scrollLeft <= 2; nx.disabled = r.scrollLeft >= max; sh.classList.toggle('fits', max <= 0); };
+    r.onscroll = upd; upd();
+  });
+}
+if (window.ResizeObserver) new ResizeObserver(() => P.el && P.el.isConnected && arrows(P.el)).observe(document.documentElement);
+
+// ----- página de um plugin -----
 const TRASH = '<svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
-const dActions = (p, local) => `${stateBtn(p, true)}${local && local.user ? `<button class="icon-btn" data-a="remove" title="Remover ${esc(p.name)}">${TRASH}</button>` : ''}<button class="icon-btn ps-x" data-a="close" title="Fechar (Esc)">${IC.x}</button>`;
+const dActions = (p, local) => `${stateBtn(p, true)}${local && local.user ? `<button class="icon-btn" data-a="remove" title="Remover ${esc(p.name)}">${TRASH}</button>` : ''}`;
 function facts(p) {
   const rows = [
     ['Versão', `v${esc(p.version)}${p.installed && p.installed !== p.version ? ` <small>você tem a v${esc(p.installed)}</small>` : ''}`],
+    p.made && p.made.last && p.made.last.date && ['Atualizado', esc(day(p.made.last.date))],
     p.category && ['Categoria', esc(catName(p.category))],
     p.license && ['Licença', p.license === 'NOASSERTION' ? '<span title="O autor ainda não escolheu a licença: até lá, o código não pode ser reaproveitado">a definir</span>' : esc(p.license)],
-    ['Pacote', `${plural(p.files || 0, 'arquivo', 'arquivos')} · ${size(p.size || 0)}`],
+    ['Tamanho', `${size(p.size || 0)} <small>${plural(p.files || 0, 'arquivo', 'arquivos')}</small>`],
     p.installed && p.disk && ['No disco', size(p.disk)],
     p.runtime && ['Roda com', esc(p.runtime)],
     p.minBlueScreen && ['BlueScreen', `${esc(p.minBlueScreen)} ou mais novo`],
@@ -228,48 +273,41 @@ function facts(p) {
 const links = (p, a) => `${a && a.web ? `<a class="ps-link" href="${esc(a.web)}" target="_blank" rel="noopener">${IC.link}Código no GitHub</a>` : ''}${p.server === STORE ? `<a class="ps-link" href="${esc(issue(p, 'problema'))}" target="_blank" rel="noopener" title="Abre uma issue no repositório de plugins, já com o nome e a versão">${IC.bug}Relatar problema</a><a class="ps-link" href="${esc(issue(p, 'ideia'))}" target="_blank" rel="noopener" title="Abre uma issue com a sua ideia para este plugin">${IC.idea}Sugerir melhoria</a>` : ''}`;
 function paintDetail() {
   const el = P.el; if (!el) return;
-  const wrap = el.firstElementChild, pane = el.querySelector('.ps-dpane');
-  const p = P.sel && catalog().find(x => x.id === P.sel);
-  wrap.classList.toggle('has-detail', !!p);
-  if (!p) {
-    // fechou: o conteúdo some depois que o painel terminou de deslizar
-    P.dkey = ''; clearTimeout(P.dclear); P.dclear = setTimeout(() => { if (!P.sel) pane.innerHTML = ''; }, 420);
-    return;
-  }
-  clearTimeout(P.dclear);
+  const view = el.querySelector('.ps-view');
+  const p = catalog().find(x => x.id === P.sel); if (!p) return;
   const a = P.about.get(p.id + '@' + p.version), local = bs.plugins.list.find(x => x.id === p.id);
-  const key = [p.id, p.version, p.installed, p.update, p.incompatible, p.disk, P.busy.has(p.id), !!a, !!(local && local.user)].join('|');
-  if (key === P.dkey) return; // nada mudou para este plugin (digitar na busca, por exemplo): o painel fica como está
-  const same = (P.dkey || '').split('|')[0] === p.id && P.dkey.split('|')[7] === String(!!a);
-  P.dkey = key;
-  if (same && pane.querySelector('.ps-dhead')) {
-    // o mesmo plugin mudou de estado (instalou, atualizou): só os botões e a ficha, sem redesenhar o README
-    pane.querySelector('.ps-dact').innerHTML = dActions(p, local);
-    pane.querySelector('.ps-dnm small').innerHTML = dSub(p);
-    pane.querySelector('.ps-facts').innerHTML = facts(p);
+  const key = ['d', p.id, p.version, p.installed, p.update, p.incompatible, p.disk, P.busy.has(p.id), !!a, !!(local && local.user)].join('|');
+  if (key === P.dkey) return;
+  const same = (P.dkey || '').split('|')[1] === p.id && P.dkey.split('|')[8] === String(!!a);
+  P.dkey = key; P.vkey = '';
+  if (same && view.querySelector('.ps-pg')) {
+    // o mesmo plugin mudou de estado (instalou, atualizou): só os botões e a ficha, sem refazer o README
+    view.querySelector('.ps-pgact').innerHTML = dActions(p, local);
+    view.querySelector('.ps-facts').innerHTML = facts(p);
     return;
   }
-  const swap = (pane.dataset.id || '') !== p.id && pane.innerHTML !== '';
-  pane.dataset.id = p.id;
-  pane.innerHTML = `<div class="ps-dhead">
-      ${bs.plugIcon(p, 'lg')}
-      <div class="ps-dnm"><h2>${esc(p.name)}</h2><small>${dSub(p)}</small></div>
-      <div class="ps-dact">${dActions(p, local)}</div>
-    </div>
-    <div class="ps-dbody">
+  view.innerHTML = `<div class="ps-pg">
+      <section class="ps-pghead">
+        ${bs.plugIcon(p, 'lg')}
+        <div class="ps-pgnm">
+          <h1>${esc(p.name)}</h1>
+          ${byline(p, true)}
+          <div class="ps-pgtags">${p.category ? `<button class="ps-tag" data-cat="${esc(p.category)}">${esc(catName(p.category))}</button>` : ''}${tags(p)}</div>
+        </div>
+        <div class="ps-pgact">${dActions(p, local)}</div>
+      </section>
       <p class="ps-desc">${esc(p.description || '')}</p>
-      ${byline(p, true)}
-      <dl class="ps-facts">${facts(p)}</dl>
-      <div class="ps-links">${links(p, a)}</div>
-      ${a && a.nodes && a.nodes.length ? `<section class="ps-nodes"><h3>${IC.node}${plural(a.nodes.length, 'nó', 'nós')} no Automator</h3><div>${a.nodes.map(n => `<div class="ps-node"><b>${esc(n.name || '')}</b>${n.desc ? `<p>${esc(n.desc)}</p>` : ''}${n.category && n.category !== p.name ? `<span>${esc(n.category)}</span>` : ''}</div>`).join('')}</div></section>` : ''}
-      <article class="md ps-readme">${a ? '' : '<div class="ps-skel" aria-label="Carregando"><i></i><i></i><i></i><i></i><i></i></div>'}</article>
+      <div class="ps-pgbody">
+        <div class="ps-pgmain">
+          ${a && a.nodes && a.nodes.length ? `<section class="ps-nodes"><h3>${IC.node}${plural(a.nodes.length, 'nó', 'nós')} no Automator</h3><div>${a.nodes.map(n => `<div class="ps-node"><b>${esc(n.name || '')}</b>${n.desc ? `<p>${esc(n.desc)}</p>` : ''}${n.category && n.category !== p.name ? `<span>${esc(n.category)}</span>` : ''}</div>`).join('')}</div></section>` : ''}
+          <article class="md ps-readme">${a ? '' : '<div class="ps-skel" aria-label="Carregando"><i></i><i></i><i></i><i></i><i></i></div>'}</article>
+        </div>
+        <aside class="ps-pgside"><h3>Informações</h3><dl class="ps-facts">${facts(p)}</dl><div class="ps-links">${links(p, a)}</div></aside>
+      </div>
     </div>`;
-  const body = pane.querySelector('.ps-dbody'), head = pane.querySelector('.ps-dhead');
-  body.onscroll = () => head.classList.toggle('lifted', body.scrollTop > 4);
-  if (swap) { pane.classList.remove('swap'); void pane.offsetWidth; pane.classList.add('swap'); }
-  if (a) readme(pane.querySelector('.ps-readme'), p, a, pane); else about(p);
+  if (!same) { el.querySelector('.ps-scroll').scrollTop = 0; view.classList.remove('in'); void view.offsetWidth; view.classList.add('in'); }
+  if (a) readme(view.querySelector('.ps-readme'), p, a, view); else about(p);
 }
-const dSub = (p) => [`v${esc(p.version)}`, p.installed && p.update ? `você tem a v${esc(p.installed)}` : '', p.made && p.made.last && p.made.last.date ? `atualizado ${esc(when(p.made.last.date))}` : ''].filter(Boolean).join(' · ');
 function readme(art, p, a, pane) {
   if (!(a.readme && a.readme.trim())) { art.innerHTML = '<div class="empty">Este plugin não tem README.</div>'; return; }
   // a ficha gerada no repositório (autor, versão, licença...) repete a ficha de cima: fica só no GitHub
@@ -283,7 +321,6 @@ function readme(art, p, a, pane) {
   const secoes = new Map(); art.querySelectorAll('h1, h2, h3, h4').forEach(h => { const k = slug(h.textContent); if (!secoes.has(k)) secoes.set(k, h); });
   art.querySelectorAll('a[href]').forEach(l => { const h = l.getAttribute('href'); if (h.startsWith('#')) { let k = h.slice(1); try { k = decodeURIComponent(k); } catch { /* âncora com % solto */ } const alvo = secoes.get(k.toLowerCase()); l.removeAttribute('href'); if (alvo) { l.classList.add('ps-anchor'); l.onclick = (e) => { e.preventDefault(); alvo.scrollIntoView({ block: 'start', behavior: 'smooth' }); }; } return; } if (!/^[a-z]+:/i.test(h) && a.web) l.href = a.web + '/' + h.replace(/^\.?\//, ''); l.target = '_blank'; l.rel = 'noopener'; });
   const h1 = art.querySelector('h1'); if (h1 && h1.textContent.trim().toLowerCase() === String(p.name).toLowerCase()) h1.remove(); // o nome já está no topo
-  art.classList.add('in');
 }
 // issue no repositório de plugins com o modelo e o campo "plugin" já preenchidos (formulários de issue do GitHub)
 const STORE = 'github:martindevbr/BlueScreen-Plugins';
@@ -300,64 +337,65 @@ async function about(p) {
   if (P.sel === p.id) paintDetail();
 }
 function select(id) {
-  P.sel = id;
-  P.el && P.el.querySelectorAll('.ps-card').forEach(c => c.classList.toggle('sel', c.dataset.id === id));
-  paintDetail();
-  const b = P.el && P.el.querySelector('.ps-dbody'); if (b && id) b.scrollTop = 0;
+  // a lista volta para onde estava ao sair da página do plugin
+  const sc = P.el && P.el.querySelector('.ps-scroll');
+  if (id && !P.sel && sc) P.backTop = sc.scrollTop;
+  const back = !id && P.sel;
+  P.sel = id; P.dkey = ''; P.vkey = '';
+  paint();
+  if (back && sc) sc.scrollTop = P.backTop || 0;
 }
-function open(id) {
-  bs.openTool('plugins'); bs.pages.open('plugins'); paint(); select(id);
-  const c = P.el && P.el.querySelector(`.ps-card[data-id="${CSS.escape(id)}"]`); if (c) c.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
+function open(id) { bs.openTool('plugins'); bs.pages.open('plugins'); select(id); }
 function mount(el) {
-  P.el = el; el.classList.add('ps');
-  el.innerHTML = `<div class="ps-wrap"><div class="ps-main">
+  P.el = el; el.classList.add('ps'); P.vkey = ''; P.dkey = '';
+  el.innerHTML = `<div class="ps-wrap">
+    <nav class="ps-nav" aria-label="Loja de plugins">
+      <div class="ps-brand"><span class="ps-logo">${IC.store}</span><b>Loja</b></div>
+      <div class="ps-navlist"></div>
+      <div class="ps-navfoot">
+        <a class="ps-link" href="${REPO}/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" title="Como escrever um plugin e mandar para a loja">${IC.idea}Publicar um plugin</a>
+        <a class="ps-link" href="${REPO}" target="_blank" rel="noopener" title="martindevbr/BlueScreen-Plugins">${IC.link}Repositório</a>
+      </div>
+    </nav>
+    <div class="ps-main">
       <header class="ps-top">
-        <div class="ps-hero">
-          <span class="ps-logo">${IC.store}</span>
-          <div class="ps-title"><h1>Loja de plugins</h1><p class="ps-sub"></p></div>
-          <div class="ps-tools">
-            <a class="ps-link" href="${REPO}" target="_blank" rel="noopener" title="martindevbr/BlueScreen-Plugins">${IC.link}Repositório</a>
-            <a class="ps-link" href="${REPO}/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" title="Como escrever um plugin e mandar para a loja">Publicar um plugin</a>
-            <button class="icon-btn" data-a="retry" title="Consultar a loja de novo">${bs.I.refresh}</button>
-          </div>
-        </div>
-        <div class="ps-bar">
-          <label class="ps-search">${IC.search}<input type="search" placeholder="Buscar por nome, autor ou assunto" aria-label="Buscar plugin" spellcheck="false"><span class="ps-count"></span></label>
-          <span class="seg ps-seg">${TABS.map(([k, t]) => `<button type="button" data-tab="${k}">${t}</button>`).join('')}</span>
-        </div>
-        <div class="ps-cats" aria-label="Categorias" hidden></div>
+        <button class="icon-btn ps-back" data-a="close" title="Voltar (Esc)" hidden>${IC.back}</button>
+        <label class="ps-search">${IC.search}<input type="search" placeholder="Buscar plugins" aria-label="Buscar plugin" spellcheck="false"></label>
+        <button class="icon-btn" data-a="retry" title="Consultar a loja de novo">${bs.I.refresh}</button>
       </header>
       <div class="ps-note" hidden></div>
-      <div class="ps-scroll"><div class="ps-upbar" hidden></div><div class="ps-grid"></div><div class="ps-empty" hidden></div></div>
-    </div>
-    <aside class="ps-detail" aria-label="Detalhes do plugin"><div class="ps-dpane"></div></aside></div>`;
+      <div class="ps-scroll"><div class="ps-view"></div></div>
+    </div></div>`;
   const q = el.querySelector('.ps-search input');
-  q.oninput = () => { P.q = q.value; paint(); };
+  q.value = P.q;
+  // buscar sai da página do plugin; a busca vale para a aba ou a categoria em que se está
+  q.oninput = () => { P.q = q.value; if (P.sel) { P.sel = null; P.dkey = ''; } paint(); };
   q.onkeydown = (e) => { if (e.key === 'Escape' && q.value) { e.stopPropagation(); q.value = ''; P.q = ''; paint(); } };
   el.addEventListener('click', (e) => {
-    const tab = e.target.closest('[data-tab]'); if (tab) { P.tab = tab.dataset.tab; return paint(); }
-    const cat = e.target.closest('[data-cat]'); if (cat) { P.cat = cat.dataset.cat; return paint(); }
-    const a = e.target.closest('[data-a]'), c = e.target.closest('.ps-card');
+    const tab = e.target.closest('[data-tab]'); if (tab) { P.tab = tab.dataset.tab; P.cat = ''; if (P.tab === 'all') { P.q = ''; q.value = ''; } return select(null); }
+    const cat = e.target.closest('[data-cat]'); if (cat) { P.cat = cat.dataset.cat; P.tab = 'all'; return select(null); }
+    const a = e.target.closest('[data-a]'), c = e.target.closest('.ps-tile, .ps-hero');
     const p = catalog().find(x => x.id === (c ? c.dataset.id : P.sel));
     if (a) {
       const act = a.dataset.a;
       if (act === 'install' && p) return install([p]);
+      if (act === 'open' && p) return select(p.id);
       if (act === 'upall') return install(updates());
+      if (act === 'prev' || act === 'next') { const r = a.closest('.ps-shelf').querySelector('.ps-row'); return r.scrollBy({ left: (act === 'next' ? 1 : -1) * Math.max(240, r.clientWidth - 120), behavior: 'smooth' }); }
       if (act === 'retry') return check(true, false);
       if (act === 'close') return select(null);
       if (act === 'remove' && p) { const l = bs.plugins.list.find(x => x.id === p.id); return l && bs.pluginRemove(l); }
       return;
     }
-    if (c && !e.target.closest('a')) select(P.sel === c.dataset.id ? null : c.dataset.id);
+    if (c && !e.target.closest('a, button')) select(c.dataset.id);
   });
   el.addEventListener('keydown', (e) => {
-    const c = e.target.closest && e.target.closest('.ps-card');
+    const c = e.target.closest && e.target.closest('.ps-tile');
     if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); select(c.dataset.id); }
     if (e.key === 'Escape' && P.sel) { e.stopPropagation(); select(null); }
   });
   el.addEventListener('contextmenu', (e) => {
-    const c = e.target.closest('.ps-card'); if (!c) return;
+    const c = e.target.closest('.ps-tile'); if (!c) return;
     const p = catalog().find(x => x.id === c.dataset.id); if (!p) return;
     bs.showMenu(e, [
       ...(p.update ? [{ label: `Atualizar para v${p.version}`, icon: IC.up, action: () => install([p]) }] : !p.installed ? [{ label: 'Instalar', icon: IC.down, action: () => install([p]) }] : []),

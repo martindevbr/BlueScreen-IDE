@@ -323,6 +323,34 @@ Cuidados:
 - No Estúdio (janela só dos plugins), a tela abre como aba comum, com o X.
 - `bs.pages.isPinned(id)` diz se a tela é fixa.
 
+## Gravar a tela e o som (`bs.capture`)
+
+Para gravador, transmissão ou print: a IDE captura uma tela, uma janela e o som do computador direto do Windows. O usuário não vê a janela "Escolha o que compartilhar" do navegador e não precisa marcar "Compartilhar áudio do sistema". Você monta o seletor no seu plugin, e o que chega é um `MediaStream` comum (MediaRecorder, `<video>`, WebAudio):
+
+```js
+if (await bs.capture.available()) {
+  const { screens, windows } = await bs.capture.sources();  // cada um: { id, name, thumb (data URL), ... }
+  const tela = await bs.capture.video(screens[0].id, { fps: 15, max: 1920, onEnded: () => parar() });
+  const som = await bs.capture.audio();                       // o que sai do alto-falante padrão
+  const rec = new MediaRecorder(new MediaStream([...tela.stream.getTracks(), ...som.stream.getTracks()]));
+  rec.start(4000);
+  // ...
+  tela.stop(); som.stop();
+}
+```
+
+| Chamada | O que faz |
+|---|---|
+| `bs.capture.available()` | `true` no Windows, pelo PC local. Aberta de outro aparelho pela rede, `false`: aí use o `getDisplayMedia` do navegador |
+| `bs.capture.sources({ thumbs })` | `screens` (`id` `m0`, `m1`...; `name`, `primary`, `w`, `h`, `thumb`) e `windows` (`id` `w<número>`; `name`, `app`, `minimized`, `thumb`). `thumbs: false` pula as miniaturas (mais rápido). As janelas da própria IDE ficam de fora |
+| `bs.capture.video(id, { fps, max, onEnded })` | `{ stream, width, height, stop() }`. O tamanho é o do começo (a janela que muda de tamanho entra com tarja). `onEnded` roda se a janela fechar |
+| `bs.capture.audio({ context, onEnded })` | `{ stream, node, context, rate, stop() }`: 2 canais, na taxa do Windows (48 kHz, em geral). Com `context` (um `AudioContext` seu), `node` é a fonte, para misturar com o microfone |
+
+- O microfone continua sendo o `getUserMedia`. A janela da IDE libera a permissão sem perguntar.
+- A imagem vem da tela como ela está: janela minimizada fica parada no último quadro, e vídeo protegido (DRM) pode sair preto.
+- O som é o de todo o alto-falante padrão (avisos inclusive). Se a saída mudar no meio (um fone ligado), a captura passa para a nova.
+- Por baixo são a rota `capture/sources` e o WebSocket `/api/capture/ws?src=audio|m0|w123&fps=&max=`, que manda primeiro `{"audio": {rate, ch}}` ou `{"video": {w, h}}` em texto e depois os binários: PCM float de 2 canais ou um JPEG por quadro. A rota e o WebSocket existem desde a IDE 2.2; o `bs.capture`, desde a 2.3. O AllRecording, da loja, é o exemplo completo.
+
 ## Dividir a tela (`bs.layout`)
 
 Em volta do editor há quatro regiões: embaixo (a de sempre, com Terminal, Build, Depurar e Problemas), em cima, à esquerda e à direita. Cada uma tem abas, recolhe com um clique na aba da frente e muda de tamanho pela borda. Uma região sem painéis não aparece.
