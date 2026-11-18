@@ -231,6 +231,8 @@ async function boot() {
   S.remote = !!sess.remote;
   if (sess.remote && !sess.authed) { splash(); showLogin(); return; }
   try { await start(); } finally { splash(); }
+  // a janela recarregou para aplicar um plugin: a tela de onde ele foi ligado (a loja) volta para a frente
+  if (S.reopenPage) { BS.pages.open(S.reopenPage); S.reopenPage = null; }
 }
 async function start() {
   S.started = true;
@@ -240,7 +242,7 @@ async function start() {
   splash('Carregando plugins…');
   await BS.plugins.load(cfg.plugins); // plugins antes de tudo: eles registram painéis, atalhos e cards
   const reopen = store.get('reopenTool', null);
-  if (reopen) { store.set('reopenTool', null); if (BS.tools.get(reopen) && !BS.tools.get(reopen).toggle) S.tool = reopen; }
+  if (reopen) { store.set('reopenTool', null); const d = BS.tools.get(reopen); if (d && !d.toggle) { if (d.page && !d.render) S.reopenPage = d.page; else S.tool = reopen; } }
   if (DOC) return docMode(DOC);
   if (STUDIO) return studioMode();
   renderStrip();
@@ -988,7 +990,7 @@ function renderStrip() {
     b.oncontextmenu = (e) => { e.preventDefault(); const d = BS.tools.get(b.dataset.tool); if (!d) return;
       // painel de plugin: de qual plugin ele é, para achar (e remover) quem o colocou na barra
       const p = d.plugin && BS.plugins.list.find(x => x.id === d.plugin);
-      const mine = p ? [{ label: `Do plugin ${p.name}${p.user ? '' : ' (vem com o BlueScreen)'}`, icon: I.plug || I.gear, action: () => { setTool('plugins'); setTimeout(() => { const c = document.querySelector(`.plug[data-id="${CSS.escape(p.id)}"]`); if (c) { c.scrollIntoView({ block: 'center' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1600); } }, 60); } },
+      const mine = p ? [{ label: `Do plugin ${p.name}${p.user ? '' : ' (vem com o BlueScreen)'}`, icon: I.plug || I.gear, action: () => { if (BS.pluginStore && BS.pluginStore.installed) return BS.pluginStore.installed(p.id); setTool('plugins'); setTimeout(() => { const c = document.querySelector(`.plug[data-id="${CSS.escape(p.id)}"]`); if (c) { c.scrollIntoView({ block: 'center' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1600); } }, 60); } },
         ...(p.user ? [{ label: `Remover o plugin ${p.name}…`, icon: TRASH_ICON, action: () => pluginRemove(p) }] : [])] : [];
       showMenu(e, [{ label: 'Ocultar da barra', icon: I.eyeOff, action: () => stripHide(d.id, true) }, { label: 'Reorganizar a barra…', icon: I.grip, action: () => stripArrange(true) }, ...mine], d.title); };
   });
@@ -1110,7 +1112,7 @@ function renderTool() {
   $('#toolTitle').textContent = t.title; $('#toolSub').textContent = ''; $('#toolActions').innerHTML = ''; $('#toolBody').onscroll = null;
   // painel de plugin que só funciona com um token do Cofre ("required" no plugin.json): a configuração no lugar dele
   if (t.plugin && BS.vault && BS.vault.gate && BS.vault.gate(t.plugin, $('#toolBody'), t)) return;
-  try { t.render(); }
+  try { if (t.render) t.render(); else if (t.page) BS.pages.open(t.page); }
   catch (e) { console.error(e); $('#toolBody').innerHTML = `<div class="errbox"><b>O painel ${esc(t.title)} falhou.</b><div>${esc(e.message)}</div></div>`; }
 }
 function renderProject() {
@@ -2596,17 +2598,21 @@ function renderPlugins() {
     const btns = pluginButtons(p); el.querySelectorAll('.pl-btn').forEach(b => b.onclick = () => btns[+b.dataset.b].action());
     const more = el.querySelector('.pl-more');
     if (more) more.onclick = () => { const open = el.classList.toggle('open'); more.textContent = open ? 'menos' : 'mais'; };
-    el.oncontextmenu = (e) => showMenu(e, [{ label: p.enabled ? 'Desligar' : 'Ligar', action: () => pluginsPost({ id: p.id, enabled: !p.enabled }) }, '-', { label: 'Mostrar pasta', icon: I.explorer, action: () => reveal(p.path) },
+    el.oncontextmenu = (e) => pluginMenu(e, p);
+  });
+  plugClamp(body);
+  // a loja (plugstore.js): versão e "Atualizar" nos instalados; o catálogo fica na aba fixa do painel
+  if (BS.pluginStore) BS.pluginStore.decorate(body);
+}
+// menu do botão direito de um plugin instalado (painel Plugins e lista de instalados da loja)
+function pluginMenu(e, p) {
+  showMenu(e, [{ label: p.enabled ? 'Desligar' : 'Ligar', action: () => pluginsPost({ id: p.id, enabled: !p.enabled }) }, '-', { label: 'Mostrar pasta', icon: I.explorer, action: () => reveal(p.path) },
       ...(p.settingsSchema && p.settingsSchema.length ? [{ label: 'Configurações…', icon: I.gear, action: () => pluginSettings(p.id) }] : []),
       ...(BS.vault && p.vaultKeys && p.vaultKeys.length ? [{ label: 'Cofre…', icon: VAULT_ICON, action: () => BS.vault.open({ plugin: p.id, key: p.vaultKeys[0].key }) }] : []),
       { label: 'Pasta de dados', icon: I.explorer, action: async () => { try { const i = await api('plugin/info', { plugin: p.id }, { method: 'POST', body: '{}' }); if (!i.exists) return toast(`${p.name} ainda não guardou nada`); reveal(i.dataDir); } catch (e) { toast(e.message); } } },
       { label: 'Apagar dados do plugin…', icon: I.x, action: () => pluginWipe(p) }, ...(BS.pluginStore ? BS.pluginStore.menu(p) : []),
       ...(p.user ? ['-', { label: 'Remover…', icon: TRASH_ICON, action: () => pluginRemove(p) }] : []),
       ...(() => { const b = pluginButtons(p); return b.length ? ['-', ...b] : []; })()], `${p.name} v${p.version}`);
-  });
-  plugClamp(body);
-  // a loja (plugstore.js): versão e "Atualizar" nos instalados; o catálogo fica na aba fixa do painel
-  if (BS.pluginStore) BS.pluginStore.decorate(body);
 }
 // ícone do plugin: a imagem do plugin.json ou, sem ela, um padrão com as iniciais numa cor tirada do id
 function plugIcon(p, cls = '') {
@@ -2658,6 +2664,12 @@ function pluginRemove(p) {
   });
 }
 BS.pluginRemove = pluginRemove;
+// para a lista de instalados da loja (plugstore.js): ligar/desligar, botões de outros plugins, menu e pastas
+BS.pluginToggle = (p, on) => pluginsPost({ id: p.id, enabled: on === undefined ? !p.enabled : !!on });
+BS.pluginsReload = () => pluginsPost({ reload: true });
+BS.pluginButtons = (p) => pluginButtons(p);
+BS.pluginMenu = (e, p) => pluginMenu(e, p);
+BS.pluginsDir = () => reveal(BS.plugins.dirs[1] || BS.plugins.dirs[0]);
 // recarrega a janela para aplicar um plugin: antes, grava as abas com alterações; se alguma não gravar (erro,
 // conflito), não recarrega e avisa, em vez de jogar o texto fora
 async function reloadSaved(ms) {

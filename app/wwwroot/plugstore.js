@@ -209,11 +209,58 @@ function listView(list) {
   return `<div class="ps-listhd"><h1>${t}</h1>${scope}<span class="ps-sp"></span>${list.length ? `<span class="ps-count">${plural(list.length, 'plugin', 'plugins')}</span>` : ''}${upbar}</div>
     ${list.length ? `<div class="ps-grid">${list.map(tile).join('')}</div>` : emptyView()}`;
 }
+// ----- Instalados: todos os plugins da IDE (os que vêm com ela também), com o interruptor de ligar e desligar -----
+const GEAR = '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>';
+const FOLDER = '<svg class="i" viewBox="0 0 24 24"><path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>';
+const locals = () => bs.plugins.list || [];
+function irow(p, rp) {
+  const o = rp.get(p.id), btns = bs.pluginButtons ? bs.pluginButtons(p) : [], cfg = p.settingsSchema && p.settingsSchema.length;
+  return `<div class="ps-irow${p.enabled ? '' : ' off'}${p.error ? ' bad' : ''}${o ? ' link' : ''}" data-pid="${esc(p.id)}"${o ? ' title="Ver na loja"' : ''}>
+    ${bs.plugIcon(p)}
+    <div class="ps-itx">
+      <div class="ps-inm"><b>${esc(p.name)}</b><span class="ps-iver">v${esc(p.version)}</span>${p.user ? '' : '<span class="ps-iorig">vem com o BlueScreen</span>'}</div>
+      ${p.description ? `<p>${esc(p.description)}</p>` : ''}
+      ${p.requires && p.requires.length ? `<p class="ps-ireq">Precisa de: ${p.requires.map(esc).join(', ')}</p>` : ''}
+      ${p.error ? `<p class="ps-ierr">${esc(p.error)}</p>` : ''}
+    </div>
+    <div class="ps-iact">
+      ${o && (o.update || P.busy.has(o.id)) ? stateBtn(o) : ''}
+      ${btns.map((b, i) => `<button class="icon-btn" data-ib="${i}" title="${esc(b.label)}">${b.icon || IC.store}</button>`).join('')}
+      ${cfg ? `<button class="icon-btn" data-a="cfg" title="Configurações de ${esc(p.name)}">${GEAR}</button>` : ''}
+      ${p.user ? `<button class="icon-btn" data-a="del" title="Remover ${esc(p.name)}">${TRASH}</button>` : ''}
+      <button class="sw2${p.enabled ? ' on' : ''}" data-a="sw" role="switch" aria-checked="${!!p.enabled}" title="${p.enabled ? 'Desligar' : 'Ligar'} ${esc(p.name)}"><span class="kn"></span></button>
+    </div>
+  </div>`;
+}
+function installedView() {
+  const q = P.q.trim().toLowerCase(), all = locals(), rp = new Map(catalog().map(p => [p.id, p]));
+  const list = all.filter(p => !q || q.split(/\s+/).every(w => [p.name, p.description, p.id].join(' ').toLowerCase().includes(w)));
+  const on = all.filter(p => p.enabled && !p.error).length, ups = updates();
+  return `<div class="ps-listhd"><h1>${q ? `Resultados para “${esc(P.q.trim())}”` : 'Instalados'}</h1><small>${on} de ${all.length} ligados</small><span class="ps-sp"></span>
+      ${ups.length > 1 ? `<button class="chip primary" data-a="upall"${ups.every(p => P.busy.has(p.id)) ? ' disabled' : ''}>${IC.up}Atualizar todos</button>` : ''}
+      <button class="icon-btn" data-a="dir" title="Abrir a pasta dos seus plugins">${FOLDER}</button>
+      <button class="icon-btn" data-a="reload" title="Recarregar os plugins">${bs.I.refresh}</button></div>
+    ${list.length ? `<div class="ps-inst">${list.map(p => irow(p, rp)).join('')}</div>` : `<div class="ps-empty"><span class="ps-emptyic">${IC.search}</span><b>Nada por aqui</b><p>Nenhum plugin instalado com esse nome.</p></div>`}`;
+}
+// liga ou desliga: a janela recarrega para aplicar e volta para esta lista
+function toggleLocal(p, sw) {
+  if (!bs.pluginToggle || sw.disabled) return;
+  sw.disabled = true; sw.classList.toggle('on'); sw.classList.add('busy'); sw.setAttribute('aria-checked', String(!p.enabled));
+  bs.store.set('psTab', 'inst');
+  setTimeout(() => bs.pluginToggle(p), 180);
+}
+function installed(id) {
+  P.tab = 'inst'; P.cat = ''; P.q = ''; const q = P.el && P.el.querySelector('.ps-search input'); if (q) q.value = '';
+  bs.openTool('plugins'); bs.pages.open('plugins'); select(null);
+  const r = id && P.el && P.el.querySelector(`.ps-irow[data-pid="${CSS.escape(id)}"]`);
+  if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1600); }
+}
+
 function paint() {
   const el = P.el; if (!el || !el.isConnected) return;
   const st = P.remote && P.remote.store, all = catalog(), ups = updates();
   // menu da esquerda: a aba e a categoria marcadas, os números
-  const inst = all.filter(p => p.installed).length, cats = catOrder();
+  const inst = locals().length, cats = catOrder();
   if (P.cat && !cats.includes(P.cat)) P.cat = '';
   const nav = NAV.map(([k, t, ic]) => { const n = k === 'upd' ? ups.length : k === 'inst' ? inst : k === 'nodes' ? all.filter(p => p.nodes).length : 0;
     return `<button type="button" data-tab="${k}" class="${!P.sel && !P.cat && P.tab === k ? 'on' : ''}">${ic}<span>${t}</span>${n && k !== 'all' ? `<i class="${k === 'upd' ? 'hot' : ''}">${n}</i>` : ''}</button>`; }).join('')
@@ -230,13 +277,13 @@ function paint() {
   el.querySelector('.ps-back').hidden = !P.sel;
   if (P.sel && catalog().some(x => x.id === P.sel)) return paintDetail();
   P.sel = null; P.dkey = '';
-  const home = P.tab === 'all' && !P.cat && !P.q.trim();
-  const list = home ? all : all.filter(matches);
-  const key = ['v', home, P.tab, P.cat, P.q.trim(), P.at, [...P.busy].join(','), list.map(p => p.id).join(',')].join('|');
+  const home = P.tab === 'all' && !P.cat && !P.q.trim(), mine = P.tab === 'inst' && !P.cat;
+  const list = home || mine ? all : all.filter(matches);
+  const key = ['v', home, P.tab, P.cat, P.q.trim(), P.at, [...P.busy].join(','), list.map(p => p.id).join(','), mine ? locals().map(p => p.id + p.enabled + !!p.error).join(',') : ''].join('|');
   if (key === P.vkey) return;
   const view = el.querySelector('.ps-view'), viewChanged = (P.vkey || '').split('|').slice(0, 4).join('|') !== key.split('|').slice(0, 4).join('|');
   P.vkey = key;
-  view.innerHTML = home && all.length ? homeView(all) : listView(list);
+  view.innerHTML = mine ? installedView() : home && all.length ? homeView(all) : listView(list);
   arrows(view);
   if (viewChanged) { el.querySelector('.ps-scroll').scrollTop = 0; view.classList.remove('in'); void view.offsetWidth; view.classList.add('in'); }
 }
@@ -372,6 +419,19 @@ function mount(el) {
   q.oninput = () => { P.q = q.value; if (P.sel) { P.sel = null; P.dkey = ''; } paint(); };
   q.onkeydown = (e) => { if (e.key === 'Escape' && q.value) { e.stopPropagation(); q.value = ''; P.q = ''; paint(); } };
   el.addEventListener('click', (e) => {
+    const row = e.target.closest('.ps-irow');
+    if (row) {
+      const lp = locals().find(x => x.id === row.dataset.pid), o = catalog().find(x => x.id === row.dataset.pid), b = e.target.closest('[data-a], [data-ib]');
+      if (!lp) return;
+      if (!b) return o && select(o.id);
+      if (b.dataset.ib !== undefined) { const bt = bs.pluginButtons(lp)[+b.dataset.ib]; return bt && bt.action(); }
+      const act = b.dataset.a;
+      if (act === 'sw') return toggleLocal(lp, b);
+      if (act === 'cfg') return bs.pluginSettings(lp.id);
+      if (act === 'del') return bs.pluginRemove(lp);
+      if (act === 'install' && o) return install([o]);
+      return;
+    }
     const tab = e.target.closest('[data-tab]'); if (tab) { P.tab = tab.dataset.tab; P.cat = ''; if (P.tab === 'all') { P.q = ''; q.value = ''; } return select(null); }
     const cat = e.target.closest('[data-cat]'); if (cat) { P.cat = cat.dataset.cat; P.tab = 'all'; return select(null); }
     const a = e.target.closest('[data-a]'), c = e.target.closest('.ps-tile, .ps-hero');
@@ -383,6 +443,8 @@ function mount(el) {
       if (act === 'upall') return install(updates());
       if (act === 'prev' || act === 'next') { const r = a.closest('.ps-shelf').querySelector('.ps-row'); return r.scrollBy({ left: (act === 'next' ? 1 : -1) * Math.max(240, r.clientWidth - 120), behavior: 'smooth' }); }
       if (act === 'retry') return check(true, false);
+      if (act === 'dir') return bs.pluginsDir && bs.pluginsDir();
+      if (act === 'reload') { bs.store.set('psTab', 'inst'); return bs.pluginsReload && bs.pluginsReload(); }
       if (act === 'close') return select(null);
       if (act === 'remove' && p) { const l = bs.plugins.list.find(x => x.id === p.id); return l && bs.pluginRemove(l); }
       return;
@@ -395,6 +457,8 @@ function mount(el) {
     if (e.key === 'Escape' && P.sel) { e.stopPropagation(); select(null); }
   });
   el.addEventListener('contextmenu', (e) => {
+    const row = e.target.closest('.ps-irow');
+    if (row && bs.pluginMenu) { const lp = locals().find(x => x.id === row.dataset.pid); if (lp) { bs.store.set('psTab', 'inst'); return bs.pluginMenu(e, lp); } }
     const c = e.target.closest('.ps-tile'); if (!c) return;
     const p = catalog().find(x => x.id === c.dataset.id); if (!p) return;
     bs.showMenu(e, [
@@ -406,10 +470,22 @@ function mount(el) {
   paint();
 }
 
-bs.pluginStore = { check, decorate, menu, install, open, get state() { return P.remote; } };
+bs.pluginStore = { check, decorate, menu, install, open, installed, get state() { return P.remote; } };
 if (!bs.doc) {
   // a loja é a aba fixa do painel Plugins: o painel (app.js) ganha a tela
-  const tool = bs.tools.get('plugins'); if (tool) tool.page = 'plugins';
+  // sem o painel da esquerda: o ícone Plugins abre só a loja, e os instalados (com o interruptor) ficam na aba Instalados
+  const tool = bs.tools.get('plugins'); if (tool) { tool.page = 'plugins'; tool.render = null; }
+  // a loja ocupa a largura toda: com ela na frente, o painel da esquerda recolhe; ao trocar de aba, volta como estava
+  bs.hooks.on('tab:activate', (t) => {
+    const app = document.getElementById('app'); if (!app) return;
+    if (t && t.page === 'plugins') { if (!app.classList.contains('no-tool')) { P.hidTool = true; app.classList.add('no-tool'); } else return; }
+    else if (P.hidTool) { P.hidTool = false; app.classList.remove('no-tool'); }
+    else return;
+    if (typeof btnState === 'function') btnState();
+    window.dispatchEvent(new Event('resize'));
+  });
+  // voltou de um recarregar pedido daqui (ligar, desligar, recarregar): abre de novo nos Instalados
+  if (bs.store.get('psTab', null)) { P.tab = bs.store.get('psTab', 'all'); bs.store.set('psTab', null); }
   bs.pages.register({ id: 'plugins', title: 'Loja de plugins', icon: IC.store, pinned: true, render: mount, show() { paint(); if (!P.loading && (!P.remote || Date.now() - P.at > 120000)) check(false); } });
   // consulta logo depois de abrir, de meia em meia hora e ao voltar para a janela depois de um tempo
   setTimeout(() => check(false), 4000);

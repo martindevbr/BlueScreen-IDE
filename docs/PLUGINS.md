@@ -4,7 +4,7 @@ Um plugin acrescenta coisas ao BlueScreen sem mexer no núcleo: painéis, atalho
 
 O padrão é o plugin sem compilação (`ui.js`, e `server.js` / `server.py` quando precisar). Servidor compilado (`server.exe`) é para os casos em que o nativo faz diferença: veja [PLUGINS-NATIVOS.md](PLUGINS-NATIVOS.md). Para levar um plugin antigo com `server.exe` para a arquitetura sem compilação, ou decidir que ele fica nativo, veja [MIGRACAO-PLUGINS.md](MIGRACAO-PLUGINS.md).
 
-Plugins ligam e desligam na aba **Plugins** (`Alt+7`), sem recompilar o BlueScreen. Desligado, um plugin some por inteiro: painel, atalhos, status bar, card, marcas na árvore, ações, contribuições ao build, rotas da API e o processo do servidor. A escolha fica em `~/.bluescreen/plugins.json`.
+Plugins ligam e desligam em **Plugins** (`Alt+7`) › **Instalados**, sem recompilar o BlueScreen. Desligado, um plugin some por inteiro: painel, atalhos, status bar, card, marcas na árvore, ações, contribuições ao build, rotas da API e o processo do servidor. A escolha fica em `~/.bluescreen/plugins.json`.
 
 Os plugins da sua pasta também podem ser **removidos**: a lixeira no cartão (ou botão direito › **Remover…**) manda a pasta para a Lixeira do Windows, e dá para restaurar de lá. Se você marcar a opção, a pasta de dados do plugin vai junto. Os plugins que vêm com o BlueScreen só desligam. O IAMaker nunca altera nem sobrepõe um deles: ao editar, cria uma versão sua, um plugin à parte com id próprio (`<id>-meu`), e desliga o original. Remover essa versão faz o IAMaker ligar o original de novo. Uma cópia com o mesmo id do original (de versões antigas do IAMaker) vale no lugar dele, e removê-la devolve a versão original. Pela API: `POST plugins/uninstall { id, data }`.
 
@@ -33,7 +33,7 @@ Cada pasta tem:
 | `plugin.json` | `{ "id", "name", "description", "version", "author", "license", "category", "keywords", "minBlueScreen", "order", "icon": "icon.svg", "requires": ["outro-plugin"], "hooks": { "build.info": "meu/build-info" }, "settings": [...], "vault": [...], "server": "server.js" }`. `author`, `license` (SPDX, como `MIT`), `category`, `keywords` e `contributors` aparecem na loja; `minBlueScreen` (`"2.1.33"`) é a versão mais antiga do BlueScreen em que o plugin funciona: numa IDE mais velha, a loja mostra o que falta no lugar do botão de instalar e não oferece a atualização. Na loja oficial esses campos são obrigatórios (veja [Publicar um plugin](#publicar-um-plugin)) |
 | `automator.json` (opcional) | nós que o plugin acrescenta ao Automator: campos e o programa que roda. Um campo com `"choicesFrom": "<id>/<rota>"` vira uma lista preenchida por uma rota do servidor do plugin (`{ choices: [{ value, label }] }`). Veja [Crie nós com um plugin](AUTOMACOES.md#crie-nós-com-um-plugin) |
 | `bs.footer.set(id, { icon, text, title, run })` | um resumo curto na barra de baixo (a Agenda mostra o próximo compromisso); `bs.footer.remove(id)` tira. Janela registrada com `footer: true` em `bs.bubble.register` é a janela de um item do rodapé: não entra na lista do balão, não ganha ícone nem cartão no Estúdio e abre no meio da tela |
-| `icon.svg` ou `icon.png` (opcional) | o ícone na aba Plugins e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
+| `icon.svg` ou `icon.png` (opcional) | o ícone na loja, na lista de instalados e no servidor de plugins: SVG, PNG, JPG ou WebP, até 64 KB, de preferência quadrado. Sem o campo `icon`, vale o `icon.svg`/`icon.png` da pasta; sem nenhum, a IDE desenha um com as iniciais do nome |
 | `ui.js` (opcional) | roda na página dentro de `function (bs, plugin) { ... }` e enxerga tudo do núcleo (`S`, `api`, `$`, `esc`, `toast`, `store`, `I`, `TI`, `monaco`, `editor`, `openFile`, `openTool`...) |
 | `style.css` (opcional) | injetado junto com o `ui.js` |
 | `server.exe`, `server.js`, `server.py` ou `server.ps1` (opcional) | o servidor do plugin, iniciado quando o plugin liga e encerrado quando desliga ou quando o BlueScreen fecha. Os scripts rodam com o Node.js, o Python ou o PowerShell que a IDE acha (PATH ou janela SDKs). O campo `server` escolhe outro arquivo (`"dist/main.js"`) ou um comando inteiro (`{ "command": "java", "args": ["-jar", "srv.jar"] }`) |
@@ -41,7 +41,7 @@ Cada pasta tem:
 
 ## Pasta de dados
 
-Cada plugin tem uma pasta só sua em `~/.bluescreen/plugin-data/<id>/`, fora da pasta do plugin: atualizar, reinstalar ou desinstalar o plugin não apaga o que ele guardou. Na aba Plugins, botão direito no plugin › **Pasta de dados** abre a pasta e **Apagar dados do plugin…** zera tudo.
+Cada plugin tem uma pasta só sua em `~/.bluescreen/plugin-data/<id>/`, fora da pasta do plugin: atualizar, reinstalar ou desinstalar o plugin não apaga o que ele guardou. Em Plugins › Instalados, botão direito no plugin › **Pasta de dados** abre a pasta e **Apagar dados do plugin…** zera tudo.
 
 | | |
 |---|---|
@@ -54,7 +54,7 @@ Os segredos nunca respondem pela rede local: um celular conectado pela rede vê 
 
 ## Configurações (`settings` no `plugin.json`)
 
-O plugin declara os campos e a IDE desenha o formulário: aparece uma engrenagem no cartão do plugin, na aba Plugins.
+O plugin declara os campos e a IDE desenha o formulário: aparece uma engrenagem na linha do plugin, em Plugins › Instalados.
 
 ```json
 "settings": [
@@ -111,7 +111,7 @@ await plugin.files.write('cache/repos.json', repos);
 
 O cofre guarda tokens da IDE (GitHub, OpenAI, Jira, a API da empresa) **uma vez só** e libera cada um para os plugins que você escolher. É diferente de `plugin.secrets`, que é de um plugin só: um segredo do cofre pode servir a vários plugins, e você controla para onde ele vai.
 
-Abre pelo ícone da chave na barra da esquerda (**Alt+8**, se nenhum plugin usar essa tecla; um número no ícone avisa que há plugins pedindo acesso), pela faixa **Cofre de credenciais** no topo da aba Plugins, pelo **Buscar em tudo** ("Cofre") ou pelo botão direito num plugin › **Cofre…**. Fica em `~/.bluescreen/vault.json`.
+Abre pelo ícone da chave na barra da esquerda (**Alt+8**, se nenhum plugin usar essa tecla; um número no ícone avisa que há plugins pedindo acesso), pelo **Buscar em tudo** ("Cofre") ou pelo botão direito num plugin › **Cofre…**. Fica em `~/.bluescreen/vault.json`.
 
 ### Para quem usa
 
@@ -458,7 +458,8 @@ O núcleo chama a rota indicada (POST, como chamada interna) e usa a resposta. G
 O catálogo oficial é o repositório [martindevbr/BlueScreen-Plugins](https://github.com/martindevbr/BlueScreen-Plugins): cada pasta de `plugins/` é um plugin, com o nome igual ao `id` do `plugin.json`.
 
 **Na IDE:**
-- **Onde fica.** O painel **Plugins** (`Alt+7`) mostra os instalados na esquerda e abre a **Loja de plugins** na área grande, numa aba fixa.
+- **Onde fica.** O ícone **Plugins** (`Alt+7`) abre a **Loja de plugins** numa aba fixa, com a largura toda (o painel da esquerda recolhe enquanto ela está na frente). No menu dela: **Início** (um destaque e fileiras por categoria), **Instalados**, **Atualizações**, **Com nós** e as categorias.
+- **Instalados.** Todos os plugins da IDE, inclusive os que vêm com ela, cada um com o interruptor de ligar e desligar, a engrenagem das configurações, a lixeira (os seus), o **Atualizar** quando há versão nova e o menu do botão direito (pasta, dados, cofre). Ligar ou desligar recarrega a janela e volta para esta lista.
 - **Loja.** Busca (pelo nome, descrição, autor, categoria e palavras-chave), filtros (**Todos**, **Instalados**, **Atualizações**, **Com nós**), a lista de **categorias** e um cartão por plugin. O cartão mostra a categoria e diz quem publicou o plugin (o autor do primeiro commit da pasta dele, com a foto do GitHub) e, menor, quem fez a última edição e quando; o tamanho do pacote; quantos nós o plugin acrescenta ao Automator; e se o servidor dele precisa de Node.js, Python ou PowerShell.
 - **Página do plugin.** Clique no cartão: descrição, README, nós do Automator, tamanho, licença, o link do código no GitHub e os atalhos **Relatar problema** e **Sugerir melhoria**, que abrem uma issue no repositório de plugins já com o nome e a versão. Os links do sumário do README (`#seção`) rolam até a seção.
 - **Compatibilidade.** Um plugin com `minBlueScreen` maior que a versão da IDE aparece com "Precisa do BlueScreen X" no lugar do **Instalar**; a instalação é recusada com o motivo, e a versão nova de um plugin instalado não vira aviso de atualização até a IDE ser atualizada.

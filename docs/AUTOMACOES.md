@@ -731,7 +731,7 @@ Janelas abertas com `--doc` continuam fechando normalmente. Nos modos `--web` e 
 
 ## Loja de plugins
 
-A Biblioteca de plugins deu lugar à **Loja de plugins**, que abre junto com o painel Plugins (`Alt+7`). Veja [Loja de plugins](PLUGINS.md#loja-de-plugins).
+A Biblioteca de plugins deu lugar à **Loja de plugins**, que abre pelo ícone Plugins (`Alt+7`). Veja [Loja de plugins](PLUGINS.md#loja-de-plugins).
 
 ## Dados e testes
 

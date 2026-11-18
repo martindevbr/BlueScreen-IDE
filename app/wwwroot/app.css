@@ -1615,6 +1615,25 @@ button.ps-tag { cursor: pointer; } button.ps-tag:hover { background: var(--sel);
 .ps-empty b { font-size: 14px; color: var(--fg); } .ps-empty p { margin: 0; max-width: 380px; line-height: 1.5; }
 .ps-empty a, .ps .ps-readme a.ps-anchor { color: var(--accent-2); cursor: pointer; }
 .ps-emptyic { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--hover); color: var(--muted); } .ps-emptyic .i { width: 20px; height: 20px; }
+/* Instalados: uma linha por plugin da IDE, com o interruptor (no lugar do antigo painel Plugins da esquerda) */
+.ps-inst { display: grid; gap: 6px; }
+.ps-irow { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--ps-card); transition: background-color .12s, border-color .12s, opacity .12s; }
+.ps-irow.link { cursor: pointer; } .ps-irow.link:hover { background: var(--ps-card-h); border-color: var(--line-2); }
+.ps-irow .pl-icon { width: 40px; height: 40px; border-radius: 10px; }
+.ps-irow.off .pl-icon { filter: grayscale(1); opacity: .55; } .ps-irow.off .ps-itx { opacity: .7; }
+.ps-irow.bad { border-color: color-mix(in srgb, var(--del) 45%, var(--line)); }
+.ps-irow.flash { animation: plug-flash 1.6s ease; }
+.ps-itx { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ps-inm { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ps-inm b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ps-iver { flex: none; color: var(--muted); font: 11px var(--mono); }
+.ps-iorig { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ps-itx p { margin: 0; color: var(--fg-2); font-size: 12px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-itx .ps-ireq { color: var(--muted); font-size: 11.5px; }
+.ps-itx .ps-ierr { color: var(--del); white-space: normal; overflow-wrap: anywhere; }
+.ps-iact { flex: none; display: flex; align-items: center; gap: 4px; }
+.ps-iact .sw2 { margin: 0 0 0 6px; }
+.ps-iact .sw2.busy { opacity: .6; pointer-events: none; }
 /* quem publicou o plugin (primeiro commit) e, menor, a última edição */
 .ps-by { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ps-av { width: 22px; height: 22px; border-radius: 50%; flex: none; display: inline-grid; place-items: center; object-fit: cover; background: var(--sel); color: var(--fg); font-size: 11px; font-weight: 600; }
@@ -1681,6 +1700,10 @@ button.ps-tag { cursor: pointer; } button.ps-tag:hover { background: var(--sel);
   .ps-pgnm { flex: 1 1 0; } .ps-pgnm h1 { font-size: 20px; }
   .ps-pgact { flex-basis: 100%; } .ps-pgact .ps-act { flex: 1; }
   .ps-facts { grid-template-columns: 1fr 1fr; }
+  .ps-irow { flex-wrap: wrap; gap: 10px 12px; } .ps-itx { flex-basis: calc(100% - 54px); } .ps-iact { flex-basis: 100%; justify-content: flex-end; }
+  .ps-iorig { display: none; }
+  .ps-listhd { flex-wrap: nowrap; gap: 8px; } .ps-listhd h1 { font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ps-listhd small { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 @media (prefers-reduced-motion: reduce) { .ps-view.in { animation: none; } }
 
