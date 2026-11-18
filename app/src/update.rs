@@ -401,8 +401,10 @@ async fn apply(info: Value) -> Result<(), String> {
 const UPD_DIR: &str = ".bs-update";
 const MANIFEST: &str = ".bluescreen-files";
 /// plugins que já vieram com o BlueScreen e saíram dele: a pasta deles sai da instalação na próxima atualização,
-/// mesmo quando o manifesto não os conhece (instalações que trocaram de versão antes de o manifesto existir)
-const RETIRED_PLUGINS: &[&str] = &["agents"];
+/// mesmo quando o manifesto não os conhece (instalações que trocaram de versão antes de o manifesto existir).
+/// QAutils e IAMaker passaram para a loja (instalados em ~/.bluescreen/plugins, que nunca é tocada aqui); o
+/// Navegador virou nó nativo do Automator. A cópia que sobrar na pasta do programa também é ignorada ao carregar.
+pub const RETIRED_PLUGINS: &[&str] = &["agents", "qautils", "iamaker", "navegador"];
 /// marcador gravado ao lado do exe quando ele foi compilado do código (Instalar BlueScreen.cmd ou o atualizador
 /// compilando): essa instalação se atualiza pelo git e nunca recebe o Release por cima (ver check)
 pub const LOCAL_BUILD: &str = "local-build.txt";
@@ -619,6 +621,20 @@ fn plugin_ui(src: &Path, dst: &Path) {
     }
 }
 
+/// apaga da pasta do programa os plugins que deixaram de vir junto (ver RETIRED_PLUGINS). Só a pasta do programa:
+/// quem instalou pela loja tem o plugin em ~/.bluescreen/plugins, e os dados dele continuam onde estavam.
+fn retire_plugins(dir: &Path) {
+    for id in RETIRED_PLUGINS {
+        let p = dir.join("plugins").join(id);
+        if p.is_dir() {
+            match std::fs::remove_dir_all(&p) {
+                Ok(()) => log(format!("plugin {id} deixou de vir com o BlueScreen: pasta removida da instalação")),
+                Err(e) => log(format!("plugin {id}: não consegui remover {} ({e})", p.display())),
+            }
+        }
+    }
+}
+
 /// apaga os *.old-<n>.exe/.dll deixados por uma atualização (já não estão em uso)
 pub fn cleanup() {
     fn walk(d: &Path, depth: u32) {
@@ -632,6 +648,7 @@ pub fn cleanup() {
     let dir = app_dir();
     // troca interrompida: volta ao que era; sobras de uma troca (new\, old\ sem diário, versões anteriores presas)
     if let Err(e) = cleanup_update(&dir) { log(format!("Limpeza adiada: {e}")); return; }
+    retire_plugins(&dir);
     walk(&dir, 2);
     walk(&dir.join("target").join("release"), 0);
 }
@@ -650,6 +667,15 @@ mod tests {
     fn test_dir() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("bs-recovery-{}-{:08x}", std::process::id(), rand::random::<u32>()));
         std::fs::create_dir_all(&d).unwrap(); d
+    }
+    #[test]
+    fn retired_plugins_leave_the_install() {
+        let d = test_dir();
+        for id in ["qautils", "iamaker", "navegador", "sheets"] { std::fs::create_dir_all(d.join("plugins").join(id)).unwrap(); std::fs::write(d.join("plugins").join(id).join("plugin.json"), "{}").unwrap(); }
+        super::retire_plugins(&d);
+        for id in ["qautils", "iamaker", "navegador"] { assert!(!d.join("plugins").join(id).exists(), "{id} devia sair"); }
+        assert!(d.join("plugins/sheets/plugin.json").exists()); // plugin que continua vindo junto: fica
+        let _ = std::fs::remove_dir_all(&d);
     }
     #[test]
     fn recovery_preserves_backup_and_retries() {

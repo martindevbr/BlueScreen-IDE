@@ -240,7 +240,9 @@ pub fn routes() -> Vec<(&'static str, RouteFn)> {
             #[cfg(windows)]
             if let Some(h) = child.raw_handle() { super::external::job::assign_raw(h); }
             if let (Some(s), Some(mut w)) = (input, child.stdin.take()) { tokio::spawn(async move { let _ = w.write_all(&s).await; }); }
-            let ms = b["timeout"].as_u64().unwrap_or(60_000).clamp(100, 3_600_000);
+            // "hold": o programa é um serviço que vive enquanto quem pediu espera (o nó que segura um fluxo do
+            // Automator): sem teto de tempo. Quem o encerra é o cancelamento do pedido (kill_on_drop).
+            let ms = if b["hold"] == true { u64::MAX / 4 } else { b["timeout"].as_u64().unwrap_or(60_000).clamp(100, 3_600_000) };
             match tokio::time::timeout(Duration::from_millis(ms), child.wait_with_output()).await {
                 Ok(Ok(o)) => ok(json!({ "ok": o.status.success(), "code": o.status.code().unwrap_or(-1), "out": f.scrub(&text(&o.stdout)), "err": f.scrub(&text(&o.stderr)), "timedOut": false })),
                 Ok(Err(e)) => Err(fail(e.to_string(), 500)),

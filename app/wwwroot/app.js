@@ -342,7 +342,7 @@ function docMode(file) {
   welcomeMode(false); syncUnsaved();
   // sem nada a perder, a janela fecha direto (até no meio da leitura do arquivo, quando a aba ainda nem terminou de abrir)
   window.BS_DOC_CLOSE = () => S.tabs.some(losesWork) ? askClose(S.tabs.slice()) : desktop({ type: 'close' });
-  return openFile(name);
+  return openFile(name, 'editor');
 }
 function showLogin() { $('#login').hidden = false; $('#loginPin').focus(); }
 $('#loginBtn').onclick = async () => {
@@ -1430,6 +1430,7 @@ const tabUri = (tab) => monaco.Uri.parse('bs:/' + encodeURIComponent(tab.key) + 
 const OPENING = new Map(); let openSeq = 0;
 async function openFile(path, mode, line, preview, project) {
   ensureEditors();
+  mode = mode || 'editor'; // sem o modo, a aba nasceria com o editor escondido (activate só mostra editor/diff/view)
   const proj = project || S.project.path;
   // diff de outro projeto: o Git/SVN e as Alterações são do projeto aberto
   if (mode === 'diff' && proj !== S.project.path) return toast('O arquivo é de outro projeto: abra o projeto para ver o diff');

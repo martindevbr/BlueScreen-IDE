@@ -1953,7 +1953,7 @@ fn plugin_nodes() -> Vec<Value> {
                 "params": if n["params"].is_object() { n["params"].clone() } else { json!({}) }, "fields": list("fields", json!([])),
                 "plugin": p.id, "plugin_name": p.name, "dir": p.path, "data": p.data_dir, "run": n["run"],
                 "expects": n["expects"].as_str().unwrap_or(""), "returns": n["returns"].as_str().unwrap_or(""),
-                "takes": n["takes"].as_str().unwrap_or("any"), "gives": n["gives"].as_str().unwrap_or("any"), "record": n["record"],
+                "takes": n["takes"].as_str().unwrap_or("any"), "gives": n["gives"].as_str().unwrap_or("any"), "record": n["record"], "port_labels": n["port_labels"],
             }));
             if !n["sample"].is_null() && let Some(last) = out.last_mut() { last["sample"] = n["sample"].clone(); }
         }
@@ -2620,6 +2620,8 @@ async fn run_plugin_node(kind: &str, p: Value, input: Value) -> ApiResult<Value>
         "program": run["program"], "args": run["args"], "cwd": s["dir"], "env": env,
         "stdinBase64": base64::engine::general_purpose::STANDARD.encode(stdin),
         "timeout": run["timeout"].as_u64().unwrap_or(120_000),
+        // "run": { "hold": true }: o nó é um serviço (um servidor, um vigia) que segura o fluxo até ele ser parado
+        "hold": run["hold"] == true,
     })).await?;
     let out = exec_out(&v)?;
     let text = out.as_str().unwrap_or("").trim();
@@ -3583,6 +3585,8 @@ fn update_run(run_id: &str, f: impl FnOnce(&mut Value)) -> ApiResult<()> {
 fn body_port(kind: &str) -> Option<&'static str> {
     match kind { "logic.each" => Some("item"), "logic.while" | "logic.repeat" => Some("loop"), "logic.try" => Some("try"), _ => None }
 }
+/// Nó de plugin que é um serviço: fica rodando e manda eventos e linhas de registro (ver `Run::stream`).
+fn is_stream(kind: &str) -> bool { kind.starts_with("plugin.") && spec(kind).is_some_and(|s| s["run"]["stream"] == true) }
 /// Os nós alcançados a partir de um nó (por uma porta, ou por todas), por qualquer caminho.
 fn reach(f: &Flow, from: &str, port: Option<&str>) -> HashSet<String> {
     let mut seen = HashSet::new();
@@ -3689,6 +3693,12 @@ impl<'a> Run<'a> {
                     let body: Vec<usize> = self.order.iter().copied().filter(|j| set.contains(&f.nodes[*j].id)).collect();
                     inner.extend(body.iter().copied());
                     self.container(n, body, input, at).await
+                } else if is_stream(&n.kind) {
+                    // nó de serviço: tudo o que está ligado depois dele roda de novo a cada evento que ele manda
+                    let set = reach(f, &n.id, None);
+                    let body: Vec<usize> = self.order.iter().copied().filter(|j| set.contains(&f.nodes[*j].id)).collect();
+                    inner.extend(body.iter().copied());
+                    self.stream(n, body, input, at).await
                 } else {
                     self.single(n, input, is_trigger).await
                 };
@@ -3762,6 +3772,84 @@ impl<'a> Run<'a> {
         self.quiet = quiet;
         self.round = round;
         (step, out)
+    }
+    /// Nó de serviço de um plugin (`"run": { "stream": true }`): o programa fica rodando (um servidor, um vigia) e
+    /// fala com o fluxo por linhas de JSON na saída padrão, enquanto roda:
+    ///   `{ "log": "texto", "level": "info" | "ok" | "warn" | "error" }`  uma linha no registro ao vivo do nó
+    ///   `{ "status": "texto curto" }`                                    o estado, ao lado do nome do nó
+    ///   `{ "port": "nome", "value": ... }`                               um evento: roda o que está ligado nessa porta
+    /// Os eventos rodam um de cada vez, na ordem. Um trecho que falha não derruba o serviço: a falha vai para o
+    /// registro. Quem encerra o programa é o Parar do fluxo (ou ele mesmo, saindo). Na entrada, além do de sempre,
+    /// vai `ports`: as portas que têm algo ligado (para o programa não mandar evento que ninguém ouve).
+    async fn stream(&mut self, n: &'a Node, body: Vec<usize>, input: Value, at: Option<usize>) -> Result<Value, Halt> {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+        let p = fill(&n.params, &input, &self.outputs)?;
+        let s = spec(&n.kind).ok_or_else(|| fail("o plugin deste nó está desligado ou foi removido", 409))?;
+        let text = p.to_string();
+        if text.contains("{{vault:") || text.contains("{{cred:") { return Err(fail("um nó que fica ligado ainda não recebe segredos ({{vault:...}} ou {{cred:...}})", 400).into()); }
+        let mut ports: Vec<&str> = self.f.edges.iter().filter(|e| e.from == n.id).map(|e| e.from_port.as_str()).collect();
+        ports.sort_unstable(); ports.dedup();
+        let stdin = json!({"node": n.kind.rsplit('.').next(), "params": p, "input": input, "data": s["data"], "secrets": {}, "ports": ports}).to_string();
+        let program = s["run"]["program"].as_str().unwrap_or("node").to_string();
+        let args: Vec<String> = s["run"]["args"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        let mut cmd = tokio::process::Command::new(&program);
+        cmd.args(&args).current_dir(s["dir"].as_str().unwrap_or(".")).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000); // sem janela de console
+        let mut child = cmd.spawn().map_err(|e| fail(format!("não deu para iniciar o programa do nó ({program}): {e}"), 500))?;
+        #[cfg(windows)]
+        if let Some(h) = child.raw_handle() { crate::plugins::external::job::assign_raw(h); }
+        if let Some(mut i) = child.stdin.take() { i.write_all(stdin.as_bytes()).await.map_err(|e| fail(e.to_string(), 500))?; }
+        let mut lines = tokio::io::BufReader::new(child.stdout.take().ok_or_else(|| fail("sem a saída do programa", 500))?).lines();
+        let err_text = Arc::new(Mutex::new(String::new()));
+        if let Some(mut e) = child.stderr.take() {
+            let err_text = err_text.clone();
+            tokio::spawn(async move { let mut t = String::new(); let _ = e.read_to_string(&mut t).await; *err_text.lock() = t.trim().chars().take(1200).collect(); });
+        }
+        const KEEP: usize = 200;
+        let (mut live, mut seen, mut status, mut events, mut last) = (Vec::<Value>::new(), 0u64, String::new(), 0usize, Value::Null);
+        let (mut dirty, mut shown) = (true, std::time::Instant::now() - Duration::from_secs(1));
+        let note = |live: &mut Vec<Value>, seen: &mut u64, text: &str, level: &str| {
+            *seen += 1;
+            live.push(json!({"n": *seen, "t": now(), "s": text.chars().take(500).collect::<String>(), "l": level}));
+            if live.len() > KEEP { let cut = live.len() - KEEP; live.drain(..cut); }
+        };
+        loop {
+            if self.stopped() { return Err(Halt::Step(Step::Cancel)); } // o programa morre com o `child` (kill_on_drop)
+            // o registro ao vivo vai para o histórico no máximo três vezes por segundo
+            if dirty && shown.elapsed() >= Duration::from_millis(330) {
+                self.patch(at, json!({"live": live, "live_n": seen, "rounds": status, "events": events}));
+                dirty = false; shown = std::time::Instant::now();
+            }
+            let line = tokio::select! { l = lines.next_line() => l, _ = tokio::time::sleep(Duration::from_millis(200)) => continue };
+            let Ok(Some(line)) = line else { break };
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            let v = serde_json::from_str::<Value>(line).ok().filter(Value::is_object).unwrap_or_else(|| json!({"log": line}));
+            if let Some(t) = v["log"].as_str() { note(&mut live, &mut seen, t, v["level"].as_str().unwrap_or("info")); dirty = true; }
+            if let Some(t) = v["status"].as_str() { status = t.chars().take(80).collect(); dirty = true; }
+            let Some(port) = v["port"].as_str() else { continue };
+            events += 1;
+            last = v["value"].clone();
+            if body.is_empty() { continue; }
+            self.patch(at, json!({"live": live, "live_n": seen, "rounds": status, "events": events}));
+            dirty = false; shown = std::time::Instant::now();
+            self.clear(&body);
+            self.outputs.insert(n.id.clone(), json!({(port): v["value"].clone(), "index": events}));
+            match self.round(&body, events, events <= LOUD_ROUNDS).await {
+                (Step::Cancel, _) => return Err(Halt::Step(Step::Cancel)),
+                (Step::Fail(msg), _) => { note(&mut live, &mut seen, &format!("O que está ligado em \"{port}\" falhou: {}", msg.split(DETAIL).next().unwrap_or(&msg)), "error"); dirty = true; }
+                _ => {}
+            }
+        }
+        let code = child.wait().await.map_err(|e| fail(e.to_string(), 500))?;
+        self.patch(at, json!({"live": live, "live_n": seen, "rounds": status, "events": events}));
+        if !code.success() {
+            tokio::time::sleep(Duration::from_millis(50)).await; // a saída de erro acaba de ser lida
+            let e = err_text.lock().clone();
+            return Err(fail(if e.is_empty() { format!("o programa do nó terminou com o código {}", code.code().unwrap_or(-1)) } else { e }, 422).into());
+        }
+        Ok(json!({"done": last, "events": events}))
     }
     /// Laços (Para cada item, Repetir, Repetir enquanto) e Tentar: rodam o trecho de dentro e entregam o que ficou.
     async fn container(&mut self, n: &'a Node, body: Vec<usize>, input: Value, at: Option<usize>) -> Result<Value, Halt> {

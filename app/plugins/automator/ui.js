@@ -105,7 +105,7 @@ function hookBlock(n) {
 const PORT_LABEL = { in: 'entrada', out: 'saída', true: 'sim', false: 'não', item: 'cada item', loop: 'repetir', done: 'fim', try: 'tentar', ok: 'deu certo', error: 'deu erro', other: 'outro' };
 // o nome de uma saída no quadro: em Escolher caminho, a saída leva o texto do caso dela
 const switchCases = (n) => (Array.isArray(n?.params?.cases) ? n.params.cases : String(n?.params?.cases || '').split('\n')).map(c => String(c ?? '').trim());
-const portName = (n, p) => n?.type === 'logic.switch' && /^[1-5]$/.test(p) ? (switchCases(n)[p - 1] || 'caso ' + p).slice(0, 18) : PORT_LABEL[p] || p;
+const portName = (n, p) => n?.type === 'logic.switch' && /^[1-5]$/.test(p) ? (switchCases(n)[p - 1] || 'caso ' + p).slice(0, 18) : spec(n?.type)?.port_labels?.[p] || PORT_LABEL[p] || p;
 const STATUS = { running: 'executando', queued: 'na fila', completed: 'concluído', failed: 'falhou', cancelled: 'parado', interrupted: 'interrompido', skipped: 'pulado' };
 
 const esc = bs.esc;
@@ -501,8 +501,15 @@ function summary(n) {
     case 'json.pluck': case 'json.group': return one(p.field);
     case 'json.sort': return [one(p.field), p.order === 'desc' ? 'decrescente' : 'crescente', +p.limit ? 'os ' + p.limit + ' primeiros' : ''].filter(Boolean).join(' · ');
     case 'json.parse': case 'json.text': case 'json.entries': case 'json.count': case 'json.merge': return '';
-    // nó de plugin: o primeiro texto preenchido e, se houver, quantos passos
-    default: { const rows = Object.values(p).find(v => Array.isArray(v) && v.length && typeof v[0] === 'object'); return [one(Object.values(p).find(v => typeof v === 'string' && v.trim() && !/^(yes|no|close|keep)$/.test(v))), rows ? rows.length + (rows.length === 1 ? ' passo' : ' passos') : ''].filter(Boolean).join(' · '); }
+    // nó de plugin: o primeiro campo de texto preenchido (ou a primeira linha da tabela) e quantas linhas a tabela tem
+    default: {
+      const fs = spec(n.type)?.fields || [], text = v => typeof v === 'string' && v.trim();
+      const free = fs.find(f => (!f.kind || f.kind === 'text' || f.kind === 'area') && text(p[f.name]));
+      const tab = fs.find(f => f.kind === 'rows' && Array.isArray(p[f.name])), rows = tab ? p[tab.name].filter(r => r && Object.values(r).some(text)) : [];
+      const first = rows[0] && (tab.columns || []).map(c => rows[0][c.name]).find(text), what = (tab?.add || 'passo').toLowerCase();
+      if (!fs.length) { const any = Object.values(p).find(v => Array.isArray(v) && v.length && typeof v[0] === 'object'); return [one(Object.values(p).find(v => text(v) && !/^(yes|no|close|keep|sim|nao)$/.test(v))), any ? any.length + (any.length === 1 ? ' passo' : ' passos') : ''].filter(Boolean).join(' · '); }
+      return [one(free ? p[free.name] : first), rows.length > 1 || (rows.length && free) ? rows.length + ' ' + what + (rows.length === 1 ? '' : 's') : '', tab && !rows.length ? `sem ${what}s ainda` : ''].filter(Boolean).join(' · ');
+    }
   }
 }
 function fillNode(e, n) {
@@ -1250,12 +1257,29 @@ async function preflight() {
     mo.observe(box, { attributes: true, attributeFilter: ['hidden'] });
   });
 }
+/** As linhas que um nó de serviço manda enquanto roda: hora, texto e a cor do nível. */
+const liveLines = lines => lines.map(x => el('div.am-ll.' + (['ok', 'warn', 'error'].includes(x.l) ? x.l : 'info'), el('time', new Date(x.t).toLocaleTimeString('pt-BR', { hour12: false })), el('span', x.s)));
+/** Atualiza só o registro ao vivo do painel, sem redesenhar o resto (quem estava no fim continua no fim). */
+function paintLive() {
+  const box = R.insp?.querySelector('.am-live.full'); if (!box) return;
+  const r = currentRun()?.nodes?.find(x => x.id === box.dataset.node); if (!r?.live) return;
+  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.replaceChildren(...liveLines(r.live));
+  if (stick) box.scrollTop = box.scrollHeight;
+  const tag = box.parentElement?.querySelector('.am-livehead i'); if (tag) tag.textContent = r.rounds || '';
+}
 function runBlock(id) {
   const r = currentRun()?.nodes?.find(x => x.id === id); if (!r || r.status === 'skipped') return null;
   const out = r.output && Object.keys(r.output).length === 1 ? Object.values(r.output)[0] : r.output;
   return el('section.am-sec', el('h4', 'Última execução', el('span.am-tag.' + r.status, STATUS[r.status] + (r.ms != null ? ' · ' + fmtMs(r.ms) : ''))),
+    r.live?.length ? liveBlock(id, r) : null,
     r.error ? errView(r.error, id) : r.status === 'completed' ? (isQa(out) ? [qaView(out), el('details.am-io-ex', el('summary', 'Ver o JSON completo'), el('pre.am-out', show(out)))] : el('pre.am-out', show(out) || '(vazio)')) : null,
     r.status === 'completed' && !nodeLocked(id) ? treatRow(id, r) : null);
+}
+function liveBlock(id, r) {
+  const box = el('div.am-live.full', { dataset: { node: id }, tabIndex: 0, role: 'log', 'aria-label': 'Registro ao vivo' }, liveLines(r.live));
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+  return el('div.am-livewrap', el('div.am-livehead', el('b', r.status === 'running' ? 'Ao vivo' : 'Registro'), el('i', r.rounds || ''), r.live_n > r.live.length ? el('span', `últimas ${r.live.length} de ${r.live_n} linhas`) : null), box);
 }
 /** Execuções do fluxo: ocultas até a pessoa pedir. Aberta, traz a lista, a retenção e o botão de limpar. */
 function runsSection() {
@@ -1326,16 +1350,19 @@ function renderInspectorInner() {
     const title = el('input', { type: 'text', value: n.title || '', placeholder: s?.name || n.type, 'aria-label': 'Nome do nó' });
     title.oninput = () => { if (!named) { commit(); named = true; } if (title.value.trim()) n.title = title.value; else delete n.title; const e = nodeEls.get(n.id)?.querySelector('.am-title'); if (e) e.textContent = e.title = titleOf(n); changed(); };
     const visible = (f2) => !f2.show || Object.entries(f2.show).every(([k, v]) => [].concat(v).map(String).includes(String(n.params[k] ?? s.params[k])));
+    const liveFirst = !!currentRun()?.nodes?.find(x => x.id === n.id)?.live?.length;
     R.insp.replaceChildren(
       el('header.am-ihd', { style: { '--cat': cat.c } }, el('span.am-ico', { html: cat.i }), el('div.am-ihd-tx', el('b', s?.name || n.type), el('small', s?.desc || '')), el('button.icon-btn', { type: 'button', title: 'Fechar', html: IC.x, onclick: () => select([]) })),
       el('div.am-ibody',
+        // nó de serviço com registro: o que está acontecendo vem antes dos campos
+        liveFirst && runBlock(n.id),
         ioBlock(s),
         el('label.am-field', el('span.am-flabel', el('span', 'Nome')), title),
         (s?.fields || []).filter(visible).map(f2 => field(n, f2)),
         n.type === 'ai.openrouter' && el('button.chip.am-wide', { type: 'button', onclick: () => plugin.vault.request('openrouter') }, el('span', { html: IC.key }), 'Guardar o token no Cofre'),
         n.type === 'trigger.webhook' && hookBlock(n),
         AUTO.includes(n.type) && el('p.am-hint', f.active ? `Ligado${n.type === 'trigger.schedule' && f.next_run ? ': próxima execução ' + fmtWhen(f.next_run) : ''}.` : 'Este gatilho só dispara com o interruptor "Ligado" aceso, na barra de cima.'),
-        runBlock(n.id),
+        !liveFirst && runBlock(n.id),
         el('div.am-acts', el('button.chip', { type: 'button', onclick: () => toggleDisabled([n.id]) }, n.disabled ? 'Ligar nó' : 'Desligar nó'), el('button.chip.danger', { type: 'button', onclick: () => removeNodes([n.id]) }, 'Excluir nó'))));
     R.insp.scrollTop = keep;
     return;
@@ -1361,7 +1388,7 @@ function paintRun(id) {
   e.classList.remove('st-running', 'st-completed', 'st-failed', 'st-skipped', 'st-cancelled');
   if (!r) { state.replaceChildren(); box.replaceChildren(); return; }
   e.classList.add('st-' + r.status);
-  if (r.status === 'running') { state.replaceChildren(el('span.am-spin')); box.replaceChildren(); }
+  if (r.status === 'running') { state.replaceChildren(el('span.am-spin')); box.replaceChildren(...(r.live ? [el('div.am-livest', { title: r.rounds || '' }, r.rounds || 'rodando'), el('div.am-live', liveLines(r.live.slice(-8)))] : [])); }
   else if (r.status === 'completed') {
     state.replaceChildren(el('span.am-ok', { html: IC.ok }), el('span.am-ms', fmtMs(r.ms)));
     // nó do meio não repete o resultado no quadro: quem mostra é o último de cada caminho
@@ -1385,9 +1412,10 @@ async function pollRuns() {
   let runs; try { runs = await bs.api('automator/runs', { flow: id, limit: A.showRuns ? 20 : 2 }, { quiet: true }); } catch { return; }
   if (A.flow?.id !== id) return;
   const sig = runs.map(r => r.id + r.status + (r.nodes || []).map(n => n.status).join('')).join('|');
-  if (sig === A.runSig) return;
+  const live = runs.map(r => (r.nodes || []).map(n => (n.live_n || '') + (n.rounds || '')).join(',')).join('|');
+  if (sig === A.runSig) { if (live !== A.liveSig) { A.liveSig = live; A.runs = runs; paintRuns(); paintLive(); } return; }
   const was = isRunning();
-  A.runs = runs; A.runSig = sig;
+  A.runs = runs; A.runSig = sig; A.liveSig = live;
   paintRuns(); paintBar();
   // o painel só é redesenhado se ninguém estiver digitando nele
   if (!R.insp.contains(document.activeElement) || !document.activeElement.matches('input, textarea, select')) renderInspector();

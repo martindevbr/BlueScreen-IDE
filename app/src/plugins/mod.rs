@@ -145,6 +145,8 @@ fn discover() -> Vec<Entry> {
             let mf = e.path().join("plugin.json");
             if !mf.exists() { continue; }
             let name = e.file_name().to_string_lossy().to_string();
+            // plugin que saiu do BlueScreen (agora vem da loja): a cópia antiga na pasta do programa não carrega
+            if rank == 0 && crate::update::RETIRED_PLUGINS.contains(&name.as_str()) { continue; }
             let entry = match std::fs::read_to_string(&mf).map_err(anyhow::Error::from)
                 .and_then(|s| serde_json::from_str::<Value>(&s).map_err(|er| anyhow::anyhow!("plugin.json inválido: {er}")))
                 .and_then(|v| norm_manifest(&v, &name).map(|mut m| { m.icon = bluescreen_sdk::store::icon_uri(&e.path(), &v); m })) {
