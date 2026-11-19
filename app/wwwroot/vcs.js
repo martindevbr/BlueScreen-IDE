@@ -435,7 +435,49 @@ function renderHist(body) {
 }
 
 // ----- pasta com vários repositórios: as alterações locais de cada um -----
-const VREPO = { for: null, repos: null, open: null, files: new Map(), loading: false, at: 0 };
+const VREPO = { for: null, repos: null, open: null, files: new Map(), loading: false, at: 0, remote: null };
+const IR = {
+  down: '<svg class="i" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5"/><path d="M12 11v9M8.5 16.5 12 20l3.5-3.5"/></svg>',
+};
+// nome comprido: corta no meio e o fim sempre aparece (bspn-bff-estr…ural-suporte), que é onde os nomes costumam diferir
+function midName(s) {
+  s = String(s || ''); if (s.length <= 18) return `<span class="midn"><span class="h">${esc(s)}</span></span>`;
+  const k = Math.min(12, Math.floor(s.length / 2));
+  return `<span class="midn"><span class="h">${esc(s.slice(0, -k))}</span><span class="t">${esc(s.slice(-k))}</span></span>`;
+}
+// a pasta de cima de cada repositório ("1-leem-client-secret"): vira o cabeçalho do grupo
+const repoGroup = (r) => { const rel = String(r.rel || '').replace(/\\/g, '/'); const i = rel.lastIndexOf('/'); return i > 0 ? rel.slice(0, i) : ''; };
+function repoGroups(repos) { const m = new Map(); for (const r of repos) { const g = repoGroup(r); if (!m.has(g)) m.set(g, []); m.get(g).push(r); } return [...m.entries()]; }
+// à frente / atrás da remota (pelo último fetch)
+function syncHtml(r, long) {
+  if (!r.upstream) return '';
+  const t = `${r.upstream}${r.fetched ? ' · consultado ' + (ago(r.fetched * 1000) === 'agora' ? 'agora' : 'há ' + ago(r.fetched * 1000)) : ' · nunca consultado'}`;
+  if (!r.ahead && !r.behind) return `<span class="sync ok" title="${esc('Em dia com ' + t)}">${long ? 'em dia' : '✓'}</span>`;
+  return `<span class="sync" title="${esc(`${r.ahead ? r.ahead + ' para enviar' : ''}${r.ahead && r.behind ? ', ' : ''}${r.behind ? r.behind + ' para baixar' : ''} (${t})`)}">${r.ahead ? `<b class="up">↑${r.ahead}</b>` : ''}${r.behind ? `<b class="dn">↓${r.behind}</b>` : ''}</span>`;
+}
+// consulta o remoto de verdade (fetch no Git; no SVN, o servidor) e atualiza o resumo do repositório
+async function remoteCheck(r) {
+  try { Object.assign(r, { ahead: 0, behind: 0, remote_last: null }, await api('vcs/remote', { project: r.path }, { method: 'POST', quiet: true })); r.remoteErr = null; }
+  catch (e) { r.remoteErr = e.message || 'não respondeu'; }
+  return r;
+}
+async function remoteAll(repos, step) {
+  if (VREPO.remote) return VREPO.remote;
+  // só quem tem para onde olhar: Git com remota acompanhada, ou SVN (o servidor)
+  let done = 0, i = 0; const list = repos.filter(r => r.upstream || r.vcs === 'svn');
+  if (!list.length) { toast('Nenhum repositório com remota (origin) acompanhada'); return []; }
+  VREPO.remote = (async () => {
+    step && step(0, list.length);
+    await Promise.all(Array.from({ length: Math.min(4, list.length) }, async () => { while (i < list.length) { await remoteCheck(list[i++]); step && step(++done, list.length); } }));
+    VREPO.remote = null;
+    const bad = list.filter(r => r.remoteErr);
+    if (bad.length) toast(`${bad.length === list.length ? 'Nenhum' : bad.length} repositório${bad.length === 1 ? '' : 's'} não respondeu: ${bad.slice(0, 3).map(r => r.name + ' (' + r.remoteErr + ')').join('; ')}`);
+    BS.hooks.run('vcs:repos', VREPO.repos || list);
+    if (S.tool === 'changes' && S.project && !S.project.vcs) renderTool();
+    return list;
+  })();
+  return VREPO.remote;
+}
 async function reposLoad(force) {
   if (!S.project) return [];
   const p = S.project.path;
@@ -484,6 +526,7 @@ const repoRel = (r, file) => { const root = S.project && S.project.path.replace(
 function repoMenu(e, r) {
   showMenu(e, BS.hooks.apply('menu:repo', [
     { label: 'Abrir como projeto', icon: I.open, action: () => openProject(r.path) },
+    { label: r.vcs === 'svn' ? 'Consultar o servidor' : 'Consultar o remoto (fetch)', icon: IR.down, action: async () => { await remoteCheck(r); if (r.remoteErr) toast(r.name + ': ' + r.remoteErr); BS.hooks.run('vcs:repos', VREPO.repos || [r]); if (S.tool === 'changes' && S.project && !S.project.vcs) renderTool(); } },
     { label: 'Ver na linha do tempo', icon: I.hist, action: () => { BS.pages.open('changes'); BS.hooks.run('vcs:focus', r); } },
     '-',
     ...(BS.terminal ? [{ label: 'Terminal aqui', icon: I.ext, action: () => BS.terminal.open(r.path) }] : []),
@@ -505,19 +548,26 @@ function repoFileMenu(e, r, file, q) {
   ], `${r.name}/${file}`);
 }
 function renderRepos(body) {
-  $('#toolActions').innerHTML = `<button class="icon-btn" id="mrRefresh" title="Ler os repositórios de novo">${I.refresh}</button>`;
+  $('#toolActions').innerHTML = `<button class="icon-btn${VREPO.remote ? ' busy' : ''}" id="mrRemote" title="Consultar o remoto de todos (fetch): o que falta enviar e baixar">${VREPO.remote ? '<span class="spin"></span>' : IR.down}</button><button class="icon-btn" id="mrRefresh" title="Ler os repositórios de novo">${I.refresh}</button>`;
   $('#mrRefresh').onclick = () => { body.innerHTML = '<div class="empty"><span class="spin"></span></div>'; reposLoad(true); };
+  $('#mrRemote').onclick = () => { if (VREPO.repos && !VREPO.remote) { remoteAll(VREPO.repos); renderRepos(body); } };
   if (VREPO.for !== S.project.path || !VREPO.repos) { body.innerHTML = '<div class="empty"><span class="spin"></span></div>'; reposLoad(); return; }
   const repos = VREPO.repos;
   if (!repos.length) { body.innerHTML = '<div class="empty">Esta pasta não tem Git nem SVN, nem repositórios dentro dela.</div>'; return; }
   const dirty = repos.filter(r => r.dirty), clean = repos.length - dirty.length;
   $('#toolSub').textContent = `${repos.length} repositório${repos.length === 1 ? '' : 's'}`;
+  // cada repositório em duas linhas: o nome (cortado no meio) e, embaixo, branch, à frente/atrás e o último commit
   const sec = (r) => {
-    const open = VREPO.open.has(r.path), files = VREPO.files.get(r.path);
-    return `<div class="section dir repo ${open ? '' : 'closed'}" data-r="${esc(r.path)}" title="${esc(r.path)}">${chev(open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6')}<span class="dn">${esc(r.rel || r.name)}</span><span class="pill ${r.vcs}">${r.vcs}</span>${r.branch ? `<span class="br">${esc(r.branch)}</span>` : ''}<span class="meta">${r.dirty ? `<b class="n">${r.dirty}</b>` : '<span class="okc">limpo</span>'}</span></div>`
+    const open = VREPO.open.has(r.path), files = VREPO.files.get(r.path), l = r.last;
+    return `<div class="section dir repo ${open ? '' : 'closed'}" data-r="${esc(r.path)}" title="${esc(r.path + (l ? `\nÚltimo commit: ${l.hash} ${l.subject} (${l.author}, ${l.when})` : ''))}">${chev(open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6')}
+      <div class="rp"><div class="rp1">${midName(r.name)}<span class="pill ${r.vcs}">${r.vcs}</span><span class="meta">${r.dirty ? `<b class="n" title="${r.dirty} alteraç${r.dirty === 1 ? 'ão local' : 'ões locais'}">${r.dirty}</b>` : '<span class="okc">limpo</span>'}</span></div>
+      <div class="rp2">${r.branch ? `<span class="br">${esc(r.branch)}</span>` : ''}${syncHtml(r)}${l ? `<span class="lc"><code>${esc(l.hash)}</code>${esc(l.subject)}</span><time>${esc(l.when)}</time>` : '<span class="lc">sem commits</span>'}</div></div></div>`
       + (open ? `<div class="mr-files" data-rf="${esc(r.path)}">${files ? (files.map(x => chgRow(x, { dir: true })).join('') || '<div class="empty">Nada alterado.</div>') : '<div class="empty"><span class="spin"></span></div>'}</div>` : '');
   };
-  body.innerHTML = `<div class="section">Alterações locais <span class="meta">${dirty.length} com alteração${clean ? ` · ${clean} limpo${clean === 1 ? '' : 's'}` : ''}</span></div>` + [...dirty, ...repos.filter(r => !r.dirty)].map(sec).join('');
+  const order = (list) => [...list.filter(r => r.dirty), ...list.filter(r => !r.dirty)];
+  const groups = repoGroups(repos);
+  body.innerHTML = `<div class="section">Alterações locais <span class="meta">${dirty.length} com alteração${clean ? ` · ${clean} limpo${clean === 1 ? '' : 's'}` : ''}</span></div>`
+    + (groups.length > 1 || groups[0][0] ? groups.map(([g, list]) => `<div class="mr-grp" title="${esc(g || 'na raiz')}">${esc(g || 'Na raiz')}<span>${list.length}</span></div>` + order(list).map(sec).join('')).join('') : order(repos).map(sec).join(''));
   const byPath = (p) => repos.find(r => r.path === p);
   body.querySelectorAll('.section.repo').forEach(el => {
     const r = byPath(el.dataset.r);
@@ -654,4 +704,4 @@ BS.actions.add([
   { label: (VC.blame.on ? 'Desligar' : 'Ligar') + ' o autor da linha no fim da linha (Git)', k: '', run: () => { VC.blame.on = !VC.blame.on; store.set('blameInline', VC.blame.on); blameInline(); toast(VC.blame.on ? 'Autor da linha ligado' : 'Autor da linha desligado'); } },
   { label: 'Comparar com o local a partir de um commit…', k: '', run: () => showHistory(), icon: I.diff },
 ]);
-BS.vcs = { files: vcFiles, diff: vcDiff, goCommit, openAtCommit, compare, fileHistory, showHistory, blame: blameMenu, compareFiles, compareClipboard, repos: reposLoad, repoDiff, repoMenu, repoFileMenu, repoRel, dayLabel, avatar, statBar, chgRow };
+BS.vcs = { files: vcFiles, diff: vcDiff, goCommit, openAtCommit, compare, fileHistory, showHistory, blame: blameMenu, compareFiles, compareClipboard, repos: reposLoad, repoDiff, repoMenu, remoteCheck, remoteAll, midName, repoGroups, syncHtml, repoFileMenu, repoRel, dayLabel, avatar, statBar, chgRow };

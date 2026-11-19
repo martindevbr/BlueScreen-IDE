@@ -208,8 +208,26 @@ function vwReload(t) {
   const toolOf = (page) => [...BS.tools.defs.values()].find(d => d.render && d.page === page) || null;
   const pinnedTool = (id = S.tool) => { const d = BS.tools.get(id); return !!(d && d.page && d.render && PG.defs.get(d.page)?.pinned); };
   // page: só devolve o lugar se o painel atual é o dessa tela (fechar a aba fixa de um painel não mexe no painel novo)
+  // tela inteira: aba fixa de um ícone sem painel ({ page } sem render, como a loja de plugins). Na frente, ocupa a
+  // largura toda (o painel da esquerda recolhe e volta ao sair); escolher um painel com ela na frente tira a aba, para
+  // nunca ficar o painel de um lado e a tela do outro com o ícone errado aceso. Vale para qualquer plugin.
+  const fullOwner = (page) => [...BS.tools.defs.values()].find(d => !d.render && d.page === page) || null;
+  const fullPage = (t) => !!(t && t.page && t.pinned && PG.defs.get(t.page)?.pinned && fullOwner(t.page));
+  const relayout = () => { btnState(); window.dispatchEvent(new Event('resize')); };
+  // entrou na tela inteira (PG.entered): o painel recolhe. Depois disso, painel à mostra = o usuário escolheu um painel
+  const enter = (t) => {
+    if (PG.entered === t) return; PG.entered = t;
+    const app = $('#app'); if (app.classList.contains('no-tool')) return;
+    PG.hid = true; app.classList.add('no-tool');
+    const b = $('#btnPanel'); if (b) { b.classList.remove('on'); b.setAttribute('aria-expanded', false); }
+    setTimeout(relayout);
+  };
   const toolBack = (page) => { const cur = BS.tools.get(S.tool); if (!cur || !cur.page || !cur.render || (page && cur.page !== page)) return; S.tool = PG.prevTool && BS.tools.get(PG.prevTool) ? PG.prevTool : 'project'; PG.prevTool = null; btnState(); renderTool(); };
   BS.hooks.on('tab:activate', (t) => {
+    const app = $('#app');
+    if (fullPage(t)) return enter(t);
+    PG.entered = null;
+    if (PG.hid) { PG.hid = false; app.classList.remove('no-tool'); relayout(); }
     const tool = t.page && toolOf(t.page);
     if (!tool) { if (pinnedTool()) return; return toolBack(); } // painel com aba fixa: fica onde está
     if (S.tool !== tool.id) { PG.prevTool = pinnedTool() ? PG.prevTool : S.tool; S.tool = tool.id; btnState(); renderTool(); }
@@ -224,7 +242,7 @@ function vwReload(t) {
       VW.custom['page:' + def.id] = {
         build(t, pane) { pane.className = 'vw-pane vw-page'; pane.appendChild(el); },
         show() { try { def.show && def.show(); } catch (e) { console.error('page ' + def.id, e); } },
-        close() { toolBack(def.id); el.remove(); try { def.hide && def.hide(); } catch (e) { console.error('page ' + def.id, e); } },
+        close() { toolBack(def.id); if (PG.entered && PG.entered.page === def.id) PG.entered = null; if (PG.hid && !S.tabs.some(fullPage)) { PG.hid = false; $('#app').classList.remove('no-tool'); } el.remove(); try { def.hide && def.hide(); } catch (e) { console.error('page ' + def.id, e); } },
         // o salvamento automático (trocar de aba, fechar) não grava a tela de um plugin: só quando o usuário pede
         save(t, auto) { if (auto === true || !def.save) return; return def.save(); },
         discard() { return def.discard && def.discard(); },
@@ -262,7 +280,15 @@ function vwReload(t) {
     // o painel escolhido mudou (btnState): as abas fixas dos outros painéis saem, sem perguntar (a tela guarda o estado)
     sync() {
       if (PG.syncing) return; PG.syncing = true;
-      try { for (const t of S.tabs.filter(x => x.pinned)) { const o = toolOf(t.page); if (o && S.tool !== o.id) { t.dirty = false; closeTab(t); } } }
+      try {
+        for (const t of S.tabs.filter(x => x.pinned)) { const o = toolOf(t.page); if (o && S.tool !== o.id) { t.dirty = false; closeTab(t); } }
+        // tela inteira na frente e o painel apareceu (o usuário escolheu um painel): a tela sai
+        const a = S.active;
+        if (fullPage(a) && $('#welcome').hidden) {
+          if (PG.entered !== a) enter(a);
+          else if (!$('#app').classList.contains('no-tool')) { PG.hid = false; PG.entered = null; a.dirty = false; closeTab(a); }
+        }
+      }
       finally { PG.syncing = false; }
     },
     isOpen: (id) => !!tabOf(id),

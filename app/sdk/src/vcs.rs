@@ -137,12 +137,11 @@ pub async fn summary(dir: &Path) -> Summary {
         Some("git") => {
             let (st, lg, br) = tokio::join!(
                 git(dir, &["status", "--porcelain", "--", "."]),
-                git(dir, &["log", "-1", "--format=%h%x1f%an%x1f%ct%x1f%s", "--", "."]),
+                git(dir, &["log", "-1", "--format=%H%x1f%h%x1f%an%x1f%ct%x1f%s", "--", "."]),
                 git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
             );
             let dirty = st.out.lines().filter(|l| !l.is_empty()).count();
-            let f: Vec<&str> = lg.out.trim().split('\x1f').collect();
-            let last = (lg.ok && f.len() >= 4 && !f[0].is_empty()).then(|| Commit { id: None, hash: f[0].into(), author: f[1].into(), when: rel_time_unix(f[2]), subject: f[3].into(), ts: f[2].trim().parse().ok(), path: None });
+            let last = if lg.ok { commit_line(&lg.out) } else { None };
             Summary { vcs: Some("git"), dirty, branch: br.out.trim().into(), last }
         }
         Some("svn") => {
@@ -512,6 +511,75 @@ pub struct Repo {
     pub branch: String,
     pub dirty: usize,
     pub last: Option<Commit>,
+    /// Git: a branch remota que esta acompanha ("origin/main"), quantos commits a local tem que o remoto não tem
+    /// (ahead: falta enviar) e o contrário (behind: falta baixar), pelo que se sabe desde o último fetch
+    #[serde(flatten)]
+    pub up: Upstream,
+}
+#[derive(Serialize, Clone, Default)]
+pub struct Upstream {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub upstream: String,
+    pub ahead: u32,
+    pub behind: u32,
+    /// o último commit do remoto (na pasta), como o PC o conhece
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_last: Option<Commit>,
+    /// quando o remoto foi consultado pela última vez (segundos unix; Git: o FETCH_HEAD)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fetched: Option<i64>,
+}
+fn commit_line(out: &str) -> Option<Commit> {
+    let f: Vec<&str> = out.trim().split('\x1f').collect();
+    (f.len() >= 5 && !f[0].is_empty()).then(|| Commit { id: Some(f[0].into()), hash: f[1].into(), author: f[2].into(), when: rel_time_unix(f[3]), subject: f[4].into(), ts: f[3].trim().parse().ok(), path: None })
+}
+fn fetch_time(dir: &Path) -> Option<i64> {
+    // a pasta pode estar dentro do repositório: sobe até achar o .git
+    let mut d = Some(dir);
+    while let Some(x) = d {
+        let g = x.join(".git");
+        if g.is_dir() { return std::fs::metadata(g.join("FETCH_HEAD")).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|t| t.as_secs() as i64); }
+        if g.exists() { return None; }
+        d = x.parent();
+    }
+    None
+}
+/// Git: como a branch atual está em relação à remota que ela acompanha, só com o que já está no PC (sem rede).
+pub async fn upstream(dir: &Path) -> Upstream {
+    let (name, count, last) = tokio::join!(
+        git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]),
+        git(dir, &["rev-list", "--left-right", "--count", "HEAD...@{u}", "--", "."]),
+        git(dir, &["log", "-1", "--format=%H%x1f%h%x1f%an%x1f%ct%x1f%s", "@{u}", "--", "."]),
+    );
+    if !name.ok { return Upstream::default(); }
+    let mut n = count.out.split_whitespace().map(|x| x.parse::<u32>().unwrap_or(0));
+    Upstream { upstream: name.out.trim().into(), ahead: n.next().unwrap_or(0), behind: n.next().unwrap_or(0), remote_last: commit_line(&last.out), fetched: fetch_time(dir) }
+}
+/// Consulta o remoto de verdade (rede): Git faz fetch e devolve o estado novo; SVN lê o que o servidor tem depois da
+/// revisão da cópia local (behind) e o último commit de lá.
+pub async fn remote(dir: &Path) -> Result<Upstream, String> {
+    match detect(dir) {
+        Some("git") => {
+            let has = git(dir, &["remote"]).await;
+            if has.out.trim().is_empty() { return Err("sem remoto configurado".into()); }
+            let r = git_w(dir, &["fetch", "--prune", "--quiet"], 90000).await;
+            let up = upstream(dir).await;
+            if !r.ok { return Err(proc_err(&r, "Git")); }
+            if up.upstream.is_empty() { return Err("a branch atual não acompanha nenhuma remota".into()); }
+            Ok(up)
+        }
+        Some("svn") => {
+            let base = svn(dir, &["info", "--show-item", "revision"]).await.out.trim().parse::<u64>().unwrap_or(0);
+            let r = svn_t(dir, &["log", "-r", "HEAD:BASE", "-l", "200", "--xml"], 60000).await;
+            if !r.ok { return Err(proc_err(&r, "SVN")); }
+            let list = parse_svn_log(&r.out);
+            let behind = list.iter().filter(|c| c.hash.parse::<u64>().unwrap_or(0) > base).count() as u32;
+            let remote_last = list.into_iter().next().map(|c| Commit { id: Some(c.hash.clone()), hash: format!("r{}", c.hash), ..c });
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).ok();
+            Ok(Upstream { upstream: "servidor".into(), ahead: 0, behind, remote_last, fetched: now })
+        }
+        _ => Err("esta pasta não é um repositório Git nem SVN".into()),
+    }
 }
 /// Checkouts Git/SVN dentro de `root` (ela mesma, se for um), até `depth` níveis. Dentro de um repositório achado não
 /// procura mais (só a raiz pesquisada pode ter outros dentro). Pastas de build e ocultas ficam de fora.
@@ -540,9 +608,9 @@ pub async fn repos(root: &Path, depth: usize) -> Vec<Repo> {
         let (gate, root) = (gate.clone(), root.to_path_buf());
         tokio::spawn(async move {
             let _g = gate.acquire().await;
-            let s = summary(&p).await;
+            let (s, up) = tokio::join!(summary(&p), async { if v == "git" { upstream(&p).await } else { Upstream::default() } });
             let rel = norm(&rel(&root, &p));
-            Repo { name: p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string_lossy().to_string()), path: p.to_string_lossy().into(), rel, vcs: v, branch: s.branch, dirty: s.dirty, last: s.last }
+            Repo { name: p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string_lossy().to_string()), path: p.to_string_lossy().into(), rel, vcs: v, branch: s.branch, dirty: s.dirty, last: s.last, up }
         })
     }).collect();
     let mut out = vec![];
@@ -558,6 +626,9 @@ pub struct TimelineCommit {
     pub refs: Vec<String>,
     pub merge: bool,
     pub files: Vec<ChangedFile>,
+    /// Git com remota: "local" = ainda não foi enviado; "remote" = está no remoto e ainda não foi baixado (pull)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place: Option<&'static str>,
 }
 fn iso_utc(ts: i64) -> String { chrono::DateTime::from_timestamp(ts, 0).map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string()).unwrap_or_default() }
 static SVN_PATHS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"<path\b([^>]*)>([\s\S]*?)</path>"#).unwrap());
@@ -569,10 +640,17 @@ pub async fn timeline(dir: &Path, since: i64, until: Option<i64>, max: usize) ->
     match detect(dir) {
         Some("git") => {
             let (s, u) = (format!("--since=@{since}"), until.map(|u| format!("--until=@{u}")));
+            // com remota: os commits dela entram também, e cada um diz se falta enviar ou falta baixar
+            let has_up = git(dir, &["rev-parse", "--verify", "-q", "@{u}"]).await.ok;
             let mut a = vec!["log", "-n", &n, &s];
             if let Some(u) = &u { a.push(u); }
-            a.extend(["--format=%x1e%H%x1f%h%x1f%an%x1f%ct%x1f%D%x1f%P%x1f%s", "--raw", "--numstat", "--", "."]);
-            let (r, pre) = tokio::join!(git_t(dir, &a, 45000), git_prefix(dir));
+            a.extend(["--format=%x1e%H%x1f%h%x1f%an%x1f%ct%x1f%D%x1f%P%x1f%s", "--raw", "--numstat"]);
+            if has_up { a.extend(["HEAD", "@{u}"]); }
+            a.extend(["--", "."]);
+            let (r, pre, mine, theirs) = tokio::join!(git_t(dir, &a, 45000), git_prefix(dir),
+                async { if has_up { git(dir, &["rev-list", &s, "HEAD", "^@{u}"]).await.out } else { String::new() } },
+                async { if has_up { git(dir, &["rev-list", &s, "@{u}", "^HEAD"]).await.out } else { String::new() } });
+            let (mine, theirs): (std::collections::HashSet<&str>, std::collections::HashSet<&str>) = (mine.lines().map(str::trim).collect(), theirs.lines().map(str::trim).collect());
             r.out.split('\x1e').filter_map(|chunk| {
                 let (head, rest) = chunk.split_once('\n').unwrap_or((chunk, ""));
                 let f: Vec<&str> = head.split('\x1f').collect();
@@ -581,6 +659,7 @@ pub async fn timeline(dir: &Path, since: i64, until: Option<i64>, max: usize) ->
                 Some(TimelineCommit {
                     c: Commit { id: Some(f[0].into()), hash: f[1].into(), author: f[2].into(), when: rel_time_unix(f[3]), subject: f[6].into(), ts: f[3].trim().parse().ok(), path: None },
                     refs, merge: f[5].split_whitespace().count() > 1, files: parse_raw_numstat(rest, &pre),
+                    place: if mine.contains(f[0]) { Some("local") } else if theirs.contains(f[0]) { Some("remote") } else { None },
                 })
             }).collect()
         }
@@ -600,7 +679,7 @@ pub async fn timeline(dir: &Path, since: i64, until: Option<i64>, max: usize) ->
                     if path.is_empty() { return None; }
                     Some(ChangedFile { path, code: SVN_ACTION.captures(&p[1]).map(|a| a[1].to_string()).unwrap_or_else(|| "M".into()), staged: None, add: None, del: None })
                 }).collect();
-                Some(TimelineCommit { c: Commit { id: Some(c.hash.clone()), hash: format!("r{}", c.hash), ..c }, refs: vec![], merge: false, files })
+                Some(TimelineCommit { c: Commit { id: Some(c.hash.clone()), hash: format!("r{}", c.hash), ..c }, refs: vec![], merge: false, files, place: None })
             }).collect()
         }
         _ => vec![],

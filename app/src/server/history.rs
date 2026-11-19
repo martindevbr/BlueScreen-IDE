@@ -46,6 +46,12 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         let b: Value = r.body_json()?;
         vcs::checkout(&project(&r)?, b["name"].as_str().unwrap_or(""), b["create"].as_bool().unwrap_or(false)).await.map_err(|e| fail(e, 400)).and_then(ok)
     }));
+    // POST: consulta o remoto (Git: fetch; SVN: o que o servidor tem depois da cópia local) e devolve à frente/atrás
+    add("vcs/remote", route_fn(|r| async move {
+        r.local_only()?;
+        if !r.is_post() { return Err(fail("POST", 405)); }
+        vcs::remote(&project(&r)?).await.map_err(|e| fail(e, 400)).and_then(ok)
+    }));
     // POST { action: push | pull | fetch }
     add("vcs/sync", route_fn(|r| async move {
         r.local_only()?;

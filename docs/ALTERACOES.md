@@ -41,9 +41,9 @@ Se o remoto pedir login, faça um `git push` pelo terminal uma vez: a credencial
 
 Abra como projeto a pasta que guarda os repositórios (a pasta em si não precisa ser um). A IDE procura checkouts Git e SVN até três níveis abaixo.
 
-- **Local** lista cada repositório com o branch e o número de alterações. Os que têm alteração já vêm abertos.
+- **Local** lista os repositórios agrupados pela pasta de cima, cada um em duas linhas: o nome (cortado no meio quando é comprido, para o fim, que é onde os nomes costumam diferir, ficar à vista) e, embaixo, o branch, quanto falta enviar (↑) e baixar (↓) e o último commit. Os que têm alteração já vêm abertos. O botão da nuvem consulta o remoto de todos (fetch; no SVN, o servidor).
 - Clique num arquivo para ver o diff (aba só de leitura). **Abrir no editor**, no botão direito, abre o arquivo para editar.
-- Botão direito num repositório: **Abrir como projeto**, **Ver na linha do tempo**, **Terminal aqui**, **Mostrar no Explorer**, **Copiar caminho** e **Copiar branch**.
+- Botão direito num repositório: **Abrir como projeto**, **Consultar o remoto (fetch)**, **Ver na linha do tempo**, **Terminal aqui**, **Mostrar no Explorer**, **Copiar caminho** e **Copiar branch**.
 - Botão direito num arquivo: **Ver diferenças**, **Abrir no editor**, **Mostrar no Explorer**, **Copiar caminho** e **Abrir o repositório como projeto**.
 
 O número no ícone do painel é a soma das alterações locais de todos.
@@ -51,9 +51,10 @@ O número no ícone do painel é a soma das alterações locais de todos.
 ## A tela grande
 
 - **Período:** 24 h, 3 dias, 7 dias ou 30 dias.
+- **Repositórios:** um quadro em cima com cada repositório (agrupado pela pasta de cima), o branch, o **último commit local**, a situação no **origin** (em dia, ↑ para enviar, ↓ para baixar, e o último commit de lá quando é outro) e quantos commits teve no período. Clique na linha para filtrar; clique num commit para abrir ele, mesmo fora do período. **Consultar origin** faz o fetch de todos ao mesmo tempo. Com remota, a lista também traz os commits do origin que você ainda não baixou, com o selo **↓ só no origin**; os seus que ainda não foram enviados levam **↑ não enviado**, e os botões **Não enviados** / **Não baixados** mostram só esses.
 - **Linha do tempo:** uma faixa por repositório (num repositório só, uma faixa por pessoa). Cada ponto é um commit; quanto maior a mudança, maior o ponto. Losango é commit com tag, que costuma ser uma versão implantada. Clique no ponto para ir ao commit.
 - **Commits:** por dia, de todos os repositórios juntos. A busca aceita mensagem, autor, nome de arquivo ou hash. O commit abre os arquivos; o arquivo abre o diff.
-- **Ao lado:** os repositórios (clique filtra, botão direito tem as ações), os arquivos **mais mexidos** e **quem mexeu**. Clicar num arquivo ou numa pessoa filtra a lista.
+- **Ao lado:** os arquivos **mais mexidos** e **quem mexeu**. Clicar num arquivo ou numa pessoa filtra a lista.
 
 ## Investigar incidente
 
@@ -106,7 +107,7 @@ No SVN, a linha do tempo não traz as linhas somadas e removidas de cada arquivo
 | `bs.vcs.fileHistory(caminho)` | Histórico de um arquivo. |
 | `bs.vcs.openAtCommit(commit, caminho, linha)` | Abre um commit (e um arquivo dele). |
 | `bs.vcs.compare(base, alvo, caminho)` | Compara duas versões. |
-| `bs.vcs.repos()` | Os repositórios da pasta aberta: `[{ path, rel, name, vcs, branch, dirty, last }]`. |
+| `bs.vcs.repos()` | Os repositórios da pasta aberta: `[{ path, rel, name, vcs, branch, dirty, last, upstream, ahead, behind, remote_last, fetched }]` (à frente e atrás pelo último fetch). `bs.vcs.remoteCheck(repo)` consulta o remoto de um. |
 | `bs.vcs.repoDiff(repo, caminho, { mode, rev, base }, linha)` | Diff de um arquivo de outro repositório, numa aba só de leitura. |
 | `bs.hooks.filter('menu:repo', (itens, repo) => ...)` | Itens no botão direito de um repositório. |
 | `bs.hooks.filter('menu:commit', (itens, commit) => ...)` | Itens no botão direito de um commit do painel. |

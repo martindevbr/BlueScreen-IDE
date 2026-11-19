@@ -256,6 +256,12 @@ function installed(id) {
   if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1600); }
 }
 
+// tela estreita (abas numa fileira que rola): traz a aba escolhida para o meio, sem mexer no resto da página
+function centerTab(nav) {
+  const on = nav.querySelector('.on'); if (!on || nav.scrollWidth <= nav.clientWidth + 1) return;
+  const r = on.getBoundingClientRect(), n = nav.getBoundingClientRect();
+  nav.scrollTo({ left: nav.scrollLeft + r.left - n.left - (n.width - r.width) / 2, behavior: 'smooth' });
+}
 function paint() {
   const el = P.el; if (!el || !el.isConnected) return;
   const st = P.remote && P.remote.store, all = catalog(), ups = updates();
@@ -265,7 +271,7 @@ function paint() {
   const nav = NAV.map(([k, t, ic]) => { const n = k === 'upd' ? ups.length : k === 'inst' ? inst : k === 'nodes' ? all.filter(p => p.nodes).length : 0;
     return `<button type="button" data-tab="${k}" class="${!P.sel && !P.cat && P.tab === k ? 'on' : ''}">${ic}<span>${t}</span>${n && k !== 'all' ? `<i class="${k === 'upd' ? 'hot' : ''}">${n}</i>` : ''}</button>`; }).join('')
     + (cats.length > 1 ? `<div class="ps-navh">Categorias</div>${cats.map(c => `<button type="button" data-cat="${esc(c)}" class="ps-navcat${!P.sel && P.cat === c ? ' on' : ''}"><span>${esc(catName(c))}</span><i>${all.filter(p => p.category === c).length}</i></button>`).join('')}` : '');
-  const navEl = el.querySelector('.ps-navlist'); if (navEl.dataset.html !== nav) { navEl.innerHTML = nav; navEl.dataset.html = nav; }
+  const navEl = el.querySelector('.ps-navlist'); if (navEl.dataset.html !== nav) { navEl.innerHTML = nav; navEl.dataset.html = nav; centerTab(navEl); }
   const note = el.querySelector('.ps-note');
   note.innerHTML = [
     P.error ? `<p class="bad">Não deu para consultar a loja: ${esc(P.error)}</p>` : '',
@@ -475,15 +481,7 @@ if (!bs.doc) {
   // a loja é a aba fixa do painel Plugins: o painel (app.js) ganha a tela
   // sem o painel da esquerda: o ícone Plugins abre só a loja, e os instalados (com o interruptor) ficam na aba Instalados
   const tool = bs.tools.get('plugins'); if (tool) { tool.page = 'plugins'; tool.render = null; }
-  // a loja ocupa a largura toda: com ela na frente, o painel da esquerda recolhe; ao trocar de aba, volta como estava
-  bs.hooks.on('tab:activate', (t) => {
-    const app = document.getElementById('app'); if (!app) return;
-    if (t && t.page === 'plugins') { if (!app.classList.contains('no-tool')) { P.hidTool = true; app.classList.add('no-tool'); } else return; }
-    else if (P.hidTool) { P.hidTool = false; app.classList.remove('no-tool'); }
-    else return;
-    if (typeof btnState === 'function') btnState();
-    window.dispatchEvent(new Event('resize'));
-  });
+  // largura toda com ela na frente e saída ao escolher outro painel: regra de toda tela inteira (viewer.js, fullPage)
   // voltou de um recarregar pedido daqui (ligar, desligar, recarregar): abre de novo nos Instalados
   if (bs.store.get('psTab', null)) { P.tab = bs.store.get('psTab', 'all'); bs.store.set('psTab', null); }
   bs.pages.register({ id: 'plugins', title: 'Loja de plugins', icon: IC.store, pinned: true, render: mount, show() { paint(); if (!P.loading && (!P.remote || Date.now() - P.at > 120000)) check(false); } });

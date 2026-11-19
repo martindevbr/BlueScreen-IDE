@@ -6,7 +6,10 @@
 //   mudança; as tags (versões) aparecem como losangos;
 // - lista dos commits por dia, com busca por mensagem, autor, arquivo ou hash; o commit abre os arquivos ali mesmo e o
 //   clique no arquivo abre o diff (no projeto aberto, o painel acompanha; nos outros repositórios, aba só de leitura);
-// - ao lado: os repositórios (clique filtra, botão direito tem as ações), os arquivos mais mexidos e quem mexeu.
+// - em cima, o quadro dos repositórios (agrupados pela pasta de cima): branch, último commit local, o que falta enviar
+//   e baixar e o último commit do origin; clique filtra, clique no commit abre ele, "Consultar origin" faz o fetch
+//   de todos. Com remota, a lista também traz os commits do origin ainda não baixados, e filtra Não enviados/Não baixados;
+// - ao lado: os arquivos mais mexidos e quem mexeu.
 // Investigar incidente: você diz quando o problema começou e, se quiser, cola o erro ou o stack trace. A tela tira
 // dali os nomes (classes, arquivos, métodos, tabelas), procura esses nomes nas linhas que os commits do período
 // somaram ou removeram (rota scan) e ordena os commits por suspeita, dizendo o porquê de cada um em português:
@@ -14,15 +17,16 @@
 // correção às pressas e se toca no que o erro cita. Dá para descartar um suspeito e copiar o relatório para o chamado.
 (function cxInit() {
 if (BS.doc) return;
-const { dayLabel, avatar, statBar, chgRow } = BS.vcs;
+const { dayLabel, avatar, statBar, chgRow, midName, repoGroups, syncHtml } = BS.vcs;
 const DAY = 86400000, HOUR = 3600000;
 const WINS = [[1, '24 h'], [3, '3 dias'], [7, '7 dias'], [30, '30 dias']];
-const CX = { el: null, win: store.get('cxWin', 7), q: '', repos: [], commits: [], loading: false, for: null, at: 0, seq: 0, open: new Set(), repo: null, inc: null, more: 150, afterOpen: false };
+const CX = { el: null, win: store.get('cxWin', 7), q: '', repos: [], commits: [], loading: false, for: null, at: 0, seq: 0, open: new Set(), repo: null, inc: null, more: 150, afterOpen: false, where: '', fetching: null };
 const IC = {
   fire: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-1.6.6-2.8 1.5-3.8.3 1.5 1.2 2.3 2 2.5C10 9 10.500 5.500 12 3z"/></svg>',
   search: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
   chev: (open) => `<svg class="i cx-chev" viewBox="0 0 24 24"><path d="${open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'}"/></svg>`,
   x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  down: '<svg class="i" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5"/><path d="M12 11v9M8.5 16.5 12 20l3.5-3.5"/></svg>',
 };
 const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
 const num = (n) => Number(n || 0).toLocaleString('pt-BR');
@@ -161,14 +165,15 @@ function report() {
 // ----- desenho -----
 function filtered() {
   const q = CX.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  return CX.commits.filter(c => (!CX.repo || c.repo.path === CX.repo) && (!q.length || q.every(w => (c.subject + ' ' + c.author + ' ' + c.hash + ' ' + c.id + ' ' + c.repo.name + ' ' + c.refs.join(' ')).toLowerCase().includes(w) || c.files.some(f => f.path.toLowerCase().includes(w)))));
+  return CX.commits.filter(c => (!CX.repo || c.repo.path === CX.repo) && (!CX.where || c.place === CX.where) && (!q.length || q.every(w => (c.subject + ' ' + c.author + ' ' + c.hash + ' ' + c.id + ' ' + c.repo.name + ' ' + c.refs.join(' ')).toLowerCase().includes(w) || c.files.some(f => f.path.toLowerCase().includes(w)))));
 }
 const multi = () => CX.repos.length > 1;
 const tagsOf = (c) => c.refs.filter(r => r.startsWith('tag: ')).map(r => r.slice(5));
 function lanesHtml(list, sus) {
   const t0 = sinceMs(), t1 = untilMs(), x = (ms) => Math.max(0, Math.min(100, (ms - t0) * 100 / (t1 - t0)));
   let lanes;
-  if (multi()) lanes = CX.repos.filter(r => !CX.repo || r.path === CX.repo).map(r => ({ name: r.rel || r.name, title: r.path, items: list.filter(c => c.repo === r) })).filter(l => l.items.length || CX.repos.length <= 12);
+  list = list.filter(c => !c.extra);
+  if (multi()) lanes = CX.repos.filter(r => !CX.repo || r.path === CX.repo).map(r => ({ name: r.name, html: midName(r.name), title: r.path, items: list.filter(c => c.repo === r) })).filter(l => l.items.length || CX.repos.length <= 12);
   else {
     const by = new Map(); for (const c of list) { if (!by.has(c.author)) by.set(c.author, []); by.get(c.author).push(c); }
     const top = [...by.entries()].sort((a, b) => b[1].length - a[1].length);
@@ -187,7 +192,7 @@ function lanesHtml(list, sus) {
   for (let t = first.getTime(); t <= t1; t += step) { if (t < t0) continue; const d = new Date(t); ticks.push([x(t), step < DAY ? (d.getHours() === 0 ? d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : String(d.getHours()).padStart(2, '0') + 'h') : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })]); }
   const grid = ticks.map(([p]) => `<i class="cx-grid" style="left:${p.toFixed(2)}%"></i>`).join('');
   const mark = CX.inc ? `<i class="cx-mark" style="left:${x(CX.inc.at).toFixed(2)}%"><b>início</b></i>` : '';
-  return `<div class="cx-lanes">${lanes.map(l => `<div class="cx-lane"><span class="cx-ln" title="${esc(l.title)}">${esc(l.name)}</span><div class="cx-track">${grid}${l.items.map(dot).join('')}${mark}</div></div>`).join('')}
+  return `<div class="cx-lanes">${lanes.map(l => `<div class="cx-lane"><span class="cx-ln" title="${esc(l.title)}">${l.html || esc(l.name)}</span><div class="cx-track">${grid}${l.items.map(dot).join('')}${mark}</div></div>`).join('')}
     <div class="cx-lane axis"><span class="cx-ln"></span><div class="cx-track">${ticks.map(([p, t]) => `<span class="cx-tick" style="left:${p.toFixed(2)}%">${t}</span>`).join('')}<span class="cx-tick now">agora</span></div></div></div>`;
 }
 function commitHtml(c, s) {
@@ -200,7 +205,7 @@ function commitHtml(c, s) {
   return `<article class="cx-c${open ? ' open' : ''}${s && s.after ? ' after' : ''}${off ? ' off' : ''}" data-k="${esc(k)}">
     <div class="cx-ch">${s && !s.after ? `<span class="cx-score ${s.n >= 60 ? 'hot' : s.n >= 35 ? 'warm' : 'cool'}" title="Suspeita de 0 a 100">${s.n}</span>` : ''}${avatar(c.author)}
       <div class="cx-ct"><div class="subj" title="${esc(c.subject)}">${esc(c.subject)}</div>
-        <div class="m"><code>${esc(c.hash)}</code>${multi() ? `<span class="cx-repo">${esc(c.repo.name)}</span>` : ''}<span class="who">${esc(c.author)}</span><time title="${esc(absTime(c.ts))}">${esc(c.when)}</time>${tag.map(t => `<span class="cx-tagc" title="Tag">${esc(t)}</span>`).join('')}${c.files.length ? `<span class="nf">${plural(c.files.length, 'arquivo', 'arquivos')}</span>${statHtml(tot)}${statBar(tot)}` : c.merge ? '<span class="nf">merge</span>' : ''}</div>
+        <div class="m"><code>${esc(c.hash)}</code>${multi() ? `<span class="cx-repo" title="${esc(c.repo.rel || c.repo.name)}">${midName(c.repo.name)}</span>` : ''}${c.place === 'local' ? '<span class="cx-place up" title="Commit só no seu PC: ainda não foi enviado (push)">↑ não enviado</span>' : c.place === 'remote' ? '<span class="cx-place dn" title="Commit que está no origin e ainda não foi baixado (pull)">↓ só no origin</span>' : ''}<span class="who">${esc(c.author)}</span><time title="${esc(absTime(c.ts))}">${esc(c.when)}</time>${tag.map(t => `<span class="cx-tagc" title="Tag">${esc(t)}</span>`).join('')}${c.files.length ? `<span class="nf">${plural(c.files.length, 'arquivo', 'arquivos')}</span>${statHtml(tot)}${statBar(tot)}` : c.merge ? '<span class="nf">merge</span>' : ''}</div>
         ${s && s.why.length ? `<div class="cx-why">${s.why.map(([kind, text]) => `<span class="w-${kind}">${esc(text)}</span>`).join('')}</div>` : ''}</div>${IC.chev(open)}</div>${files}</article>`;
 }
 function listHtml(list, sus) {
@@ -214,17 +219,14 @@ function listHtml(list, sus) {
       + (off.length ? `<h3 class="cx-h">Descartados</h3>` + off.map(x => commitHtml(x.c, x.s)).join('') : '')
       + (after.length ? `<h3 class="cx-h fold" data-a="after">${IC.chev(CX.afterOpen)}Depois do início<small>${plural(after.length, 'commit', 'commits')}</small></h3>` + (CX.afterOpen ? after.map(x => commitHtml(x.c, x.s)).join('') : '') : '');
   }
-  if (!list.length) return `<div class="cx-none"><b>${CX.q || CX.repo ? 'Nenhum commit com esse filtro' : 'Nenhum commit no período'}</b><p>${CX.q || CX.repo ? 'Limpe a busca ou escolha outro repositório.' : 'Escolha um período maior.'}</p></div>`;
+  const fil = CX.q || CX.repo || CX.where;
+  if (!list.length) return `<div class="cx-none"><b>${CX.where === 'local' && !CX.q ? 'Nada para enviar' : CX.where === 'remote' && !CX.q ? 'Nada para baixar' : fil ? 'Nenhum commit com esse filtro' : 'Nenhum commit no período'}</b><p>${CX.where ? 'No período escolhido' + (CX.where === 'remote' ? ', pelo último "Consultar origin".' : '.') : fil ? 'Limpe a busca ou escolha outro repositório.' : 'Escolha um período maior.'}</p></div>`;
   let day = null, html = '';
   for (const c of list.slice(0, CX.more)) { const d = dayLabel(c.ts); if (d !== day) { day = d; html += `<h3 class="cx-h">${esc(d)}</h3>`; } html += commitHtml(c, null); }
   return html + (list.length > CX.more ? `<button class="chip cx-more" data-a="more">Mostrar mais ${list.length - CX.more}</button>` : '');
 }
 function sideHtml(list) {
   let html = '';
-  if (multi() || (S.project && !S.project.vcs)) {
-    const n = new Map(); for (const c of CX.commits) n.set(c.repo.path, (n.get(c.repo.path) || 0) + 1);
-    html += `<section><h3 class="cx-h">Repositórios</h3>${CX.repos.map(r => `<div class="cx-r${CX.repo === r.path ? ' on' : ''}" data-r="${esc(r.path)}" title="${esc(r.path)}"><span class="nm">${esc(r.rel || r.name)}</span><span class="pill ${r.vcs}">${r.vcs}</span>${r.branch ? `<span class="br">${esc(r.branch)}</span>` : ''}<span class="meta">${r.dirty ? `<b class="dirty" title="${plural(r.dirty, 'alteração local', 'alterações locais')}">${r.dirty}</b>` : ''}<span title="Commits no período">${n.get(r.path) || 0}</span></span></div>`).join('')}</section>`;
-  }
   const hot = new Map();
   for (const c of list) for (const f of c.files) { const k = c.repo.path + '|' + f.path, e = hot.get(k) || { path: f.path, repo: c.repo, n: 0, lines: 0 }; e.n++; e.lines += (f.add || 0) + (f.del || 0); hot.set(k, e); }
   const top = [...hot.values()].sort((a, b) => b.n - a.n || b.lines - a.lines).slice(0, 8), max = top[0] ? top[0].n : 1;
@@ -233,6 +235,57 @@ function sideHtml(list) {
   const people = [...who.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8), pm = people[0] ? people[0][1] : 1;
   if (people.length > 1) html += `<section><h3 class="cx-h">Quem mexeu</h3>${people.map(([name, k]) => `<div class="cx-hot who" data-q="${esc(name)}" title="Clique para ver só os commits de ${esc(name)}">${avatar(name)}<span class="nm">${esc(name)}</span><span class="bar"><i style="width:${Math.round(k * 100 / pm)}%"></i></span><span class="n">${k}</span></div>`).join('')}</section>`;
   return html;
+}
+// ----- quadro dos repositórios: onde cada um está, local e no origin -----
+const lcHtml = (r, cm, kind) => cm ? `<button type="button" class="cx-lc" data-a="cm" data-kind="${kind}" data-r="${esc(r.path)}" title="${esc(`${cm.subject}\n${cm.hash} · ${cm.author} · ${cm.ts ? absTime(cm.ts) : cm.when}\nClique para abrir o commit`)}"><code>${esc(cm.hash)}</code><span class="s">${esc(cm.subject)}</span><time>${esc(cm.when)}</time></button>` : '';
+function ovHtml() {
+  const n = new Map(); for (const c of CX.commits) if (!c.extra) n.set(c.repo.path, (n.get(c.repo.path) || 0) + 1);
+  const ups = CX.repos.filter(r => r.upstream), fetched = Math.min(...ups.map(r => r.fetched || 0));
+  const inRepo = CX.commits.filter(c => !CX.repo || c.repo.path === CX.repo);
+  const nl = inRepo.filter(c => c.place === 'local').length, nr = inRepo.filter(c => c.place === 'remote').length;
+  const row = (r) => {
+    const l = r.last, rl = r.remote_last, same = rl && l && (rl.id ? rl.id === l.id : rl.hash === l.hash);
+    return `<div class="cx-ovr${CX.repo === r.path ? ' on' : ''}" data-r="${esc(r.path)}" title="${esc(r.path)}">
+      <div class="c-nm"><div class="l1">${midName(r.name)}<span class="pill ${r.vcs}">${r.vcs}</span>${r.dirty ? `<b class="dirty" title="${plural(r.dirty, 'alteração local', 'alterações locais')} (sem commit)">${r.dirty}</b>` : ''}</div>${r.branch ? `<span class="br" title="Branch ${esc(r.branch)}">${esc(r.branch)}</span>` : ''}</div>
+      <div class="c-lc">${lcHtml(r, l, 'last') || '<span class="none">sem commits</span>'}</div>
+      <div class="c-rm">${r.remoteErr ? `<span class="err" title="${esc(r.remoteErr)}">não respondeu</span>` : r.upstream ? syncHtml(r, true) + (rl && !same ? lcHtml(r, rl, 'remote') : '') : `<span class="none">${r.vcs === 'svn' ? 'consulte o servidor' : 'sem remota'}</span>`}</div>
+      <div class="c-n" title="Commits no período">${n.get(r.path) || 0}</div></div>`;
+  };
+  const groups = repoGroups(CX.repos), grouped = groups.length > 1 || groups[0][0];
+  const fb = CX.fetching;
+  return `<section class="cx-ov">
+    <header class="cx-ovhd"><h3 class="cx-h">${plural(CX.repos.length, 'Repositório', 'Repositórios')}</h3>
+      <small>${ups.length ? (fetched ? 'origin consultado ' + (ago(fetched * 1000) === 'agora' ? 'agora' : 'há ' + ago(fetched * 1000)) : 'origin ainda não consultado') : ''}</small><span class="sp"></span>
+      ${ups.length || CX.where ? `<span class="seg cx-where" title="Onde o commit está">
+        <button type="button" data-where=""${!CX.where ? ' class="on"' : ''}>Todos</button>
+        <button type="button" data-where="local"${CX.where === 'local' ? ' class="on"' : ''} title="Commits só no seu PC (falta push)">↑ Não enviados${nl ? ` <i>${nl}</i>` : ''}</button>
+        <button type="button" data-where="remote"${CX.where === 'remote' ? ' class="on"' : ''} title="Commits do origin que você ainda não baixou (falta pull)">↓ Não baixados${nr ? ` <i>${nr}</i>` : ''}</button></span>` : ''}
+      <button class="chip" data-a="fetch"${fb ? ' disabled' : ''} title="Faz fetch de todos (no SVN, consulta o servidor) para saber o que falta enviar e baixar">${fb ? `<span class="spin"></span>Consultando ${fb[0]}/${fb[1]}` : `${IC.down}Consultar origin`}</button></header>
+    <div class="cx-ovt"><div class="cx-ovh"><span>Repositório</span><span>Último commit local</span><span>Origin</span><span title="Commits no período">Período</span></div>
+      ${grouped ? groups.map(([g, list]) => `<div class="cx-ovg">${esc(g || 'na raiz')}</div>${list.map(row).join('')}`).join('') : CX.repos.map(row).join('')}</div></section>`;
+}
+async function openRepoCommit(r, cm) {
+  if (!cm) return;
+  const hit = (x) => x.repo.path === r.path && (cm.id ? x.id === cm.id : x.hash === cm.hash);
+  let c = CX.commits.find(hit);
+  if (!c && cm.ts) {
+    // fora do período: busca só esse commit e põe na lista
+    const l = await api('timeline', { project: r.path, since: cm.ts - 1, until: cm.ts + 1, n: 50 }, { quiet: true }).catch(() => []);
+    c = l.map(x => Object.assign(x, { repo: r, extra: true })).find(hit);
+    if (c) { CX.commits.push(c); CX.commits.sort((a, b) => (b.ts || 0) - (a.ts || 0)); }
+  }
+  if (!c) return toast('Não achei esse commit');
+  CX.repo = r.path; if (CX.where && c.place !== CX.where) CX.where = '';
+  if (CX.q) { CX.q = ''; CX.el.querySelector('.cx-search input').value = ''; }
+  const k = keyOf(c); CX.open.add(k); CX.more = Math.max(CX.more, filtered().indexOf(c) + 20); paint();
+  CX.el.querySelector(`.cx-c[data-k="${CSS.escape(k)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+async function fetchAll() {
+  if (CX.fetching || !CX.repos.length) return;
+  CX.fetching = [0, CX.repos.length]; paint();
+  await BS.vcs.remoteAll(CX.repos, (d, n) => { CX.fetching = [d, n]; paint(); });
+  CX.fetching = null;
+  await load(true);
 }
 function paint() {
   const el = CX.el; if (!el || !el.isConnected) return;
@@ -244,13 +297,13 @@ function paint() {
   if (!CX.repos.length) { sub.textContent = ''; body.innerHTML = '<div class="cx-none"><b>Sem Git nem SVN por aqui</b><p>Esta pasta não é um repositório e não tem repositórios dentro dela.</p></div>'; return; }
   const list = filtered(), sus = CX.inc ? new Map(list.map(c => [keyOf(c), suspect(c)])) : null;
   const tot = list.reduce((a, c) => { const t = totOf(c); return { add: a.add + t.add, del: a.del + t.del }; }, { add: 0, del: 0 });
-  sub.innerHTML = [multi() ? plural(CX.repos.length, 'repositório', 'repositórios') : '', plural(list.length, 'commit', 'commits'), plural(new Set(list.map(c => c.author)).size, 'pessoa', 'pessoas'), tot.add || tot.del ? `<span class="stat"><span class="a">+${num(tot.add)}</span><span class="d">−${num(tot.del)}</span></span>` : ''].filter(Boolean).join('<i>·</i>') + (CX.loading || (CX.inc && CX.inc.busy) ? '<span class="spin"></span>' : '');
+  sub.innerHTML = [plural(list.filter(c => !c.extra).length, 'commit', 'commits'), plural(new Set(list.map(c => c.author)).size, 'pessoa', 'pessoas'), tot.add || tot.del ? `<span class="stat"><span class="a">+${num(tot.add)}</span><span class="d">−${num(tot.del)}</span></span>` : ''].filter(Boolean).join('<i>·</i>') + (CX.loading || (CX.inc && CX.inc.busy) ? '<span class="spin"></span>' : '');
   // termos procurados (incidente)
   const terms = el.querySelector('.cx-terms');
   terms.innerHTML = CX.inc && CX.inc.terms.length ? `<span class="cx-lb">Procurando nas linhas que mudaram:</span>${CX.inc.terms.map((t, i) => `<span class="cx-term">${esc(t)}<button data-term="${i}" title="Tirar da busca">${IC.x}</button></span>`).join('')}` : CX.inc ? '<span class="cx-lb">Sem termos: a ordem usa só a hora, o tamanho e o tipo de arquivo.</span>' : '';
   el.querySelector('[data-a="report"]').hidden = !CX.inc; el.querySelector('[data-a="end"]').hidden = !CX.inc;
   const sc = getComputedStyle(body).overflowY === "visible" ? body.parentElement : body, top = sc.scrollTop;
-  body.innerHTML = lanesHtml(list, sus) + `<div class="cx-cols"><main class="cx-list">${listHtml(list, sus)}</main><aside class="cx-side">${sideHtml(list)}</aside></div>`;
+  body.innerHTML = ovHtml() + lanesHtml(list, sus) + `<div class="cx-cols"><main class="cx-list">${listHtml(list, sus)}</main><aside class="cx-side">${sideHtml(list)}</aside></div>`;
   sc.scrollTop = top;
 }
 const byKey = (k) => CX.commits.find(c => keyOf(c) === k);
@@ -291,7 +344,10 @@ function mount(el) {
     const ago = t.closest('[data-ago]'); if (ago) { const d = new Date(); if (ago.dataset.ago === 'day') d.setHours(8, 0, 0, 0); else d.setTime(d.getTime() - ago.dataset.ago * 60000); el.querySelector('.cx-when').value = localInput(Math.min(d.getTime(), Date.now())); return; }
     const term = t.closest('[data-term]'); if (term && CX.inc) { CX.inc.terms.splice(+term.dataset.term, 1); incSave(); return load(true); }
     const dot = t.closest('.cx-dot'); if (dot) { const k = dot.dataset.k; if (!CX.open.has(k)) { const c = byKey(k); if (CX.inc && c && (c.ts || 0) * 1000 > CX.inc.at) CX.afterOpen = true; CX.more = Math.max(CX.more, filtered().indexOf(c) + 20); } return toggle(k, true); }
-    const r = t.closest('.cx-r'); if (r) { CX.repo = CX.repo === r.dataset.r ? null : r.dataset.r; CX.more = 150; return paint(); }
+    const wh = t.closest('[data-where]'); if (wh) { CX.where = wh.dataset.where; CX.more = 150; return paint(); }
+    const lc = t.closest('.cx-lc'); if (lc) { const r = CX.repos.find(x => x.path === lc.dataset.r); return r && openRepoCommit(r, lc.dataset.kind === 'remote' ? r.remote_last : r.last); }
+    if (t.closest('[data-a="fetch"]')) return fetchAll();
+    const r = t.closest('.cx-ovr'); if (r) { CX.repo = CX.repo === r.dataset.r ? null : r.dataset.r; CX.more = 150; return paint(); }
     const hot = t.closest('.cx-hot'); if (hot) { q.value = CX.q === hot.dataset.q ? '' : hot.dataset.q; CX.q = q.value; CX.more = 150; return paint(); }
     const art = t.closest('.cx-c'), c = art && byKey(art.dataset.k);
     const a = t.closest('[data-a]');
@@ -317,7 +373,7 @@ function mount(el) {
     if (t.closest('.cx-ch')) toggle(art.dataset.k);
   });
   el.addEventListener('contextmenu', (e) => {
-    const r = e.target.closest('.cx-r'); if (r) { const repo = CX.repos.find(x => x.path === r.dataset.r); return repo && BS.vcs.repoMenu(e, repo); }
+    const r = e.target.closest('.cx-ovr'); if (r) { const repo = CX.repos.find(x => x.path === r.dataset.r); return repo && BS.vcs.repoMenu(e, repo); }
     const art = e.target.closest('.cx-c'), c = art && byKey(art.dataset.k); if (!c) return;
     const row = e.target.closest('.row.chg, .cx-hit');
     if (row) {
