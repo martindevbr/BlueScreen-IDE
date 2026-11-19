@@ -2281,7 +2281,7 @@ function keymapLoad(m) { KEYMAP.to = m || {}; KEYMAP.back = Object.fromEntries(O
 keymapLoad(store.get('keymap', null));
 const BS = window.BS = {
   version: null, S, state: S, api, $, esc, toast, store, I, TI, treeIcon, fmtDate, ago, daysAgo, statHtml, copyText, reveal, absPath, showMenu, closeMenu,
-  openFile, openTool, setTool, renderTool, renderStrip, renderTree, renderDashboard, refreshProject, refreshAll, selectProject, revealAt, openOutside, openVirtual, openSearch, present, save, saveAll, runLint, lintAll, quickProject,
+  openFile, openTool, setTool, renderTool, renderStrip, renderTree, renderDashboard, refreshProject, refreshAll, selectProject, revealAt, openOutside, openVirtual: (k, n, c, l, ln, t) => openVirtual(k, n, c, l, ln, t, false), openSearch, present, save, saveAll, runLint, lintAll, quickProject,
   lite: { get on() { return isLite(); }, set: (v) => setLite(v) },
   editorPrefs: { get: () => editorPrefs(), set: (k, v) => setEditorPref(k, v), reset() { store.set('editorPrefs', {}); applyEditorPrefs(); }, defaults: EDITOR_PREFS },
   get editor() { return editor; }, get diffEditor() { return diffEditor; }, get monaco() { return monaco; }, get viewer() { return viewer; },
@@ -2566,11 +2566,13 @@ BS.pluginSettings = pluginSettings; // janela de documento: os módulos deixam d
 
 // código que não é um arquivo do projeto (o JDK que o depurador mostra, node:internal...): aba só de leitura, sem
 // trocar de projeto nem passar pelo servidor de linguagem. key identifica a origem; title vai na dica da aba
-function openVirtual(key, name, content, lang, line, title) {
+// core: aberta pelo próprio núcleo (código do JDK no depurador, desminificado), que conta como arquivo e fica aberta;
+// a de plugin (BS.openVirtual) é uma tela e fecha ao sair dela, como as do bs.pages
+function openVirtual(key, name, content, lang, line, title, core = true) {
   ensureEditors();
   const k = 'virtual:' + key; let tab = S.tabs.find(t => t.key === k);
   if (!tab) {
-    tab = { key: k, path: name, title: title || name, mode: 'editor', virtual: true, editable: false, project: S.project ? S.project.path : '', lang: lang || langOf(name) };
+    tab = { key: k, path: name, title: title || name, mode: 'editor', virtual: true, coreVirtual: !!core, editable: false, project: S.project ? S.project.path : '', lang: lang || langOf(name) };
     tab.model = monaco.editor.createModel(content, tab.lang, monaco.Uri.parse('bs-virtual:/' + encodeURIComponent(key)));
     tab.saved = content; tab.model._tab = tab; S.tabs.push(tab);
   }

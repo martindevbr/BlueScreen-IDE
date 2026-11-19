@@ -429,7 +429,7 @@ async function openSource(f) {
   if (text == null) { out(`Sem o código de ${srcName(src)}: só a pilha e as variáveis deste frame (F8/Shift+F8 voltam para o seu código)`, 'bs'); return false; }
   DB.src.set(key, text);
   const name = srcName(src);
-  BS.openVirtual(key, name, text, null, f.line, /^jdt:/.test(p) ? 'JDK · ' + decodeURIComponent(p).replace(/^jdt:\/\/contents\/([^/]+)\/([^?]+).*$/, '$1 / $2') : (p || name));
+  openVirtual(key, name, text, null, f.line, /^jdt:/.test(p) ? 'JDK · ' + decodeURIComponent(p).replace(/^jdt:\/\/contents\/([^/]+)\/([^?]+).*$/, '$1 / $2') : (p || name));
   return true;
 }
 async function showLine(f) {

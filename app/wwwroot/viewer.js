@@ -226,9 +226,12 @@ function vwReload(t) {
     setTimeout(relayout);
   };
   const toolBack = (page) => { const cur = BS.tools.get(S.tool); if (!cur || !cur.page || !cur.render || (page && cur.page !== page)) return; S.tool = PG.prevTool && BS.tools.get(PG.prevTool) ? PG.prevTool : 'project'; PG.prevTool = null; btnState(); renderTool(); };
-  // a tela que ficou para trás sai (no Estúdio as telas fecham pelo X, como sempre)
-  const keepPage = (x) => { const d = PG.defs.get(x.page); if (!d || d.persistent || x.dirty) return true; if (x.pinned) { const o = toolOf(x.page); if (o && S.tool === o.id) return true; } return false; };
-  const leave = () => { if (STUDIO) return; for (const x of S.tabs.filter(x => x.page && x !== S.active && !keepPage(x))) closeTab(x); };
+  // a tela que ficou para trás sai (no Estúdio as telas fecham pelo X, como sempre). Tela = aba do bs.pages ou
+  // qualquer aba que não é um arquivo de verdade e não veio do núcleo: plugins antigos abrem a deles como aba virtual
+  // (BS.openVirtual ou um visualizador próprio). Arquivos, diffs, fontes de biblioteca e o que o núcleo abre ficam.
+  const isScreen = (x) => !!x.page || (x.virtual && !x.coreVirtual && x.mode !== 'diff' && !x.lib && !x.repo && !x.owner) || (!!x.kind && !x.project && !x.owner); // visualizador próprio de plugin, sem arquivo do projeto por trás
+  const keepPage = (x) => { if (x.dirty || x.persistent) return true; if (!x.page) return false; const d = PG.defs.get(x.page); if (!d || d.persistent) return true; if (x.pinned) { const o = toolOf(x.page); if (o && S.tool === o.id) return true; } return false; };
+  const leave = () => { if (STUDIO) return; for (const x of S.tabs.filter(x => x !== S.active && isScreen(x) && !keepPage(x))) closeTab(x); };
   BS.hooks.on('tab:activate', (t) => {
     queueMicrotask(leave);
     const app = $('#app');
