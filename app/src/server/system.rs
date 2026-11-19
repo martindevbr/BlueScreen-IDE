@@ -20,8 +20,79 @@ pub fn studio_kill() {
     if let Some(mut c) = STUDIO_WIN.lock().take() { let _ = c.kill(); let _ = c.wait(); }
 }
 
+// ---------- logs pesados: o da própria IDE, os dos plugins e os do projeto aberto ----------
+fn is_log(name: &str) -> bool { let n = name.to_ascii_lowercase(); n.ends_with(".log") || n.contains(".log.") || n.ends_with(".out") && n.contains("log") }
+/// Arquivos de log com mais de `min` bytes: em ~/.bluescreen (a IDE e plugin-data) e na pasta do projeto, até 4 níveis.
+fn heavy_logs(project: Option<PathBuf>, min: u64) -> Vec<Value> {
+    fn walk(dir: &Path, depth: usize, min: u64, kind: &str, out: &mut Vec<Value>, seen: &mut usize) {
+        if *seen > 40_000 || out.len() >= 50 { return; }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            *seen += 1;
+            let name = e.file_name().to_string_lossy().to_string();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                if depth > 0 && !name.starts_with('.') && !IGNORED_DIRS.contains(name.as_str()) { walk(&e.path(), depth - 1, min, kind, out, seen); }
+            } else if ft.is_file() && is_log(&name) {
+                let Ok(md) = e.metadata() else { continue };
+                if md.len() > min {
+                    let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                    out.push(json!({ "path": e.path().to_string_lossy(), "name": name, "size": md.len(), "mtime": mtime, "kind": kind }));
+                }
+            }
+        }
+    }
+    let (mut out, mut seen) = (vec![], 0usize);
+    let ud = user_dir();
+    walk(&ud, 4, min, "ide", &mut out, &mut seen);
+    for v in out.iter_mut() { if v["path"].as_str().is_some_and(|p| p.contains("plugin-data")) { v["kind"] = json!("plugin"); } }
+    if let Some(p) = project && p.is_dir() && !within(&ud, &p) { seen = 0; walk(&p, 4, min, "project", &mut out, &mut seen); }
+    out.sort_by(|a, b| b["size"].as_u64().cmp(&a["size"].as_u64()));
+    out
+}
+/// Esvazia um log deixando só o final (`keep` bytes, a partir de uma linha inteira). Só arquivo de log, e só dentro
+/// de ~/.bluescreen ou do projeto informado.
+fn trim_log(path: &Path, project: Option<PathBuf>, keep: u64) -> Result<u64, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let abs = absolute(path);
+    let name = abs.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    if !is_log(&name) { return Err("só arquivos de log".into()); }
+    if !(within(&user_dir(), &abs) || project.as_deref().is_some_and(|p| within(p, &abs))) { return Err("fora da IDE e do projeto aberto".into()); }
+    let mut f = std::fs::File::open(&abs).map_err(|e| e.to_string())?;
+    let len = f.metadata().map_err(|e| e.to_string())?.len();
+    if len <= keep { return Ok(len); }
+    f.seek(SeekFrom::Start(len - keep)).map_err(|e| e.to_string())?;
+    let mut tail = Vec::with_capacity(keep as usize);
+    f.read_to_end(&mut tail).map_err(|e| e.to_string())?;
+    drop(f);
+    let cut = tail.iter().position(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+    let mut body = format!("[... {} anteriores apagados pela IDE em {} ...]\n", fmt_mb(len - keep + cut as u64), chrono::Local::now().format("%d/%m/%Y %H:%M")).into_bytes();
+    body.extend_from_slice(&tail[cut..]);
+    std::fs::write(&abs, &body).map_err(|e| if e.raw_os_error() == Some(32) { "o arquivo está em uso por outro programa: feche-o e tente de novo".into() } else { e.to_string() })?;
+    Ok(body.len() as u64)
+}
+fn fmt_mb(n: u64) -> String { if n >= 1 << 20 { format!("{:.1} MB", n as f64 / 1048576.0) } else { format!("{} KB", n / 1024) } }
+
 pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
     let mut add = |name: &str, f: RouteFn| { m.insert(name.into(), f); };
+    // logs com mais de `min` bytes (padrão 1 MB): o da IDE, os dos plugins e os do projeto (?project=)
+    add("logs/heavy", route_fn(|r| async move {
+        let min = r.q_or("min", "1048576").parse().unwrap_or(1 << 20);
+        let p = r.q("project").filter(|p| !p.is_empty()).map(PathBuf::from);
+        let files = blocking(move || heavy_logs(p, min)).await?;
+        ok(json!({ "files": files, "min": min }))
+    }));
+    // POST { path, keep? }: deixa só o final do log (padrão 256 KB)
+    add("logs/trim", route_fn(|r| async move {
+        r.local_only()?;
+        if !r.is_post() { return Err(fail("POST", 405)); }
+        let b: Value = r.body_json()?;
+        let path = PathBuf::from(b["path"].as_str().unwrap_or(""));
+        let keep = b["keep"].as_u64().unwrap_or(256 * 1024).clamp(0, 64 << 20);
+        let p = r.q("project").filter(|p| !p.is_empty()).map(PathBuf::from);
+        let size = blocking(move || trim_log(&path, p, keep)).await?.map_err(|e| fail(e, 400))?;
+        ok(json!({ "size": size }))
+    }));
     add("session", route_fn(|r| async move { ok(json!({ "remote": r.remote, "authed": true })) }));
     add("config", route_fn(|_| async move {
         let a = app();
@@ -108,6 +179,13 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         r.local_only()?;
         let fresh = r.q_or("fresh", "") == "1";
         ok(json!({ "shells": blocking(move || crate::terminal::shells(fresh)).await?.as_ref() }))
+    }));
+    // ?pids=1,2: o que está rodando dentro de cada shell (vazio = parado no prompt); a aba pergunta antes de fechar
+    add("terminal/running", route_fn(|r| async move {
+        r.local_only()?;
+        let pids: Vec<u32> = r.q_or("pids", "").split(',').filter_map(|p| p.trim().parse().ok()).take(64).collect();
+        let map = blocking(move || pids.into_iter().map(|p| (p.to_string(), json!(crate::terminal::running(p)))).collect::<serde_json::Map<String, Value>>()).await?;
+        ok(Value::Object(map))
     }));
     // servidores de linguagem e depuradores encontrados (cada um abre por WebSocket em /api/rpc/ws)
     add("rpc/tools", route_fn(|r| async move {

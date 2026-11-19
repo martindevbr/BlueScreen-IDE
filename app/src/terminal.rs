@@ -135,6 +135,40 @@ fn detect() -> Vec<Shell> {
 }
 
 static SHELLS: Mutex<Option<Arc<Vec<Shell>>>> = parking_lot::const_mutex(None);
+/// Os programas rodando dentro do shell de PID `pid` (filhos, netos...), sem os ajudantes do próprio console:
+/// vazio = o shell está parado no prompt. Serve para perguntar antes de fechar uma aba com algo em execução.
+#[cfg(windows)]
+pub fn running(pid: u32) -> Vec<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
+    const HELPERS: [&str; 5] = ["conhost.exe", "openconsole.exe", "wslhost.exe", "wslrelay.exe", "winpty-agent.exe"];
+    let mut procs: Vec<(u32, u32, String)> = vec![];
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE || snap.is_null() { return vec![]; }
+        let mut e: PROCESSENTRY32W = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = Process32FirstW(snap, &mut e) != 0;
+        while more {
+            let n = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+            procs.push((e.th32ProcessID, e.th32ParentProcessID, String::from_utf16_lossy(&e.szExeFile[..n])));
+            more = Process32NextW(snap, &mut e) != 0;
+        }
+        CloseHandle(snap);
+    }
+    let (mut out, mut stack, mut seen) = (vec![], vec![pid], std::collections::HashSet::new());
+    while let Some(p) = stack.pop() {
+        if !seen.insert(p) || seen.len() > 500 { continue; }
+        for (id, parent, name) in &procs {
+            if *parent != p || *id == p || *id == 0 { continue; }
+            stack.push(*id);
+            if !HELPERS.contains(&name.to_ascii_lowercase().as_str()) && !out.contains(name) { out.push(name.clone()); }
+        }
+    }
+    out
+}
+#[cfg(not(windows))]
+pub fn running(_pid: u32) -> Vec<String> { vec![] }
 pub fn shells(fresh: bool) -> Arc<Vec<Shell>> {
     if !fresh { if let Some(s) = SHELLS.lock().clone() { return s; } }
     let s = Arc::new(detect()); *SHELLS.lock() = Some(s.clone()); s

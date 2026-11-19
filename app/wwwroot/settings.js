@@ -94,7 +94,7 @@ function bind(el, handlers, repaint) {
 }
 
 // ---------- Geral ----------
-section({ id: 'geral', title: 'Geral', icon: IC.general, order: 10, sub: 'Arquivos e árvore do projeto',
+section({ id: 'geral', title: 'Geral', icon: IC.general, order: 10, sub: 'Arquivos, árvore do projeto e desempenho',
   render(el) { this.paint = () => {
     el.innerHTML = group('Arquivos', [
       row('Salvar automaticamente', 'Grava ao parar de digitar, trocar de aba ou sair da janela.', sw('autoSave', S.autoSave)),
@@ -104,9 +104,14 @@ section({ id: 'geral', title: 'Geral', icon: IC.general, order: 10, sub: 'Arquiv
       row('Abrir arquivo com um clique', 'Desligado, um clique seleciona e dois abrem.', sw('single', S.singleClick)),
       row('Compactar pacotes intermediários', 'Pastas com uma única pasta dentro viram uma linha só (com.empresa.app).', sw('compact', S.compact)),
       row('Ordem', '', seg('sort', S.sortRecent ? '1' : '0', [['1', 'Recentes primeiro'], ['0', 'A-Z']])),
+    ]) + group('Desempenho', [
+      row('Modo leve', `Para PC ou placa de vídeo fracos: sem animações, desfoques e sombras grandes (na IDE e nos plugins) e um editor mais simples. Este PC: ${navigator.hardwareConcurrency || '?'} núcleos${navigator.deviceMemory ? `, ${navigator.deviceMemory} GB` : ''}.`, sw('lite', bs.lite.on)),
+      row('Avisar de log pesado', 'Um aviso na barra de baixo quando um log da IDE, de um plugin ou do projeto passa de 1 MB.', sw('logWarn', !bs.logWatch || bs.logWatch.on)),
     ]);
     bind(el, {
       autoSave: (v) => setAutoSave(v),
+      lite: (v) => bs.lite.set(v),
+      logWarn: (v) => bs.logWatch && bs.logWatch.set(v),
       extRule: (v) => { XS.rule = v; store.set('extRule', v); },
       unmin: (v) => { UM.auto = v; store.set('unminAuto', v); },
       single: (v) => { S.singleClick = v; store.set('singleClick', v); },

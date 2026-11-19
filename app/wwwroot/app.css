@@ -82,7 +82,11 @@ body.doc-mode #saveGrp { margin-left: auto; }
 .chip.on { background: var(--sel); color: var(--fg); }
 .chip .k { color: var(--muted); font-size: 11px; }
 .spacer { flex: 1; }
+.proj-chip { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; white-space: nowrap; cursor: default; user-select: none; }
 .proj-chip b { font-weight: 600; color: var(--fg); }
+button.logo { height: 32px; border: 0; border-radius: var(--r-sm); background: none; cursor: pointer; transition: background-color .12s; }
+button.logo:hover, button.logo[aria-expanded="true"] { background: var(--hover); }
+button.logo:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .proj-chip .branch { color: var(--canvas-fg); display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
 .proj-chip .caret { opacity: .6; }
 #seBtn { flex: 0 1 380px; min-width: 160px; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; border-radius: 8px; background: var(--canvas-hover); color: var(--canvas-fg); border: 1px solid transparent; margin: 0 auto; }
@@ -1442,7 +1446,7 @@ body.sd-at-home .sd-home { pointer-events: none; padding-left: 10px; } body.sd-a
 #updPill .up-dot { position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: #7CF29A; box-shadow: 0 0 0 2px var(--canvas); }
 #updPill .up-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: #7CF29A; animation: up-ping 1.8s ease-out infinite; }
 #updPill.up-enter { animation: up-pill .6s cubic-bezier(.34, 1.56, .64, 1); }
-#updBack { position: fixed; inset: 0; z-index: 88; display: grid; place-items: center; padding: 16px; background: rgba(4,9,20,.45); backdrop-filter: blur(3px); animation: scrim-in .2s ease-out; }
+#updBack { position: fixed; inset: 0; z-index: 98; /* acima das janelas (Configurações é .scrim, 90): o "Verificar atualizações" sai de lá */ display: grid; place-items: center; padding: 16px; background: rgba(4,9,20,.45); backdrop-filter: blur(3px); animation: scrim-in .2s ease-out; }
 #updBack[hidden] { display: none; }
 #upd { --ease: cubic-bezier(.22, 1, .36, 1); width: min(560px, 100%); max-height: min(86vh, 720px); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px;
   background: var(--panel); border: 1px solid var(--line-2); box-shadow: var(--shadow), 0 30px 80px -20px rgba(11,102,228,.45); animation: up-in .45s var(--ease); }
@@ -2135,3 +2139,23 @@ button.cfg-kb:hover { background: var(--hover); border-color: var(--line-2); }
 .net-app .txt a { overflow-wrap: anywhere; }
 @media (max-width: 420px) { .net-app { flex-direction: column; align-items: flex-start; } }
 html.standalone body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+
+/* ===== Modo leve (Configurações › Geral › Desempenho): para PC e placa de vídeo fracos =====
+   Vale para a IDE inteira e para o CSS dos plugins: nada anima nem desliza (só o giro de "carregando", que avisa que
+   algo está acontecendo), nada desfoca o que está atrás (o efeito mais caro para a placa de vídeo) e as sombras
+   grandes viram uma borda fina. As cores e o tema continuam os mesmos. */
+html.lite { --shadow: 0 0 0 1px var(--line-2); scroll-behavior: auto; }
+html.lite *, html.lite *::before, html.lite *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+html.lite .spin { animation: spin .8s linear infinite !important; }
+html.lite #strip::after { display: none; }
+/* aviso de log pesado (logwatch.js) */
+#status .st-logs { display: inline-flex; align-items: center; gap: 5px; color: #E0A040; cursor: pointer; }
+#status .st-logs[hidden] { display: none; }
+#status .st-logs .i { width: 12px; height: 12px; stroke-width: 2.2; }
+/* terminal com algo rodando: o que seria encerrado ao fechar (terminal.js, tmAsk) */
+.tm-busy { list-style: none; margin: 4px 0 8px; padding: 0; display: grid; gap: 4px; }
+.tm-busy li { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.tm-busy b { flex: none; font-weight: 600; }
+.tm-busy span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 11.5px var(--mono); }

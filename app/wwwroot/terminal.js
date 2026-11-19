@@ -124,6 +124,41 @@ function tmClose(t) {
   if (TM.active === t) { TM.active = null; const n = TM.list[i] || TM.list[i - 1]; if (n) tmActivate(n); }
   if (!TM.list.length) tmShow(false); else tmTabs();
 }
+// ----- fechar com algo rodando: pergunta antes (regra do Martin) -----
+// "rodando" = o shell tem processos filhos (npm, java, python, um servidor...); parado no prompt fecha direto
+async function tmBusy(list) {
+  const ts = list.filter(t => t.alive && t.pid); if (!ts.length) return [];
+  try {
+    const r = await api('terminal/running', { pids: ts.map(t => t.pid).join(',') }, { quiet: true });
+    return ts.filter(t => (r[t.pid] || []).length).map(t => ({ t, procs: r[t.pid] }));
+  } catch { return []; }
+}
+function tmAsk(busy, title, okLabel, go) {
+  const one = busy.length === 1;
+  dialog('tmCloseDlg', `<div class="dlg-hd"><span class="dlg-ic warn">${TERM_ICO}</span><div><h3>${esc(title)}</h3><p>${one ? 'Este terminal ainda está executando algo.' : `${busy.length} terminais ainda estão executando algo.`}</p></div></div>
+    <ul class="tm-busy">${busy.map(b => `<li><b>${esc(b.t.title)}</b><span>${b.procs.slice(0, 4).map(esc).join(', ')}${b.procs.length > 4 ? ` e mais ${b.procs.length - 4}` : ''}</span></li>`).join('')}</ul>
+    <p class="del-msg">Se fechar, ${one ? 'o que está rodando nele será encerrado' : 'o que está rodando neles será encerrado'} na hora.</p>
+    <div class="actions"><button class="chip" data-close>Cancelar</button><span class="spacer"></span><button class="chip primary danger" id="tmCloseOk">${esc(okLabel)}</button></div>`, (el) => {
+    const ok = el.querySelector('#tmCloseOk'), cancel = el.querySelector('.actions [data-close]');
+    cancel.focus(); // o Enter sem querer não mata nada
+    el.onkeydown = (e) => { if (e.key === 'Escape') el.hidden = true; };
+    ok.onclick = () => { el.hidden = true; go(); };
+  });
+}
+// fechar pelo usuário (X, botão do meio, menu): com algo rodando, pergunta
+async function tmAskClose(list) {
+  list = [].concat(list).filter(t => TM.list.includes(t)); if (!list.length) return;
+  const busy = await tmBusy(list);
+  if (!busy.length) return list.forEach(t => TM.list.includes(t) && tmClose(t));
+  tmAsk(busy, busy.length === 1 ? `Fechar "${busy[0].t.title}"?` : `Fechar ${list.length} terminais?`, busy.length === 1 ? 'Fechar e encerrar' : 'Fechar todos e encerrar', () => list.forEach(t => TM.list.includes(t) && tmClose(t)));
+}
+// sair da IDE também encerra os terminais
+BS.hooks.filter('app:can-quit', async () => {
+  if (TM.quitOk) return true;
+  const busy = await tmBusy(TM.list); if (!busy.length) return true;
+  tmAsk(busy, 'Sair do BlueScreen?', 'Sair e encerrar', () => { TM.quitOk = true; window.BS_APP_QUIT && BS_APP_QUIT(); setTimeout(() => { TM.quitOk = false; }, 5000); });
+  return false;
+});
 function tmActivate(t) {
   TM.active = t; TM.list.forEach(x => x.el.classList.toggle('on', x === t));
   tmTabs(); requestAnimationFrame(() => { try { t.fit.fit(); } catch {} tmFocus(t); });
@@ -134,13 +169,13 @@ function tmTabs() {
   $('#tmTabs').querySelectorAll('.tm-tab').forEach(el => {
     const t = TM.list.find(x => x.id === +el.dataset.id);
     el.onclick = () => tmActivate(t);
-    el.onauxclick = (e) => { if (e.button === 1) tmClose(t); };
+    el.onauxclick = (e) => { if (e.button === 1) tmAskClose(t); };
     el.ondblclick = () => tmRename(t, el);
-    el.querySelector('.x').onclick = (e) => { e.stopPropagation(); tmClose(t); };
+    el.querySelector('.x').onclick = (e) => { e.stopPropagation(); tmAskClose(t); };
     el.oncontextmenu = (e) => showMenu(e, [
       { label: 'Renomear', icon: I.edit, action: () => tmRename(t, el) },
-      { label: 'Fechar', icon: I.x, action: () => tmClose(t) },
-      { label: 'Fechar os outros', icon: I.x, action: () => TM.list.filter(x => x !== t).forEach(tmClose) },
+      { label: 'Fechar', icon: I.x, action: () => tmAskClose(t) },
+      { label: 'Fechar os outros', icon: I.x, action: () => tmAskClose(TM.list.filter(x => x !== t)) },
     ], t.shell.name);
   });
 }

@@ -194,11 +194,30 @@ const editorOpts = () => ({ fontFamily: "'JetBrains Mono', 'Cascadia Code', Cons
 // Preferências do editor (Configurações › Editor): só o que foge do padrão fica guardado, em store 'editorPrefs'
 const EDITOR_PREFS = { minimap: false, lineNumbers: 'on', whitespace: 'trailing', sticky: true, guides: true, brackets: true, folding: true, inlay: true, cursor: 'line', smooth: true, tabSize: 4, insertSpaces: true, detectIndent: true, autoClose: true, formatOnPaste: false };
 const editorPrefs = () => ({ ...EDITOR_PREFS, ...(store.get('editorPrefs', null) || {}) });
+// ----- Modo leve: menos efeitos para PC fraco (desligado por padrão) -----
+// html.lite: o CSS tira animações, transições e desfoques (de toda a IDE e dos plugins); aqui o editor perde o que
+// gasta processador a cada tecla ou rolagem, e a rolagem suave vira salto em qualquer scrollIntoView/scrollTo.
+const isLite = () => document.documentElement.classList.contains('lite');
+const LITE_OPTS = { minimap: { enabled: false }, smoothScrolling: false, cursorBlinking: 'solid', cursorSmoothCaretAnimation: 'off', stickyScroll: { enabled: false },
+  bracketPairColorization: { enabled: false }, guides: { bracketPairs: false, indentation: false, highlightActiveIndentation: false }, 'semanticHighlighting.enabled': false,
+  occurrencesHighlight: 'off', selectionHighlight: false, renderLineHighlight: 'line', codeLens: false, colorDecorators: false, inlayHints: { enabled: 'off' },
+  matchBrackets: 'near', hover: { delay: 700 }, lightbulb: { enabled: 'off' }, mouseWheelScrollSensitivity: 1, fastScrollSensitivity: 5, renderValidationDecorations: 'editable' };
+(function liteScroll() {
+  const plain = (o) => (o && typeof o === 'object' && o.behavior === 'smooth' && isLite() ? { ...o, behavior: 'auto' } : o);
+  for (const k of ['scrollIntoView', 'scrollTo', 'scrollBy']) { const f = Element.prototype[k]; Element.prototype[k] = function (o, ...r) { return f.call(this, plain(o), ...r); }; }
+  for (const k of ['scrollTo', 'scrollBy']) { const f = window[k].bind(window); window[k] = (o, ...r) => f(plain(o), ...r); }
+})();
+function setLite(on) {
+  on = !!on; if (on === isLite()) return;
+  document.documentElement.classList.toggle('lite', on); store.set('lite', on);
+  applyEditorPrefs(); BS.hooks.run('lite:change', on);
+  toast(on ? 'Modo leve ligado: menos efeitos, mais desempenho' : 'Modo leve desligado', 'ok');
+}
 function prefOpts(p = editorPrefs()) {
   const auto = p.autoClose ? 'languageDefined' : 'never';
   return { minimap: { enabled: !!p.minimap }, lineNumbers: p.lineNumbers, renderWhitespace: p.whitespace, stickyScroll: { enabled: !!p.sticky }, guides: { bracketPairs: !!p.brackets, indentation: !!p.guides }, bracketPairColorization: { enabled: !!p.brackets },
     folding: !!p.folding, inlayHints: { enabled: p.inlay ? 'on' : 'off', fontSize: Math.max(10, (S.fontSize || 13) - 2), padding: true }, cursorStyle: p.cursor, smoothScrolling: !!p.smooth, cursorBlinking: p.smooth ? 'smooth' : 'blink', cursorSmoothCaretAnimation: p.smooth ? 'on' : 'off',
-    tabSize: +p.tabSize || 4, insertSpaces: !!p.insertSpaces, detectIndentation: !!p.detectIndent, autoClosingBrackets: auto, autoClosingQuotes: auto, formatOnPaste: !!p.formatOnPaste };
+    tabSize: +p.tabSize || 4, insertSpaces: !!p.insertSpaces, detectIndentation: !!p.detectIndent, autoClosingBrackets: auto, autoClosingQuotes: auto, formatOnPaste: !!p.formatOnPaste, ...(isLite() ? LITE_OPTS : {}) };
 }
 function applyEditorPrefs() {
   const o = prefOpts(); editor?.updateOptions(o); diffEditor?.updateOptions(o);
@@ -502,7 +521,7 @@ function dialog(id, html, bind) {
 }
 // menu do projeto no topo (como o seletor de projeto da barra do IntelliJ)
 function projectSwitcher() {
-  const r = $('#projChip').getBoundingClientRect();
+  const r = $('#btnLogo').getBoundingClientRect();
   const rec = recentProjects().filter(p => !S.project || p.path !== S.project.path).slice(0, 10);
   showMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.left, clientY: r.bottom + 4 }, [
     ...(S.remote ? [] : [{ label: 'Novo projeto…', icon: I.newp, action: () => newProjectDialog() }]),
@@ -1850,7 +1869,8 @@ window.addEventListener('wheel', (e) => {
   if (fn) fn(step); else codeFont(S.fontSize + step);
 }, { passive: false, capture: true });
 
-$('#projChip').onclick = () => projectSwitcher();
+// o nome do projeto na barra de cima só mostra (a barra inteira arrasta a janela): o menu de projetos é o logo
+$('#btnLogo').onclick = () => projectSwitcher();
 $('#projChip').oncontextmenu = (e) => S.project && projectMenu(e, S.project);
 function present(on) {
   $('#app').classList.toggle('present', on); const fs = on ? Math.max(18, S.fontSize + 5) : S.fontSize;
@@ -1979,7 +1999,7 @@ function seActions() {
     A('Selecionar arquivo aberto na árvore', 'Alt+F1', () => treeLocate(), TI.locate), A('Recolher árvore', '', () => { if (!S.project) return; S.treeOpen = new Set(['']); saveTreeOpen(); openTool('project'); }, TI.collapse),
     A('Salvar', 'Ctrl+S', () => save(), I.edit), A('Salvar todos', 'Ctrl+Shift+S', () => saveAll(), I.edit), A('Salvamento automático (liga/desliga)', '', () => setAutoSave(!S.autoSave), I.edit), A('Lint do arquivo', 'Ctrl+Alt+L', () => runLint(), I.lint), A('Lint das alterações', '', () => lintAll(), I.lint),
     A('Ver diff / editor do arquivo atual', '', () => $('#btnView').click(), I.diff), A('Diff lado a lado / em linha', '', () => $('#btnInline').click(), I.diff), A('Quebra de linha', '', () => $('#btnWrap').click(), I.edit),
-    A('Apresentar (tela cheia)', 'F11', () => present(true), I.present), A('Tema claro / escuro', '', () => BS.appearance && BS.appearance.toggle(), I.edit),
+    A('Apresentar (tela cheia)', 'F11', () => present(true), I.present), A('Tema claro / escuro', '', () => BS.appearance && BS.appearance.toggle(), I.edit), A('Modo leve (menos efeitos, para PC fraco): ligar / desligar', '', () => setLite(!isLite()), I.edit),
     A('Atualizar projeto', 'F5', () => refreshAll(), I.refresh), A('Mostrar projeto no Explorer', '', () => S.project && reveal(S.project.path), I.explorer),
     A('Fechar todas as abas', '', () => askClose(S.tabs.slice()), I.x), A('Compactar pacotes intermediários (liga/desliga)', '', () => { S.compact = !S.compact; store.set('compact', S.compact); S.tree = {}; renderTool(); }, I.pkg),
     ...BS.actions.list().map(a => A(a.label, a.k || '', a.run, a.icon)),
@@ -2262,6 +2282,7 @@ keymapLoad(store.get('keymap', null));
 const BS = window.BS = {
   version: null, S, state: S, api, $, esc, toast, store, I, TI, treeIcon, fmtDate, ago, daysAgo, statHtml, copyText, reveal, absPath, showMenu, closeMenu,
   openFile, openTool, setTool, renderTool, renderStrip, renderTree, renderDashboard, refreshProject, refreshAll, selectProject, revealAt, openOutside, openVirtual, openSearch, present, save, saveAll, runLint, lintAll, quickProject,
+  lite: { get on() { return isLite(); }, set: (v) => setLite(v) },
   editorPrefs: { get: () => editorPrefs(), set: (k, v) => setEditorPref(k, v), reset() { store.set('editorPrefs', {}); applyEditorPrefs(); }, defaults: EDITOR_PREFS },
   get editor() { return editor; }, get diffEditor() { return diffEditor; }, get monaco() { return monaco; }, get viewer() { return viewer; },
   // painéis da barra da esquerda: { id, title, icon, key: 'Alt+5', order, render(), bottom?, toggle?() }

@@ -22,7 +22,7 @@
 <link rel="stylesheet" href="vendor/xterm/xterm.css">
 <script>/* pinta o tema salvo antes de tudo (sem piscar); a Aparência (theme.js) confirma depois */
 try { if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) document.documentElement.classList.add('standalone'); } catch {}
-try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStorage.getItem('bs.theme')) || 'dark'; const v = JSON.parse(localStorage.getItem('bs.themeCache') || 'null'); if (v) for (const k in v) r.style.setProperty('--' + k, v[k]); } catch {}</script>
+try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStorage.getItem('bs.theme')) || 'dark'; if (JSON.parse(localStorage.getItem('bs.lite') || 'false')) r.classList.add('lite'); const v = JSON.parse(localStorage.getItem('bs.themeCache') || 'null'); if (v) for (const k in v) r.style.setProperty('--' + k, v[k]); } catch {}</script>
 <style>/* tela de abertura: CSS aqui mesmo para pintar no primeiro quadro, antes do app.css, das fontes e do Monaco */
 #splash { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: var(--canvas, #0F1A2E); color: var(--canvas-fg, #9FB0CE);
   font: 13px/1.4 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; transition: opacity .18s ease-out, visibility 0s .18s; }
@@ -62,9 +62,9 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <div id="busy"></div>
 <div id="app">
   <header id="top">
-    <div class="logo" title="BlueScreen"><img class="mark" src="icon.svg" alt=""></div>
+    <button class="logo" id="btnLogo" title="Projetos: novo, abrir, recentes, fechar (Alt+P troca rápido)" aria-haspopup="menu"><img class="mark" src="icon.svg" alt="BlueScreen"></button>
     <button class="icon-btn" id="btnPanel" title="Painel lateral" aria-controls="tool" aria-expanded="true"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
-    <button class="chip proj-chip" id="projChip" title="Projetos: novo, abrir, recentes, fechar (Alt+P troca rápido)"><b id="projName">Nenhum projeto</b><span class="branch" id="projBranch"></span><svg class="i caret" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div class="proj-chip" id="projChip"><b id="projName">Nenhum projeto</b><span class="branch" id="projBranch"></span></div>
     <button id="seBtn" title="Buscar em tudo (Shift duas vezes)"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span>Buscar classes, arquivos, texto e ações</span></button>
     <div class="split" id="saveGrp"><button class="chip" id="btnSave" title="Salvar arquivo atual (Ctrl+S)"><svg class="i" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span>Salvar</span></button><button class="chip caret" id="btnSaveMenu" title="Opções de salvamento" aria-haspopup="menu"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></button></div>
     <button class="icon-btn" id="btnSettings" title="Configurações: salvamento, aparência, atalhos e rede (Ctrl+,)" aria-haspopup="dialog"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
@@ -231,5 +231,6 @@ try { const r = document.documentElement; r.dataset.theme = JSON.parse(localStor
 <script src="aiclis.js"></script>
 <script src="theme.js"></script>
 <script src="settings.js"></script>
+<script src="logwatch.js"></script>
 </body>
 </html>

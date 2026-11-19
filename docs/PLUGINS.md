@@ -323,6 +323,19 @@ Cuidados:
 - No Estúdio (janela só dos plugins), a tela abre como aba comum, com o X.
 - `bs.pages.isPinned(id)` diz se a tela é fixa.
 
+## Modo leve
+
+Em Configurações › Geral › Desempenho a pessoa pode ligar o **Modo leve**, para PC ou placa de vídeo fracos (desligado por padrão). Com ele, a página ganha a classe `lite` no `<html>` e o CSS do núcleo tira de **tudo**, inclusive do `style.css` do seu plugin, as animações, as transições, o `backdrop-filter` e a rolagem suave; só o `.spin` continua girando. O editor perde minimapa, rolagem suave, cabeçalho fixo e os destaques que recalculam a cada tecla.
+
+O que o CSS não alcança fica com o plugin: animação em JavaScript (`requestAnimationFrame`, canvas, gráficos que se mexem) deve parar ou ficar mais lenta quando `bs.lite.on` for `true`. A troca avisa no gancho `lite:change`:
+
+```js
+const leve = () => bs.lite.on;
+bs.hooks.on('lite:change', (ligado) => ligado ? pararAnimacao() : voltarAnimacao());
+```
+
+Em CSS, o seletor é `html.lite` (por exemplo, `html.lite .meu-grafico { display: none; }`).
+
 ## Gravar a tela e o som (`bs.capture`)
 
 Para gravador, transmissão ou print: a IDE captura uma tela, uma janela e o som do computador direto do Windows. O usuário não vê a janela "Escolha o que compartilhar" do navegador e não precisa marcar "Compartilhar áudio do sistema". Você monta o seletor no seu plugin, e o que chega é um `MediaStream` comum (MediaRecorder, `<video>`, WebAudio):

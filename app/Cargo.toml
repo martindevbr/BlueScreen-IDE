@@ -1,7 +1,7 @@
 [package]
 name = "bluescreen"
 # X.Y daqui; o Z de cada versão publicada é o GitHub Actions que escolhe (.github/workflows/release.yml)
-version = "2.4.0"
+version = "2.5.0"
 edition = "2024"
 repository = "https://github.com/martindevbr/BlueScreen-IDE"
 license-file = "../LICENSE"
@@ -38,7 +38,7 @@ tokio = { version = "1.53.3", features = ["full"] }
 # a mesma versão que o axum já traz (WebSocket): aqui é o cliente que conversa com o navegador do nó Navegador
 tokio-tungstenite = "0.29.0"
 urlencoding = "2.1.3"
-windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Dwm", "Win32_Foundation", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_Storage_Xps"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Dwm", "Win32_Foundation", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_Storage_Xps", "Win32_System_Diagnostics_ToolHelp"] }
 wry = { version = "0.57.0", features = ["devtools"] }
 # a mesma que o wry já traz: COM para a captura nativa (som do computador pelo WASAPI e JPEG pelo WIC, src/capture.rs)
 windows = { version = "0.62.2", features = ["Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Memory", "Win32_System_Variant", "Win32_Graphics_Imaging"] }
