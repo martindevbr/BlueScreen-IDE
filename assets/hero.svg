@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 540" role="img" aria-label="BlueScreen: leve como um editor, completa como uma IDE. 25 MB instalada, abre em 0,4 s, núcleo em Rust.">
+  <defs>
+    <linearGradient id="ceu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#03050D"/><stop offset=".62" stop-color="#081230"/><stop offset="1" stop-color="#0E2466"/></linearGradient>
+    <radialGradient id="sol" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#3B7BFF" stop-opacity=".75"/><stop offset=".45" stop-color="#2A5BFF" stop-opacity=".22"/><stop offset="1" stop-color="#2A5BFF" stop-opacity="0"/></radialGradient>
+    <linearGradient id="chao" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4C8DFF" stop-opacity="0"/><stop offset="1" stop-color="#4C8DFF" stop-opacity=".5"/></linearGradient>
+    <linearGradient id="titulo" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#9CC4FF"/></linearGradient>
+    <linearGradient id="brilho" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="lbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17245C"/><stop offset="1" stop-color="#04060F"/></linearGradient>
+    <linearGradient id="lrim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7FB4FF" stop-opacity=".9"/><stop offset="1" stop-color="#2B55E6" stop-opacity=".35"/></linearGradient>
+    <linearGradient id="lel" x1="100" y1="48" x2="196" y2="212" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7ADCFF"/><stop offset="1" stop-color="#1B55FF"/></linearGradient>
+    <clipPath id="quadro"><rect width="1280" height="540" rx="18"/></clipPath>
+    <clipPath id="letras"><text x="640" y="300" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="92" font-weight="700" letter-spacing="-2">BlueScreen</text></clipPath>
+  </defs>
+  <style>
+    .f { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+    .m { font-family: 'Cascadia Code', Consolas, 'SF Mono', Menlo, monospace; }
+    .sobe { opacity: 0; animation: sobe 1s cubic-bezier(.2, .8, .2, 1) forwards; }
+    .a1 { animation-delay: .2s; } .a2 { animation-delay: .7s; } .a3 { animation-delay: 1.2s; } .a4 { animation-delay: 1.7s; }
+    .pulsa { animation: pulsa 7s ease-in-out infinite; transform-origin: 640px 250px; }
+    .varre { animation: varre 6s ease-in-out 2.4s infinite; }
+    .grade { animation: grade 2.4s linear infinite; }
+    .pisca { animation: pisca 1.1s steps(1) infinite; }
+    .barra { animation: barra 1.4s cubic-bezier(.2, .8, .2, 1) forwards; }
+    @keyframes sobe { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    @keyframes pulsa { 50% { transform: scale(1.12); opacity: .8; } }
+    @keyframes varre { 0%, 55% { transform: translateX(-520px); } 100% { transform: translateX(980px); } }
+    @keyframes grade { to { transform: translateY(34px); } }
+    @keyframes pisca { 50% { opacity: 0; } }
+    @keyframes barra { from { height: 270px; } to { height: 44px; } }
+    @media (prefers-reduced-motion: reduce) { .sobe { opacity: 1; animation: none; } .pulsa, .varre, .grade, .pisca { animation: none; } .barra { animation: none; height: 44px; } }
+  </style>
+  <g clip-path="url(#quadro)">
+    <rect width="1280" height="540" fill="url(#ceu)"/>
+    <!-- estrelas -->
+    <g fill="#BFD6FF">
+      <circle cx="96" cy="88" r="1.2" opacity=".7"/><circle cx="214" cy="150" r=".9" opacity=".5"/><circle cx="330" cy="72" r="1.1" opacity=".6"/><circle cx="452" cy="118" r=".8" opacity=".45"/>
+      <circle cx="826" cy="96" r="1" opacity=".55"/><circle cx="948" cy="64" r="1.3" opacity=".7"/><circle cx="1064" cy="140" r=".9" opacity=".5"/><circle cx="1182" cy="92" r="1.1" opacity=".6"/>
+      <circle cx="150" cy="232" r=".8" opacity=".4"/><circle cx="1130" cy="226" r=".8" opacity=".4"/><circle cx="560" cy="60" r=".9" opacity=".5"/><circle cx="720" cy="84" r=".8" opacity=".45"/>
+    </g>
+    <!-- o clarão atrás do título -->
+    <ellipse class="pulsa" cx="640" cy="250" rx="430" ry="200" fill="url(#sol)"/>
+    <!-- chão em perspectiva -->
+    <g opacity=".55">
+      <g stroke="url(#chao)" stroke-width="1.2" fill="none">
+        <path d="M640 372L-420 540M640 372L-140 540M640 372L140 540M640 372L400 540M640 372L640 540M640 372L880 540M640 372L1140 540M640 372L1420 540M640 372L1700 540"/>
+      </g>
+      <g class="grade" stroke="#4C8DFF" fill="none">
+        <path d="M0 378H1280" stroke-opacity=".10"/><path d="M0 392H1280" stroke-opacity=".16"/><path d="M0 412H1280" stroke-opacity=".24"/>
+        <path d="M0 440H1280" stroke-opacity=".32"/><path d="M0 478H1280" stroke-opacity=".42"/><path d="M0 528H1280" stroke-opacity=".5"/>
+      </g>
+      <rect y="366" width="1280" height="12" fill="#081230"/>
+    </g>
+    <path d="M0 372H1280" stroke="#6CA2FF" stroke-opacity=".55" stroke-width="1.2"/>
+
+    <!-- logo -->
+    <g class="sobe a1">
+      <g transform="translate(592 92) scale(.375)">
+        <rect x="10" y="10" width="236" height="236" rx="54" fill="url(#lbg)"/>
+        <rect x="11.500" y="11.500" width="233" height="233" rx="52.500" fill="none" stroke="url(#lrim)" stroke-width="3"/>
+        <g transform="translate(11 0) skewX(-9) translate(6 0)" fill="none" stroke-linejoin="miter" stroke-miterlimit="6">
+          <rect x="62" y="50" width="29" height="156" rx="3" fill="#F2F8FF"/>
+          <path d="M112 60L172 90L112 120" stroke="url(#lel)" stroke-width="28"/>
+          <path d="M112 132L188 168L112 204" stroke="#0A1030" stroke-width="46"/>
+          <path d="M112 132L188 168L112 204" stroke="url(#lel)" stroke-width="28"/>
+        </g>
+      </g>
+    </g>
+    <!-- título com o reflexo que passa -->
+    <g class="sobe a2">
+      <text class="f" x="640" y="300" text-anchor="middle" font-size="92" font-weight="700" letter-spacing="-2" fill="url(#titulo)">BlueScreen</text>
+      <g clip-path="url(#letras)"><rect class="varre" x="0" y="210" width="260" height="110" fill="url(#brilho)" transform="skewX(-18)"/></g>
+    </g>
+    <text class="f sobe a3" x="640" y="346" text-anchor="middle" font-size="25" fill="#C9DAFF" letter-spacing=".3">Leve como um editor. Completa como uma IDE.</text>
+    <!-- os três números -->
+    <g class="sobe a4 m" font-size="15" text-anchor="middle">
+      <g><rect x="352" y="408" width="172" height="40" rx="20" fill="#0B1638" stroke="#4C8DFF" stroke-opacity=".5"/><text x="438" y="433" fill="#E6EEFF"><tspan fill="#7ADCFF" font-weight="700">25 MB</tspan> instalada</text></g>
+      <g><rect x="542" y="408" width="196" height="40" rx="20" fill="#0B1638" stroke="#4C8DFF" stroke-opacity=".5"/><text x="640" y="433" fill="#E6EEFF">abre em <tspan fill="#7ADCFF" font-weight="700">0,4 s</tspan></text></g>
+      <g><rect x="756" y="408" width="172" height="40" rx="20" fill="#0B1638" stroke="#4C8DFF" stroke-opacity=".5"/><text x="842" y="433" fill="#E6EEFF">núcleo em <tspan fill="#7ADCFF" font-weight="700">Rust</tspan></text></g>
+    </g>
+    <!-- faixas de cinema: abrem como uma cortina -->
+    <rect class="barra" width="1280" height="44" fill="#000"/>
+    <rect class="barra" width="1280" height="44" fill="#000" transform="translate(0 540) scale(1 -1)"/>
+    <text class="m" x="36" y="28" font-size="12" fill="#5C7BB8" letter-spacing="2">WINDOWS 10 · 11</text>
+    <text class="m" x="1244" y="28" font-size="12" fill="#5C7BB8" letter-spacing="2" text-anchor="end">REC <tspan class="pisca" fill="#E5484D">●</tspan></text>
+    <text class="m" x="640" y="524" font-size="12" fill="#5C7BB8" letter-spacing="3" text-anchor="middle">EDITAR · EXECUTAR · DEPURAR · AUTOMATIZAR</text>
+  </g>
+</svg>

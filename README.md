@@ -1,14 +1,91 @@
-<p align="center"><img src="assets/bluescreen.png" width="96" alt=""></p>
+<p align="center"><img src="assets/hero.svg" alt="BlueScreen: leve como um editor, completa como uma IDE. 25 MB instalada, abre em 0,4 s, núcleo em Rust." width="100%"></p>
 
-<h1 align="center">BlueScreen</h1>
+<p align="center">
+  <a href="https://github.com/martindevbr/BlueScreen-IDE/releases/latest"><img src="https://img.shields.io/github/v/release/martindevbr/BlueScreen-IDE?style=for-the-badge&label=vers%C3%A3o&color=2A6BFF&labelColor=0B1638" alt="Última versão"></a>
+  <a href="https://github.com/martindevbr/BlueScreen-IDE/releases"><img src="https://img.shields.io/github/downloads/martindevbr/BlueScreen-IDE/total?style=for-the-badge&label=downloads&color=2A6BFF&labelColor=0B1638" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%C2%B7%2011-2A6BFF?style=for-the-badge&labelColor=0B1638" alt="Windows 10 e 11">
+  <img src="https://img.shields.io/badge/n%C3%BAcleo-Rust-2A6BFF?style=for-the-badge&labelColor=0B1638" alt="Núcleo em Rust">
+</p>
 
-<p align="center">IDE leve para Windows: núcleo em Rust, editor Monaco, 25 MB instalada, abre em 0,4 s.</p>
+<p align="center">
+  <a href="#estreia-em-30-segundos"><b>Baixar</b></a> ·
+  <a href="#em-cena"><b>Ver em cena</b></a> ·
+  <a href="docs/PLUGINS.md"><b>Criar plugins</b></a> ·
+  <a href="https://github.com/martindevbr/BlueScreen-Plugins"><b>Loja</b></a> ·
+  <a href="#ficha-técnica"><b>Ficha técnica</b></a>
+</p>
 
-<p align="center"><img src="docs/img/preview-markdown.png" alt="BlueScreen com um README aberto e a visualização ao lado" width="860"></p>
+<br>
 
-A análise e a depuração de cada linguagem vêm das ferramentas oficiais que você instala (rust-analyzer, pyright, gopls, clangd, debugpy...), pelos mesmos protocolos do VS Code (LSP e DAP).
+<h3 align="center">Você dá dois cliques. Antes de soltar o mouse, ela já abriu.</h3>
 
-## Instalar
+<p align="center">
+O BlueScreen é uma IDE para Windows que cabe em <b>25 MB</b> e abre em <b>0,4 s</b>.<br>
+O núcleo é em Rust, o editor é o Monaco, e a análise e a depuração de cada linguagem vêm das<br>
+ferramentas oficiais (rust-analyzer, pyright, gopls, clangd, debugpy...), pelos mesmos protocolos do VS Code (LSP e DAP).
+</p>
+
+<br>
+
+## Em cena
+
+<table>
+<tr><td width="88" align="center"><h3>01</h3></td><td>
+
+### O editor que não faz você esperar
+
+Abra a pasta e comece: cores, completar, ir para a definição, renomear em todos os arquivos, executar o `main` pelo ▶ da margem e depurar.
+Na linha do cursor, quem mexeu por último e quando. Embaixo, o terminal de verdade: PowerShell, cmd, Git Bash ou WSL.
+
+</td></tr>
+</table>
+
+<p align="center"><img src="docs/img/cena-editor.png" alt="O editor com um arquivo TypeScript aberto, a árvore do projeto e o terminal embaixo" width="100%"></p>
+
+<table>
+<tr><td width="88" align="center"><h3>02</h3></td><td>
+
+### Git e SVN sem sair da tela
+
+Marque os arquivos, escreva a mensagem e `Ctrl+Enter`. Troque de branch, traga e envie.
+Na área grande, a linha do tempo de todos os repositórios da pasta: o último commit de cada um, quem mexeu, os arquivos mais mexidos e o que falta enviar ou baixar do origin.
+
+</td></tr>
+</table>
+
+<p align="center"><img src="docs/img/cena-alteracoes.png" alt="O painel Alterações: commit à esquerda e a linha do tempo dos commits à direita" width="100%"></p>
+
+<table>
+<tr><td width="88" align="center"><h3>03</h3></td><td>
+
+### Uma loja inteira de plugins
+
+`Alt+7` abre o catálogo: gravador de reuniões com ata por IA, cliente HTTP, kit de QA, automações, temas.
+Instala sem recarregar a janela. E, se o que você quer não existe, o [IAMaker](https://github.com/martindevbr/BlueScreen-Plugins/blob/main/plugins/iamaker/README.md) escreve o plugin enquanto você descreve.
+
+</td></tr>
+</table>
+
+<p align="center"><img src="docs/img/cena-loja.png" alt="A loja de plugins, com o destaque e as fileiras de plugins" width="100%"></p>
+
+<br>
+
+## O elenco
+
+| | |
+|---|---|
+| ⚡ **Leve de verdade** | 25 MB instalada, abre em 0,4 s. Para PC fraco, o **Modo leve** tira animações e desfoques. |
+| 🧠 **Inteligente sem instalar nada** | Autocompletar em 14 linguagens e lint em 16, embutidos. Com o servidor da linguagem instalado, vale o dele. |
+| ▶️ **Executar e depurar** | ▶ na margem de cada `main`, depurador com breakpoints condicionais, build para mais de 60 ferramentas. |
+| 🌿 **Git e SVN** | Commit, branches, pull e push, diff lado a lado editável, histórico e linha do tempo de vários repositórios. |
+| 🤖 **Automator** | Fluxos em nós que rodam na hora marcada, quando um arquivo muda ou quando chamam um endpoint. [Guia](docs/AUTOMACOES.md) |
+| 🧩 **Plugins** | Uma pasta com `plugin.json` e `ui.js`. Loja, cofre de credenciais e API para tela, som e captura. [Guia](docs/PLUGINS.md) |
+| 📊 **Arquivos de todo tamanho** | Logs e CSVs de vários GB abrem na hora; `.csv` e `.xlsx` viram planilha editável. |
+| 📱 **No celular** | Abra a IDE do PC pelo celular, na rede local, com PIN. [Guia](docs/CELULAR.md) |
+
+<br>
+
+## Estreia em 30 segundos
 
 Windows 10 ou 11, 64 bits, com o [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (já vem no Windows 11).
 
@@ -25,7 +102,15 @@ BlueScreen.exe --web               # abre no navegador em vez da janela
 BlueScreen.exe --doc dados.xlsx    # só o documento, numa janela leve (.csv, .tsv, .xlsx)
 ```
 
-## Atalhos
+<br>
+
+## Ficha técnica
+
+O manual inteiro, para abrir só o que interessa.
+
+<details>
+<summary><b>⌨️ Atalhos</b></summary>
+<br>
 
 | Atalho | O que faz |
 |---|---|
@@ -51,7 +136,11 @@ BlueScreen.exe --doc dados.xlsx    # só o documento, numa janela leve (.csv, .t
 | `F1` | Configurações, já em Teclas de atalho: a lista inteira, e um clique numa tecla troca ela |
 | `Ctrl` + roda do mouse | tamanho da letra do código; sobre o terminal, só a do terminal (`Ctrl++`, `Ctrl+-` e `Ctrl+0` também) |
 
-## Linguagens
+</details>
+
+<details>
+<summary><b>🗣️ Linguagens: análise, refatoração e depuração</b></summary>
+<br>
 
 Na primeira vez que você abre um arquivo de uma linguagem, a IDE procura o servidor dela no `PATH`. Se não achar, a status bar oferece instalar. Enquanto isso, o editor tem cores, completar por palavras e o lint embutido.
 
@@ -74,7 +163,11 @@ Outra ferramenta ou outro caminho: liste em `~/.bluescreen/tools.json`.
 [{ "id": "meu-ls", "kind": "lsp", "name": "Meu servidor", "langs": ["python"], "command": "C:\\ferramentas\\meu-ls.exe", "args": ["--stdio"] }]
 ```
 
-## O que vem pronto
+</details>
+
+<details>
+<summary><b>📦 Tudo o que vem pronto</b></summary>
+<br>
 
 - **Automações e produtividade:** [Automator e Agenda](docs/AUTOMACOES.md). Monte fluxos em nós, no modelo do HexLab, com laços, tentativas e variáveis, um navegador que automatiza sites inteiros (com gravador de passos) e conexões por SSH, SFTP, e-mail, FTP, banco de dados e MQTT, que rodam quando você manda, na hora marcada, ao abrir a IDE ou quando um arquivo muda, ou quando chamam o endpoint do fluxo, com nós de arquivos, texto, imagem, áudio, vídeo, PowerShell, HTTP, segurança de endpoint, auditoria de sites, Dynatrace, agentes de IA e de sites (abrir, clicar, digitar, ler), e plugins podem acrescentar outros; receba lembretes pelo Windows, com os compromissos do Google Agenda e do Outlook junto dos seus (a Agenda lê o link ICS da agenda, só para leitura); peça ao Codex e ao Claude Code para revisar uma decisão; e compartilhe coleções de plugins com a equipe. Ao fechar a janela principal, a IDE continua na bandeja: **Sair do BlueScreen**, no ícone, encerra.
 
@@ -97,8 +190,27 @@ Outra ferramenta ou outro caminho: liste em `~/.bluescreen/tools.json`.
 - **Planilhas:** `.csv` e `.xlsx` abrem numa tabela editável, com fórmulas e formatação (plugin [`sheets`](app/plugins/sheets/README.md)). No Windows, o BlueScreen aparece no **Abrir com** desses arquivos e abre só o documento, numa janela leve, sem mexer na IDE aberta (`BlueScreen.exe --doc arquivo.xlsx`). Para ser o programa padrão, marque "Sempre usar este aplicativo".
 - **Mudanças feitas fora da IDE** (git pull, formatador, outro editor) entram na aba aberta; se você também mexeu, é feito merge de três vias.
 - **Rede local:** em **Configurações › Rede local** (a engrenagem do topo), ligue o acesso: abre `http://<ip-do-pc>:4748` com PIN, para usar pelo celular. Um ponto na engrenagem e o endereço no rodapé avisam que a rede está ligada. Build, terminal, depurador e plugins só funcionam no próprio PC. Abra sempre pelo IP (um nome como `meupc.local` é recusado), e pela rede só os projetos dentro da pasta do BlueScreen aparecem. PIN errado demais trava o login por um tempo e, sem `BLUESCREEN_PIN`, troca o PIN; a sessão vale 24 h. O QR code dessa tela instala o BlueScreen no celular: no iPhone, como app da Tela de Início (Safari); no Android, o APK servido pelo próprio PC ([guia](docs/CELULAR.md)).
+- **Modo leve:** em **Configurações › Geral › Desempenho**, para PC ou placa de vídeo fracos: sem animações, desfoques e sombras grandes (na IDE e nos plugins) e um editor mais simples. Desligado por padrão.
+- **Aviso de log pesado:** quando um log da IDE, de um plugin ou do projeto passa de 1 MB, um aviso na barra de baixo oferece abrir, esvaziar deixando só o final ou parar de avisar.
+- **Terminal executando algo:** fechar a aba (ou sair da IDE) pergunta antes de encerrar o que está rodando.
 
-## Compilar
+</details>
+
+<details>
+<summary><b>🧩 Plugins, cofre e loja</b></summary>
+<br>
+
+Um plugin é uma pasta em `app/plugins/<id>` ou `~/.bluescreen/plugins/<id>` com `plugin.json`, `ui.js` e, se precisar, um servidor próprio (um script Node.js, Python ou PowerShell, ou um programa em qualquer linguagem). Liga e desliga em `Alt+7`. Cada plugin tem uma pasta de dados própria, configurações declaradas no `plugin.json` e acesso a rodar programas e fazer HTTP pelo núcleo. Guia: [docs/PLUGINS.md](docs/PLUGINS.md).
+
+**Cofre de credenciais** (chave na barra da esquerda, `Alt+8`): tokens (GitHub, OpenAI, Jira...) que você guarda uma vez e libera para os plugins que quiser. Ficam cifrados neste PC, e os plugins usam sem ver o valor, só nos sites e programas que você liberar. Cada liberação pede confirmação numa caixa do Windows. Detalhes: [docs/PLUGINS.md#cofre](docs/PLUGINS.md#cofre).
+
+A **Loja de plugins** abre junto com o painel Plugins (`Alt+7`): é o catálogo do repositório [martindevbr/BlueScreen-Plugins](https://github.com/martindevbr/BlueScreen-Plugins), com busca, a página de cada plugin e instalação sem recarregar a janela. Cada cartão mostra quem publicou o plugin (o autor do primeiro commit), a última edição e o tamanho; depois de instalado, o espaço que ele ocupa no disco. Veja [Loja de plugins](docs/PLUGINS.md#loja-de-plugins).
+
+</details>
+
+<details>
+<summary><b>🛠️ Compilar a partir do código</b></summary>
+<br>
 
 Rust stable (MSVC) e Visual Studio Build Tools com C++. Na pasta `app`:
 
@@ -122,18 +234,20 @@ A interface (`app/wwwroot`) não tem build: edite o `.js` ou `.css` e recarregue
 
 Cada push na `main` que mexe no app gera um Release `vX.Y.Z`. `X.Y` vem do `app/Cargo.toml`. Para um push não gerar versão, ponha `[skip release]` na mensagem do commit.
 
-## Plugins
+</details>
 
-Um plugin é uma pasta em `app/plugins/<id>` ou `~/.bluescreen/plugins/<id>` com `plugin.json`, `ui.js` e, se precisar, um servidor próprio (um script Node.js, Python ou PowerShell, ou um programa em qualquer linguagem). Liga e desliga em `Alt+7`. Cada plugin tem uma pasta de dados própria, configurações declaradas no `plugin.json` e acesso a rodar programas e fazer HTTP pelo núcleo. Guia: [docs/PLUGINS.md](docs/PLUGINS.md).
-
-**Cofre de credenciais** (chave na barra da esquerda, `Alt+8`): tokens (GitHub, OpenAI, Jira...) que você guarda uma vez e libera para os plugins que quiser. Ficam cifrados neste PC, e os plugins usam sem ver o valor, só nos sites e programas que você liberar. Cada liberação pede confirmação numa caixa do Windows. Detalhes: [docs/PLUGINS.md#cofre](docs/PLUGINS.md#cofre).
-
-A **Loja de plugins** abre junto com o painel Plugins (`Alt+7`): é o catálogo do repositório [martindevbr/BlueScreen-Plugins](https://github.com/martindevbr/BlueScreen-Plugins), com busca, a página de cada plugin e instalação sem recarregar a janela. Cada cartão mostra quem publicou o plugin (o autor do primeiro commit), a última edição e o tamanho; depois de instalado, o espaço que ele ocupa no disco. Veja [Loja de plugins](docs/PLUGINS.md#loja-de-plugins).
-
-## Configurações
+<details>
+<summary><b>⚙️ Onde ficam as configurações</b></summary>
+<br>
 
 Em `~/.bluescreen/`: `tools.json` (ferramentas próprias), `plugins.json` (plugins ligados e servidores), `plugins/` (seus plugins), `plugin-data/` (dados de cada plugin), `vault.json` (o cofre, cifrado), `sdk/` (bibliotecas de apoio dos servidores em script) e `bluescreen.log`.
 
-## Licença
+</details>
+
+<br>
+
+## Créditos
 
 Copyright (c) 2025-2026 Martin Hartfelder. Código aberto para leitura, uso e contribuições, mas **não é software livre**: copiar, redistribuir ou usar comercialmente exige autorização por escrito. Plugins próprios podem usar a licença que o autor quiser. Termos em [LICENSE](LICENSE); componentes de terceiros em [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Para contribuir, veja [CONTRIBUTING.md](CONTRIBUTING.md).
+
+<p align="center"><br><img src="assets/bluescreen.png" width="44" alt=""></p>
