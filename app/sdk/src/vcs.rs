@@ -500,7 +500,7 @@ pub async fn local_ref(dir: &Path, vcs: Option<&str>) -> serde_json::Value {
     }
 }
 
-// ---------- vários repositórios e linha do tempo (o painel Alterações em tela grande e o "Investigar incidente") ----------
+// ---------- vários repositórios e linha do tempo (o painel Alterações em tela grande) ----------
 #[derive(Serialize, Clone)]
 pub struct Repo {
     pub path: String,
@@ -681,69 +681,6 @@ pub async fn timeline(dir: &Path, since: i64, until: Option<i64>, max: usize) ->
                 }).collect();
                 Some(TimelineCommit { c: Commit { id: Some(c.hash.clone()), hash: format!("r{}", c.hash), ..c }, refs: vec![], merge: false, files, place: None })
             }).collect()
-        }
-        _ => vec![],
-    }
-}
-
-/// Uma linha somada ou removida, num commit do período, que contém um dos termos procurados.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-pub struct Hit { pub commit: String, pub file: String, pub line: usize, pub sign: char, pub term: String, pub text: String }
-/// Lê a saída de "git log -p -U0" (commits marcados com \x1e + hash) ou de "svn log --diff" e devolve as linhas
-/// que mudaram e contêm um termo. Até 3 por termo em cada arquivo de cada commit, `max` no total.
-fn scan_patch(out: &str, terms: &[String], pre: &str, max: usize) -> Vec<Hit> {
-    static HUNK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@@ -(\d+)(?:,\d+)? \+(\d+)").unwrap());
-    static SVN_REV: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^r(\d+) \| ").unwrap());
-    let (mut commit, mut file, mut old_file) = (String::new(), None::<String>, None::<String>);
-    let (mut lo, mut ln, mut in_hunk) = (0usize, 0usize, false);
-    let mut per: HashMap<(String, String, String), usize> = HashMap::new();
-    let mut hits = vec![];
-    let path = |p: &str| strip_prefix(unquote(p.split('\t').next().unwrap_or(p).trim()), pre);
-    for l in out.lines() {
-        if let Some(h) = l.strip_prefix('\x1e') { commit = h.trim().to_string(); file = None; in_hunk = false; continue; }
-        if !in_hunk || !(l.starts_with('+') || l.starts_with('-') || l.starts_with(' ') || l.starts_with('\\')) {
-            if let Some(c) = SVN_REV.captures(l) { commit = c[1].to_string(); file = None; in_hunk = false; continue; }
-            if let Some(p) = l.strip_prefix("--- ") { old_file = p.strip_prefix("a/").and_then(path); in_hunk = false; continue; }
-            if let Some(p) = l.strip_prefix("+++ ") { file = if p.starts_with("/dev/null") { old_file.clone() } else { path(p.strip_prefix("b/").unwrap_or(p)) }; in_hunk = false; continue; }
-            if let Some(p) = l.strip_prefix("Index: ") { file = path(p); in_hunk = false; continue; }
-            if let Some(c) = HUNK.captures(l) { lo = c[1].parse().unwrap_or(1); ln = c[2].parse().unwrap_or(1); in_hunk = true; continue; }
-            in_hunk = false; continue;
-        }
-        let (sign, at) = match l.as_bytes()[0] { b'+' => { ln += 1; ('+', ln - 1) } b'-' => { lo += 1; ('-', lo - 1) } b' ' => { lo += 1; ln += 1; continue } _ => continue };
-        let Some(f) = &file else { continue };
-        let body = &l[1..];
-        if body.len() > 2000 { continue; } // linha minificada: não é ali que alguém vai ler
-        let low = body.to_lowercase();
-        for t in terms {
-            if !low.contains(t.as_str()) { continue; }
-            let k = per.entry((commit.clone(), f.clone(), t.clone())).or_insert(0);
-            if *k >= 3 { continue; }
-            *k += 1;
-            hits.push(Hit { commit: commit.clone(), file: f.clone(), line: at, sign, term: t.clone(), text: body.trim().chars().take(220).collect() });
-            if hits.len() >= max { return hits; }
-        }
-    }
-    hits
-}
-/// Procura os termos (um erro colado, o nome de uma classe, uma tabela) nas linhas que os commits do período somaram
-/// ou removeram. Termos com menos de 3 letras ficam de fora; no máximo 12.
-pub async fn scan(dir: &Path, since: i64, until: Option<i64>, terms: &[String], max: usize) -> Vec<Hit> {
-    let mut terms: Vec<String> = terms.iter().map(|t| t.trim().to_lowercase()).filter(|t| t.chars().count() >= 3).collect();
-    terms.sort(); terms.dedup(); terms.truncate(12);
-    if terms.is_empty() { return vec![]; }
-    match detect(dir) {
-        Some("git") => {
-            let (s, u) = (format!("--since=@{since}"), until.map(|u| format!("--until=@{u}")));
-            let mut a = vec!["log", "-n", "400", &s];
-            if let Some(u) = &u { a.push(u); }
-            a.extend(["--format=%x1e%H", "-p", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--", "."]);
-            let (r, pre) = tokio::join!(git_t(dir, &a, 60000), git_prefix(dir));
-            scan_patch(&r.out, &terms, &pre, max)
-        }
-        Some("svn") => {
-            let range = format!("{}:{{{}}}", until.map(|u| format!("{{{}}}", iso_utc(u))).unwrap_or_else(|| "HEAD".into()), iso_utc(since));
-            let r = svn_t(dir, &["log", "-r", &range, "-l", "100", "--diff", "-x", "-U0"], 90000).await;
-            scan_patch(&r.out, &terms, "", max)
         }
         _ => vec![],
     }
@@ -987,53 +924,6 @@ mod tests {
         assert_eq!(f[0].del, Some(1));
     }
 
-    #[test]
-    fn termos_nas_linhas_que_mudaram() {
-        let out = "aaa111
-diff --git a/sub/Pedido.java b/sub/Pedido.java
---- a/sub/Pedido.java
-+++ b/sub/Pedido.java
-@@ -10,2 +10,3 @@ class Pedido {
--    int total = soma();
--    return total;
-+    BigDecimal total = somaComDesconto();
-+    log.info(\"total\");
-+    return total;
-bbb222
-diff --git a/fora.txt b/fora.txt
---- a/fora.txt
-+++ b/fora.txt
-@@ -1 +1 @@
--somaComDesconto
-+x
-diff --git a/sub/velho.sql b/sub/velho.sql
---- a/sub/velho.sql
-+++ /dev/null
-@@ -3 +0,0 @@
--DROP TABLE desconto;
-";
-        let h = scan_patch(out, &["somacomdesconto".into(), "drop table".into()], "sub/", 50);
-        assert_eq!(h.len(), 2, "{h:?}");
-        assert_eq!((h[0].commit.as_str(), h[0].file.as_str(), h[0].line, h[0].sign), ("aaa111", "Pedido.java", 10, '+'));
-        assert_eq!((h[1].commit.as_str(), h[1].file.as_str(), h[1].line, h[1].sign, h[1].term.as_str()), ("bbb222", "velho.sql", 3, '-', "drop table"));
-        // svn log --diff: revisão na linha "r12 | autor | data", arquivo em "Index:"
-        let svn = "------------------------------------------------------------------------
-r12 | ana | 2024-01-02 03:04:05 +0000 (Tue, 02 Jan 2024) | 1 line
-
-msg
-
-Index: src/a.rs
-===================================================================
---- src/a.rs	(revision 11)
-+++ src/a.rs	(revision 12)
-@@ -5 +5 @@
--let x = 1;
-+let x = timeout_ms;
-";
-        let h = scan_patch(svn, &["timeout_ms".into()], "", 50);
-        assert_eq!(h.len(), 1, "{h:?}");
-        assert_eq!((h[0].commit.as_str(), h[0].file.as_str(), h[0].line), ("12", "src/a.rs", 5));
-    }
     #[test]
     fn log_do_svn() {
         let xml = r#"<log><logentry revision="12"><author>ana</author><date>2024-01-02T03:04:05.000000Z</date><msg>corrige &amp; testa

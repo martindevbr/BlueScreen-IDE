@@ -22,13 +22,6 @@ pub(super) fn add_routes(m: &mut HashMap<String, RouteFn>) {
         let since = r.q_or("since", "0").parse().unwrap_or(0);
         ok(vcs::timeline(&project(&r)?, since, r.q("until").and_then(|u| u.parse().ok()), r.q_or("n", "400").parse().unwrap_or(400)).await)
     }));
-    // POST { terms: [..] }: as linhas somadas/removidas no período que contêm um dos termos (o erro colado no incidente)
-    add("scan", route_fn(|r| async move {
-        let b: Value = r.body_json()?;
-        let terms: Vec<String> = b["terms"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
-        let since = r.q_or("since", "0").parse().unwrap_or(0);
-        ok(vcs::scan(&project(&r)?, since, r.q("until").and_then(|u| u.parse().ok()), &terms, 400).await)
-    }));
     // ----- gravar no repositório: só da própria máquina (quem entra pela rede local lê e edita, mas não commita) -----
     // POST { files: [{ path, code }], message, amend?, all? }: commit desses arquivos (Git e SVN)
     add("vcs/commit", route_fn(|r| async move {

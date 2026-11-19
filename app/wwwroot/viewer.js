@@ -195,6 +195,9 @@ function vwReload(t) {
 // dirty() põe o ponto de "não salvo" na aba: fechar pergunta, Ctrl+S e "Salvar tudo" chamam save(), e
 // "Fechar sem salvar" chama discard(). unsaved() devolve o texto do que está por salvar (o nome do fluxo, por exemplo).
 // Para o ícone na barra da esquerda: bs.tools.register({ id, title, icon, order, page: '<id da tela>' }).
+// Sair de uma tela fecha a aba dela (a tela guarda o estado e volta igual ao abrir de novo): só os arquivos ficam
+// abertos lado a lado. Ficam também a tela com alteração não salva, a aba fixa do painel que está escolhido e a tela
+// registrada com persistent: true (para o plugin cuja tela precisa continuar aberta ao lado dos arquivos).
 // Com render() nesse registro, o painel da esquerda é da tela: aparece no lugar do painel de arquivos enquanto a aba
 // dela está na frente e devolve o lugar ao painel anterior quando outra aba entra.
 // Aba fixa (pinned: true): a tela é o lado grande de um painel da esquerda. A aba dela fica sempre na primeira posição,
@@ -223,7 +226,11 @@ function vwReload(t) {
     setTimeout(relayout);
   };
   const toolBack = (page) => { const cur = BS.tools.get(S.tool); if (!cur || !cur.page || !cur.render || (page && cur.page !== page)) return; S.tool = PG.prevTool && BS.tools.get(PG.prevTool) ? PG.prevTool : 'project'; PG.prevTool = null; btnState(); renderTool(); };
+  // a tela que ficou para trás sai (no Estúdio as telas fecham pelo X, como sempre)
+  const keepPage = (x) => { const d = PG.defs.get(x.page); if (!d || d.persistent || x.dirty) return true; if (x.pinned) { const o = toolOf(x.page); if (o && S.tool === o.id) return true; } return false; };
+  const leave = () => { if (STUDIO) return; for (const x of S.tabs.filter(x => x.page && x !== S.active && !keepPage(x))) closeTab(x); };
   BS.hooks.on('tab:activate', (t) => {
+    queueMicrotask(leave);
     const app = $('#app');
     if (fullPage(t)) return enter(t);
     PG.entered = null;

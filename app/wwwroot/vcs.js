@@ -10,7 +10,7 @@
 //   lado direito do diff é editável).
 // Numa pasta que não é um repositório mas tem repositórios dentro (Git ou SVN), o painel lista as alterações locais
 // de cada um, com botão direito nos repositórios e nos arquivos. A tela grande do painel (changes.js, aba fixa) junta
-// tudo numa linha do tempo e tem o "Investigar incidente".
+// tudo numa linha do tempo, com o quadro dos repositórios.
 // Rapidez: trocar de commit busca só a lista de arquivos dele (não o status, o resumo e o log de novo). Um commit não
 // muda, então a lista e os diffs ficam guardados aqui e no núcleo (vcs.rs); os commits vizinhos, o commit sob o mouse
 // e os primeiros diffs do commit aberto são pré-carregados em segundo plano: abrir é na hora.
@@ -482,8 +482,13 @@ async function reposLoad(force) {
   if (!S.project) return [];
   const p = S.project.path;
   if (!force && VREPO.for === p && VREPO.repos) return VREPO.repos;
-  if (VREPO.loading === p) return VREPO.repos || [];
+  // já está lendo esta pasta (outro pedido chegou antes): espera a mesma leitura em vez de responder vazio
+  if (VREPO.loading === p && VREPO.pending) return VREPO.pending;
   VREPO.loading = p;
+  const job = VREPO.pending = reposRead(p);
+  try { return await job; } finally { if (VREPO.pending === job) VREPO.pending = null; }
+}
+async function reposRead(p) {
   let repos = [];
   try { repos = (await api('repos', { project: p, depth: 3 }, { quiet: true })).repos || []; } catch { /* sem resposta: lista vazia */ }
   if (!S.project || S.project.path !== p) { VREPO.loading = false; return repos; }
